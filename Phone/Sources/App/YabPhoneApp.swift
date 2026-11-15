@@ -23,7 +23,18 @@ final class YabPhoneApp: UIResponder, UIApplicationDelegate, UNUserNotificationC
         // The day's count and crash reports, for a build that has a site;
         // MetricKit is listened to from the start (Reports/).
         Reports.start(options)
+        // Files the system went on fetching while Yab was gone show again
+        // (BackgroundDownloads). Test runs keep their own store.
+        if !options.isTestRun { BackgroundDownloads.shared.reattach() }
         return true
+    }
+
+    /// A background transfer ended or needs Yab: iOS woke or launched it,
+    /// maybe without a window, and waits for `completionHandler`.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == BackgroundDownloads.identifier else { completionHandler(); return }
+        BackgroundDownloads.shared.handleEvents(identifier, done: completionHandler)
     }
 
     /// The browser's keys in the main menu, the list holding ⌘ shows (BrowserKeys).

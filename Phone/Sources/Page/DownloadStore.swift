@@ -86,6 +86,10 @@ final class DownloadStore {
         refresh()
     }
 
+    /// The app's one store: its window and the system's background
+    /// transfers (BackgroundDownloads) write the same index.
+    static let shared = standard()
+
     /// Yab's own folders.
     static func standard() -> DownloadStore {
         let manager = FileManager.default
