@@ -91,6 +91,9 @@ final class WebPool: NSObject {
         let navigation: WKNavigation?
     }
     private var downloadConversions: [Tab.ID: DownloadConversion] = [:]
+    /// Windows a page opened only to send a file (itch.io on iOS opens its
+    /// file's address with window.open): the window, and the tab that opened it.
+    private var windowFiles: [Tab.ID: Tab.ID] = [:]
     /// Tabs whose main frame was just sent on to an app's link and refused.
     private var appLinks: Set<Tab.ID> = []
     /// When the person last touched each tab's page (uptime), as Yab's own
@@ -1037,7 +1040,7 @@ final class WebPool: NSObject {
         // A transition can still retain the view after it leaves the pool.
         view.closeAllMediaPresentations(completionHandler: nil)
         view.pauseAllMediaPlayback(completionHandler: nil)
-        popupOpeners[id] = nil
+        popupOpeners[id] = nil; windowFiles[id] = nil
         downloadOrigins[id] = nil; downloadConversions[id] = nil
         if javaScriptDialog?.tab == id || httpAuthentication?.tab == id { suspendPageDialogs() }
         activeNavigations[id] = nil; documents[id] = nil; committedURLs[id] = nil; loadFailures[id] = nil
@@ -2020,6 +2023,8 @@ extension WebPool: WKNavigationDelegate {
             // still validates the original request/frame, exact source and owner.
             return
         }
+        // A file's window turned into its download: the window closes, it didn't fail.
+        if cancelled || downloadPolicyChange, windowFiles[id] != nil { return }
         // The main frame interrupted by our own refusal of an app's link.
         let leftForApp = native.domain == "WebKitErrorDomain" && native.code == 102 && appLinks.remove(id) != nil
         if cancelled || leftForApp {
@@ -2160,6 +2165,11 @@ extension WebPool: WKNavigationDelegate {
         let attachment = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("attachment") == true
         guard attachment || !response.canShowMIMEType else { return .allow }
+        if !fixturesEnabled, response.isForMainFrame, let id = tabsByView[ObjectIdentifier(webView)],
+           let opener = fileWindowOpener(id, in: webView) {
+            windowFiles[id] = opener
+            return .download
+        }
         guard !fixturesEnabled, response.isForMainFrame, let id = tabsByView[ObjectIdentifier(webView)],
               canInteract(id, in: webView), downloadOrigins[id] != nil else {
             if response.isForMainFrame, let id = tabsByView[ObjectIdentifier(webView)] { restoreDownloadSource(id, in: webView) }
@@ -2198,7 +2208,30 @@ extension WebPool: WKNavigationDelegate {
         return origin
     }
 
+    /// A window a page opened that has shown nothing yet, its opener still
+    /// open in the same store, while the person is in Yab: its file is the
+    /// opener's, as in Safari. WebKit only opens it for a tap (PageWindows).
+    private func fileWindowOpener(_ id: Tab.ID, in view: WKWebView) -> Tab.ID? {
+        guard live[id] === view, let opener = popupOpeners[id], let source = live[opener],
+              committedURLs[id].map({ $0.scheme?.lowercased() == "about" }) ?? true,
+              source.configuration.websiteDataStore === view.configuration.websiteDataStore,
+              pageInteractionsEnabled, !appAway, UIApplication.shared.applicationState == .active else { return nil }
+        return opener
+    }
+
     private func becameDownload(_ download: WKDownload, from view: WKWebView) {
+        if let id = tabsByView[ObjectIdentifier(view)], let opener = windowFiles.removeValue(forKey: id) {
+            guard live[id] === view, download.webView === view, download.originatingFrame.isMainFrame,
+                  popupOpeners.removeValue(forKey: id) == opener, let source = live[opener],
+                  source.configuration.websiteDataStore === view.configuration.websiteDataStore else {
+                download.cancel(nil); return
+            }
+            adopt(download, tab: opener, page: committedURLs[opener] ?? source.url)
+            // The empty window goes; the person is back on the page that sent the file.
+            onCloseWindowFrom?(id, opener)
+            forget(id)
+            return
+        }
         guard let id = tabsByView[ObjectIdentifier(view)], let conversion = downloadConversions[id],
               documents[id] == conversion.document, activeNavigations[id] === conversion.navigation,
               download.originalRequest?.url == conversion.origin.requestURL,
