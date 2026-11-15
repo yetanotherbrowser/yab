@@ -46,6 +46,7 @@ final class PageDownload: NSObject, WKDownloadDelegate {
     /// Yab is in the background: a task keeps the bytes coming.
     private(set) var away = false
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var noBackgroundTime = false
     /// The system's transfers, for the moment iOS ends Yab's background time.
     private let background: BackgroundDownloads?
     /// What the site answered, and the size it said: what decides a hand-off.
@@ -92,18 +93,19 @@ final class PageDownload: NSObject, WKDownloadDelegate {
                 self?.endBackgroundTask()
             }
         }
+        noBackgroundTime = backgroundTask == .invalid
         prepareHandOff()
     }
 
     func comeBack() {
         guard away, !removed else { return }
         away = false
+        noBackgroundTime = false
         prepared = nil
         endBackgroundTask()
     }
 
-    /// Only a file the system can fetch again as WebKit did, from a store
-    /// that keeps its cookies anyway: never a private one.
+    /// Only an anonymous file from a persistent, non-private website store.
     private func prepareHandOff() {
         guard background != nil, prepared == nil, let store, store.isPersistent,
               let url = BackgroundTransfer.eligibleURL(original: download.originalRequest, response: response,
@@ -113,14 +115,15 @@ final class PageDownload: NSObject, WKDownloadDelegate {
             guard let self, self.away, self.phase == .transferring, !self.cancelling, !self.removed else { return }
             self.prepared = BackgroundTransfer.request(for: url, original: original, page: page, cookies: cookies)
             // iOS gave no time at all: hand it over now.
-            if self.backgroundTask == .invalid { self.handOff() }
+            if self.noBackgroundTime { self.handOff() }
         }
     }
 
     /// Time is up: the system starts the file again under the same row, and
     /// WebKit's writer is closed without touching it.
     func handOff() {
-        guard let background, let request = prepared, away, phase == .transferring, !cancelling, !removed,
+        guard UIApplication.shared.applicationState == .background,
+              let background, let request = prepared, away, phase == .transferring, !cancelling, !removed,
               let name = destination?.lastPathComponent else { return }
         prepared = nil
         background.start(request, record: .init(id: id, name: name, host: source.host, total: total))

@@ -10,7 +10,7 @@ import Foundation
 /// one keeps its row with Retry, a stopped one leaves nothing.
 ///
 /// What Yab keeps of a task (BackgroundTransfer.Record) is in a small file
-/// beside its data. The request itself, with the cookies scoped to it, lives
+/// beside its data. Only anonymous requests leave WebKit. The request lives
 /// only in the system's task. The session keeps no cookies, credentials or
 /// cache of its own, and checks certificates as the system always does.
 @MainActor
@@ -39,8 +39,7 @@ final class BackgroundDownloads {
         return configuration
     }
 
-    /// No jar, no credentials, no cache: the request carries its own scoped
-    /// cookies and nothing the server answers is kept.
+    /// No jar, credentials or cache from another website store.
     nonisolated static func harden(_ configuration: URLSessionConfiguration) {
         configuration.httpCookieStorage = nil
         configuration.httpCookieAcceptPolicy = .never
@@ -63,6 +62,7 @@ final class BackgroundDownloads {
     private var refused: Set<UUID> = []
     /// iOS waits on this before it takes a new picture of Yab.
     private var events: (@MainActor () -> Void)?
+    private var eventsFinished = false
 
     /// `ledger` nil: nothing outlives the process (tests).
     init(configuration: URLSessionConfiguration, ledger: URL?, staging: URL, sink: Sink) {
@@ -93,9 +93,17 @@ final class BackgroundDownloads {
 
     /// iOS woke or launched Yab for this session: `done` once it has heard all.
     func handleEvents(_ identifier: String, done: @escaping @MainActor () -> Void) {
-        guard identifier == configuration.identifier else { return }
-        events = done
+        guard identifier == configuration.identifier else { done(); return }
+        whenEventsFinish(done)
         reattach()
+    }
+
+    /// The session may finish delivering before UIKit supplies its handler.
+    func whenEventsFinish(_ done: @escaping @MainActor () -> Void) {
+        if eventsFinished {
+            eventsFinished = false
+            done()
+        } else { events = done }
     }
 
     private func ensureSession() -> URLSession {
@@ -115,6 +123,16 @@ final class BackgroundDownloads {
             sink.begin(record) { [weak self] in self?.stop(id) }
             let total = task.countOfBytesExpectedToReceive > 0 ? task.countOfBytesExpectedToReceive : record.total
             sink.progress(id, task.countOfBytesReceived, total)
+        }
+        // A task the system discarded cannot remain in the ledger forever.
+        // Pending completion callbacks can still recover their row from the task.
+        let missing = records.values.filter { record in
+            tasks[record.id] == nil && landed[record.id] == nil
+                && !found.contains { $0.0 == record.id || $0.1.taskIdentifier == record.task }
+        }
+        for record in missing {
+            forget(record.id)
+            sink.fail(record, nil)
         }
     }
 
@@ -179,25 +197,27 @@ final class BackgroundDownloads {
 
     fileprivate func completed(_ id: UUID, task: URLSessionTask, error: Error?) {
         let record = records[id] ?? BackgroundTransfer.recovered(id, task: task)
+        let request = task.originalRequest
+        let retry: (@MainActor () -> Void)? = request.map { request in
+            { [weak self] in self?.start(request, record: record) }
+        }
         if let file = landed[id] {
-            _ = sink.finish(record, file)
+            let moved = sink.finish(record, file)
             forget(id)
+            if !moved { sink.fail(record, retry) }
             return
         }
         let wasRefused = refused.contains(id)
-        let request = task.originalRequest
         forget(id)
         if !wasRefused, BackgroundTransfer.stoppedByPerson(error) { sink.drop(id); return }
-        var retry: (@MainActor () -> Void)?
-        if let request {
-            retry = { [weak self] in self?.start(request, record: record) }
-        }
         sink.fail(record, retry)
     }
 
-    fileprivate func finishedEvents() {
-        events?()
-        events = nil
+    func finishedEvents() {
+        if let done = events {
+            events = nil
+            done()
+        } else { eventsFinished = true }
     }
 
     // MARK: - disk

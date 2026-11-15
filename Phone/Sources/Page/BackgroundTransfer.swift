@@ -6,15 +6,15 @@ import Foundation
 /// Foundation only, so the rules are testable without a page.
 ///
 /// A file goes only when the system can fetch it again exactly as WebKit did:
-/// not private, a GET with no body, over http(s), answered with the whole
-/// file. Everything else (blob:, data:, a form's POST, a private tab, a
-/// partial answer) stays in WebKit for the time iOS gives a background app.
+/// not private, an anonymous GET with no body, over http(s), answered with
+/// the whole file. Cookies, authorization, blob:, data:, POST, private tabs
+/// and partial answers stay in WebKit for the time iOS gives a background app.
 /// WebKit's resume data is documented only for `WKWebView.resumeDownload`,
 /// never for URLSession, so the system starts the file again from its first
 /// byte at the URL that last served it.
 nonisolated enum BackgroundTransfer {
     /// What the row needs while the system holds the task, and after a
-    /// relaunch: no URL, no cookies. Those live only in the system's task.
+    /// relaunch: no URL or credentials. The URL lives in the system's task.
     struct Record: Codable, Equatable, Sendable {
         let id: UUID
         var name: String
@@ -26,9 +26,9 @@ nonisolated enum BackgroundTransfer {
         var task: Int?
     }
 
-    /// Request headers sent again as WebKit sent them. Never Authorization,
-    /// Cookie (rebuilt below, scoped) or anything a page set by script.
-    static let carriedHeaders = ["User-Agent", "Accept", "Accept-Language", "Referer"]
+    /// Background sessions follow redirects without consulting the app.
+    /// Carry no credentials or full referrer that could reach another host.
+    static let carriedHeaders = ["User-Agent", "Accept", "Accept-Language"]
 
     /// The URL the system may fetch again, or nil when the transfer must stay
     /// in WebKit.
@@ -42,19 +42,20 @@ nonisolated enum BackgroundTransfer {
         return url
     }
 
-    /// The request the system sends: the URL that served the file, the
-    /// headers WebKit sent, and only the cookies WebKit would send there.
+    /// Only anonymous requests may leave WebKit. URLSession forwards a
+    /// manual Cookie header across redirects even with its cookie jar off.
     static func request(for url: URL, original: URLRequest?, page: String?, cookies: [HTTPCookie],
-                        now: Date = Date()) -> URLRequest {
+                        now: Date = Date()) -> URLRequest? {
+        guard Self.cookies(cookies, for: url, page: page, now: now).isEmpty,
+              original?.value(forHTTPHeaderField: "Cookie") == nil,
+              original?.value(forHTTPHeaderField: "Authorization") == nil else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        // The session keeps no cookie jar of its own: the header below is all.
+        // The session must not add cookies from another website store.
         request.httpShouldHandleCookies = false
         for name in carriedHeaders {
             if let value = original?.value(forHTTPHeaderField: name) { request.setValue(value, forHTTPHeaderField: name) }
         }
-        let scoped = Self.cookies(cookies, for: url, page: page, now: now)
-        for (name, value) in HTTPCookie.requestHeaderFields(with: scoped) { request.setValue(value, forHTTPHeaderField: name) }
         return request
     }
 

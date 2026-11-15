@@ -85,25 +85,24 @@ final class BackgroundDownloadsTests: XCTestCase {
         original.setValue("leak", forHTTPHeaderField: "X-Page-Header")
         original.setValue("jar=all", forHTTPHeaderField: "Cookie")
 
-        let sameSite = BackgroundTransfer.request(for: url, original: original, page: "acme.com", cookies: jar, now: now)
-        XCTAssertEqual(sameSite.url, url)
-        XCTAssertEqual(sameSite.httpMethod, "GET")
-        XCTAssertFalse(sameSite.httpShouldHandleCookies)
-        XCTAssertEqual(sameSite.value(forHTTPHeaderField: "User-Agent"), "YabTest/1")
-        XCTAssertEqual(sameSite.value(forHTTPHeaderField: "Referer"), "https://acme.com/")
-        XCTAssertNil(sameSite.value(forHTTPHeaderField: "Authorization"))
-        XCTAssertNil(sameSite.value(forHTTPHeaderField: "X-Page-Header"))
-        let sent = Set(try XCTUnwrap(sameSite.value(forHTTPHeaderField: "Cookie")).components(separatedBy: "; ").map { $0.components(separatedBy: "=")[0] })
-        XCTAssertEqual(sent, ["host", "parent", "path", "secure", "strict"])
-
-        let crossSite = BackgroundTransfer.request(for: url, original: original, page: "news.example", cookies: jar, now: now)
-        XCTAssertFalse(crossSite.value(forHTTPHeaderField: "Cookie")?.contains("strict") ?? true, "Strict only to its own site")
-
-        let insecure = BackgroundTransfer.request(for: URL(string: "http://files.acme.com/x")!, original: nil, page: "acme.com", cookies: jar, now: now)
-        XCTAssertFalse(insecure.value(forHTTPHeaderField: "Cookie")?.contains("secure") ?? true)
-
-        let none = BackgroundTransfer.request(for: URL(string: "https://nobody.net/x")!, original: nil, page: nil, cookies: jar, now: now)
-        XCTAssertNil(none.value(forHTTPHeaderField: "Cookie"))
+        let scoped = BackgroundTransfer.cookies(jar, for: url, page: "acme.com", now: now)
+        XCTAssertEqual(Set(scoped.map(\.name)), ["host", "parent", "path", "secure", "strict"])
+        XCTAssertNil(BackgroundTransfer.request(for: url, original: nil, page: "acme.com", cookies: jar, now: now),
+                     "cookies must remain in WebKit: a background redirect could forward them")
+        XCTAssertNil(BackgroundTransfer.request(for: url, original: original, page: nil, cookies: []),
+                     "Authorization and Cookie headers must not leave WebKit")
+        original.setValue(nil, forHTTPHeaderField: "Cookie")
+        XCTAssertNil(BackgroundTransfer.request(for: url, original: original, page: nil, cookies: []))
+        original.setValue(nil, forHTTPHeaderField: "Authorization")
+        let anonymous = try XCTUnwrap(BackgroundTransfer.request(for: URL(string: "https://nobody.net/x")!, original: original,
+                                                                 page: nil, cookies: jar, now: now))
+        XCTAssertEqual(anonymous.httpMethod, "GET")
+        XCTAssertFalse(anonymous.httpShouldHandleCookies)
+        XCTAssertEqual(anonymous.value(forHTTPHeaderField: "User-Agent"), "YabTest/1")
+        XCTAssertNil(anonymous.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertNil(anonymous.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(anonymous.value(forHTTPHeaderField: "X-Page-Header"))
+        XCTAssertNil(anonymous.value(forHTTPHeaderField: "Referer"))
     }
 
     func testOnlyTheFileCountsAndOnlyStopIsThePersons() {
@@ -123,6 +122,7 @@ final class BackgroundDownloadsTests: XCTestCase {
 
     private final class Events {
         var begun: [UUID] = []
+        var acceptsFiles = true
         var progress: [UUID: Int64] = [:]
         var finished: [UUID: (name: String, bytes: Data)] = [:]
         var failed: [UUID: (@MainActor () -> Void)?] = [:]
@@ -139,7 +139,7 @@ final class BackgroundDownloadsTests: XCTestCase {
             begin: { record, stop in events.begun.append(record.id); events.stops[record.id] = stop },
             progress: { id, received, _ in events.progress[id] = received },
             finish: { record, file in
-                guard let bytes = try? Data(contentsOf: file) else { return false }
+                guard events.acceptsFiles, let bytes = try? Data(contentsOf: file) else { return false }
                 events.finished[record.id] = (record.name, bytes)
                 return true
             },
@@ -167,11 +167,11 @@ final class BackgroundDownloadsTests: XCTestCase {
         if !check() { XCTFail(message, file: file, line: line); throw URLError(.timedOut) }
     }
 
-    func testAWholeFileLandsUnderItsRowWithItsScopedCookieAndLeavesNothingBehind() async throws {
+    func testAWholeFileLandsUnderItsRowWithoutCookiesAndLeavesNothingBehind() async throws {
         let events = Events(), downloads = service(events), id = UUID()
         let url = site.url("/file")
-        let request = BackgroundTransfer.request(for: url, original: nil, page: "127.0.0.1",
-                                                 cookies: [cookie("session", domain: "127.0.0.1"), cookie("other", domain: ".other.com")])
+        let request = try XCTUnwrap(BackgroundTransfer.request(for: url, original: nil, page: "127.0.0.1",
+                                                 cookies: [cookie("other", domain: ".other.com")]))
         downloads.start(request, record: .init(id: id, name: "Owned.txt", host: "127.0.0.1", total: Int64(BackgroundSite.bytes.count)))
         XCTAssertEqual(events.begun, [id], "the row is the transfer's at once")
         let saved = try XCTUnwrap(savedRecords().first)
@@ -189,7 +189,7 @@ final class BackgroundDownloadsTests: XCTestCase {
         XCTAssertTrue(downloads.running.isEmpty)
         XCTAssertTrue(stagingIsEmpty())
         let header = try XCTUnwrap(site.requests.last)
-        XCTAssertTrue(header.contains("\r\nCookie: session=1\r\n"), header)
+        XCTAssertFalse(header.lowercased().contains("\r\ncookie:"), header)
         XCTAssertFalse(header.contains("other=1"))
     }
 
@@ -221,6 +221,58 @@ final class BackgroundDownloadsTests: XCTestCase {
         XCTAssertTrue(savedRecords().isEmpty)
         XCTAssertTrue(downloads.running.isEmpty)
         XCTAssertTrue(stagingIsEmpty())
+    }
+
+    func testRedirectedAnonymousTransferCarriesNoCredentials() async throws {
+        let events = Events(), downloads = service(events), id = UUID()
+        var original = URLRequest(url: site.url("/source"))
+        original.setValue("https://private.example/path", forHTTPHeaderField: "Referer")
+        let request = try XCTUnwrap(BackgroundTransfer.request(for: site.url("/redirect"), original: original,
+                                                              page: "127.0.0.1", cookies: []))
+        downloads.start(request, record: .init(id: id, name: "Redirected.txt", host: "127.0.0.1", total: nil))
+        try await until({ events.finished[id] != nil }, "redirected file never arrived")
+        XCTAssertEqual(events.finished[id]?.bytes, BackgroundSite.bytes)
+        let header = try XCTUnwrap(site.requests.last).lowercased()
+        XCTAssertTrue(header.contains("\r\nhost: localhost:"), "the file came from a different host")
+        XCTAssertFalse(header.contains("\r\ncookie:"))
+        XCTAssertFalse(header.contains("\r\nauthorization:"))
+        XCTAssertFalse(header.contains("\r\nreferer:"))
+    }
+
+    func testFailedFileMoveKeepsRetry() async throws {
+        let events = Events(), downloads = service(events), id = UUID()
+        events.acceptsFiles = false
+        downloads.start(URLRequest(url: site.url("/file")), record: .init(id: id, name: "File.txt", host: "127.0.0.1", total: nil))
+        try await until({ events.failed[id] != nil }, "a failed move did not offer Retry")
+        XCTAssertTrue(downloads.running.isEmpty)
+        XCTAssertTrue(stagingIsEmpty())
+        events.acceptsFiles = true
+        let retry = try XCTUnwrap(events.failed[id] ?? nil)
+        retry()
+        try await until({ events.finished[id] != nil }, "Retry after a failed move never landed")
+        XCTAssertEqual(events.finished[id]?.bytes, BackgroundSite.bytes)
+    }
+
+    func testEventCompletionWorksInEitherCallbackOrder() {
+        let downloads = service(Events())
+        var completions = 0
+        downloads.finishedEvents()
+        downloads.whenEventsFinish { completions += 1 }
+        XCTAssertEqual(completions, 1)
+        downloads.whenEventsFinish { completions += 1 }
+        XCTAssertEqual(completions, 1)
+        downloads.finishedEvents()
+        XCTAssertEqual(completions, 2)
+    }
+
+    func testMissingSystemTaskLeavesAFailedRowAndNoStaleLedger() async throws {
+        let record = BackgroundTransfer.Record(id: UUID(), name: "Lost.txt", host: "127.0.0.1", total: 10, task: 999)
+        try JSONEncoder().encode([record]).write(to: ledger)
+        let events = Events(), downloads = service(events)
+        downloads.reattach()
+        try await until({ events.failed[record.id] != nil }, "the missing task was never reconciled")
+        XCTAssertNil(events.failed[record.id] ?? nil, "there is no request to retry")
+        XCTAssertTrue(savedRecords().isEmpty)
     }
 
     func testARecordOutlivesTheProcessThatStartedIt() async throws {
@@ -292,6 +344,9 @@ private final class BackgroundSite: @unchecked Sendable {
                 Data("HTTP/1.1 \(status)\r\nContent-Type: application/octet-stream\r\nContent-Length: \(length)\r\nConnection: close\r\n\r\n".utf8)
             }
             switch target {
+            case "/redirect":
+                let address = "http://localhost:\(self.listener.port!.rawValue)/file"
+                self.send(Data("HTTP/1.1 302 Found\r\nLocation: \(address)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8), connection)
             case "/hold":
                 connection.send(content: head("200 OK", 1_000) + body, completion: .contentProcessed { _ in })
             case "/flaky" where !self.healed:
