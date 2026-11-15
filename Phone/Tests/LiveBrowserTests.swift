@@ -593,6 +593,11 @@ final class LiveBrowserTests: XCTestCase {
             let resources = server.count(of: "/reader-resource")
             let entered = await pages.setReader(enabled: true, for: tab.id)
             XCTAssertTrue(entered)
+            let shown = try await runPageScript("return window.__yabPhoneReader.html();", in: view, world: PageReader.world) as? String ?? ""
+            XCTAssertTrue(shown.contains("Read the <a href=\"\(server.url("/inline").absoluteString)\">linked words</a> in place"),
+                          "a link in a sentence keeps its words and its same-site address (#706)")
+            XCTAssertTrue(shown.contains("<a>outside words</a> too"), "another site's link keeps its words, not its address")
+            XCTAssertFalse(shown.contains("Teaser card"), "a link holding blocks is still left out")
             XCTAssertTrue(pages.state(for: tab.id).readerEnabled)
             let enteredAgain = await pages.setReader(enabled: true, for: tab.id)
             XCTAssertTrue(enteredAgain, "repeated enter preserves the source scroll")
@@ -880,7 +885,7 @@ private final class LoopbackPages: @unchecked Sendable {
                     """
                     if route == "/reader-article" {
                         let paragraph = String(repeating: "A long article carries useful prose that can be read locally while the original page keeps its own forms and listeners. ", count: 4)
-                        body = "<!doctype html><meta name=viewport content=width=device-width><title>Reader article</title><link rel=icon href=data:,><body style='margin:0;min-height:3000px;background:#fff'><article id=article><h1>Reader article</h1>" + String(repeating: "<p onclick='window.readerTrap=1'>\(paragraph)</p>", count: 12) + "<input value=fresh><button id=reader-action>Source action</button><a href='/next'>Second page</a><img src='/reader-resource'><iframe src='/reader-resource'></iframe><script>window.readerActions=0;window.readerTrap=0;document.getElementById('reader-action').addEventListener('click',()=>window.readerActions++);</script></article></body>"
+                        body = "<!doctype html><meta name=viewport content=width=device-width><title>Reader article</title><link rel=icon href=data:,><body style='margin:0;min-height:3000px;background:#fff'><article id=article><h1>Reader article</h1><p>Read the <a href='/inline'>linked words</a> in place and <a href='https://elsewhere.example/x'>outside words</a> too. \(paragraph)</p>" + String(repeating: "<p onclick='window.readerTrap=1'>\(paragraph)</p>", count: 12) + "<a href='/teaser'><div><p>Teaser card text that is a whole block inside one link.</p></div></a><input value=fresh><button id=reader-action>Source action</button><a href='/next'>Second page</a><img src='/reader-resource'><iframe src='/reader-resource'></iframe><script>window.readerActions=0;window.readerTrap=0;document.getElementById('reader-action').addEventListener('click',()=>window.readerActions++);</script></article></body>"
                     }
                     if route == "/reader-hidden" {
                         let words = String(repeating: "These hidden words must never offer or appear in Reader. ", count: 30)
