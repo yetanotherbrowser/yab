@@ -300,16 +300,23 @@ class ChromeOwnerProducerTest {
     }
 
     @Test fun savedOwnerSurvivesFullOwnerCycleWithoutPersistenceOfPrivateNamespaces() {
-        val registry = ChromeIdentityRegistry(Bytes())
+        val storage = Bytes(); val registry = ChromeIdentityRegistry(storage)
         val producer = ChromeOwnerProducer(registry) { ownership() }
         val owner = producer.prepareNew(account); assertTrue(producer.activate(owner, Port()))
         val publicTab = producer.tab(owner, tab("public-row"), WebsiteProfile("shared"), BooleanSupplier { true })
+        val publicBytes = storage.value!!.copyOf()
+        val privateTab = producer.tab(owner, tab("private-row", true), WebsiteProfile("private-shared", true), BooleanSupplier { true })
+        assertArrayEquals(publicBytes, storage.value)
         producer.revoke(owner); producer.releaseAfterTeardown(owner)
         // A later owner reuses durable public mappings but never RAM-only private ones.
         val next = producer.prepareSaved(account)!!
         assertEquals(owner.identity, next.identity)
         assertTrue(producer.activate(next, Port(next.identity)))
         assertEquals(publicTab.identity, producer.tab(next, tab("public-row"), WebsiteProfile("shared"), BooleanSupplier { true }).identity)
+        val freshPrivate = producer.tab(next, tab("private-row", true), WebsiteProfile("private-shared", true), BooleanSupplier { true })
+        assertNotEquals(privateTab.identity.tabUUID, freshPrivate.identity.tabUUID)
+        assertNotEquals(privateTab.identity.namespaceUUID, freshPrivate.identity.namespaceUUID)
+        assertArrayEquals(publicBytes, storage.value)
         registry.close()
     }
 
@@ -352,6 +359,23 @@ class ChromeOwnerProducerTest {
         val existing = producer.tab(owner, privateTab, privateProfile, BooleanSupplier { true })
         assertEquals(first.identity, existing.identity)
         assertThrows(IllegalStateException::class.java) { producer.tab(owner, tab("one-past-cap", true), privateProfile, BooleanSupplier { true }) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
+    }
+
+    @Test fun oversizePrivateProfileNamespacesAreRefusedLikeTabs() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val owner = producer.prepareNew(account); assertTrue(producer.activate(owner, Port()))
+        // Distinct private profiles fill the RAM-only namespace table; distinct tabs keep it from
+        // failing on the tab cap first.
+        repeat(CHROME_MAX_PROFILES_PER_OWNER) { index ->
+            producer.tab(owner, tab("cap-tab-$index", true), WebsiteProfile("cap-profile-$index", true), BooleanSupplier { true })
+        }
+        val lastProfile = WebsiteProfile("cap-profile-${CHROME_MAX_PROFILES_PER_OWNER - 1}", true)
+        producer.tab(owner, tab("already-mapped-tab", true), lastProfile, BooleanSupplier { true })
+        assertThrows(IllegalStateException::class.java) {
+            producer.tab(owner, tab("one-past-cap", true), WebsiteProfile("one-past-cap-profile", true), BooleanSupplier { true })
+        }
         producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
     }
 
