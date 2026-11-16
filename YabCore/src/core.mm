@@ -1611,6 +1611,19 @@ static NSEvent* DispatchHostedKeyboard(NSEvent* event) {
       if (tab.externallyHosted && tab.native == event.window) { target = &tab; break; }
     }
   }
+  // Another app typing into the field Yab has focused (Cotypist accepting a
+  // completion with Tab) posts its keys to the process that owns the focused
+  // element, this one. This process is never active and its windows never
+  // key, so AppKit gives such a key no window and it was dropped: the
+  // completion was never typed. It goes to the page Yab has focused, the one
+  // whose focused element the other app was handed (accessibility.inc).
+  if (!target && !event.window && event.type != NSEventTypeFlagsChanged && !KeyboardEnvelopeOwned(event)) {
+    for (auto& [id, tab] : tabs) {
+      if (tab.externallyHosted && tab.focused && tab.visible && !tab.closing && tab.native) { target = &tab; break; }
+    }
+    if (target && getenv("YAB_PROBE") && *getenv("YAB_PROBE"))
+      fprintf(stderr, "YabCore keyboard from another app: %lu characters to %s\n", (unsigned long)event.characters.length, target->id.c_str());
+  }
   if (target) {
     Tab& tab = *target;
     auto delivery = TakeKeyboard(tab, event);
@@ -1621,7 +1634,8 @@ static NSEvent* DispatchHostedKeyboard(NSEvent* event) {
       fprintf(stderr, "YabCore keyboard stamp mismatch: got=%llu expected=%llu pending=%zu\n",
               (unsigned long long)KeyboardEventStamp(event), (unsigned long long)tab.keyboard.front()->stamp,
               tab.keyboard.size());
-    NSView* content = event.window.contentView;
+    NSWindow* window = tab.native;
+    NSView* content = window.contentView;
     NSView* view = FindView(content.superview ?: content, @"RenderWidgetHostViewCocoa");
     if (!view) return delivery ? nil : event;
     if (delivery) {
@@ -1633,7 +1647,6 @@ static NSEvent* DispatchHostedKeyboard(NSEvent* event) {
         (event.characters.length > 1 || native.characters.length > 1))
       fprintf(stderr, "YabCore keyboard payload: found=%d envelopeUnits=%lu nativeUnits=%lu\n", (bool)delivery,
               (unsigned long)event.characters.length, (unsigned long)native.characters.length);
-    NSWindow* window = event.window;
     NSResponder* target = [window.firstResponder isKindOfClass:NSView.class] &&
         [(NSView*)window.firstResponder isDescendantOf:window.contentView] ? window.firstResponder : view;
     if (event.type == NSEventTypeFlagsChanged) [target flagsChanged:native];
