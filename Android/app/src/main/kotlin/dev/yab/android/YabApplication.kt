@@ -1,8 +1,11 @@
 package dev.yab.android
 
 import android.app.Application
+import android.os.Looper
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
+import dev.yab.chromium.ChromeBootstrapPort
+import dev.yab.chromium.ChromeEngineHost
 import dev.yab.sync.AndroidSyncBridge
 import dev.yab.notifications.AndroidNotificationSyncPort
 import dev.yab.notifications.PushNotifications
@@ -36,6 +39,32 @@ class YabApplication : Application() {
     }
     lateinit var sync: AndroidSyncBridge
         private set
+
+    /**
+     * The Chromium seam's first consumer, application-scoped. Null until the
+     * fork APK is present; a build without it never opens the Chrome identity
+     * registry nor installs a Chrome owner. Gecko keeps serving Android: this
+     * host owns only the Chrome-side lifecycle and starts no engine by itself.
+     *
+     * The ownership supplier reads live bridge state, so the startup barrier
+     * (AndroidChromeOwnerSource.prepare) must run before the first host call;
+     * the engine-start flow that turns the presence check on owns that barrier.
+     */
+    val chromeHost: ChromeEngineHost? by lazy(LazyThreadSafetyMode.NONE) {
+        check(Application.getProcessName() == packageName) { "The Chrome owner lifecycle belongs to the main app process" }
+        if (!chromePortPresent()) null else ChromeEngineHost.create(
+            dev.yab.chromium.AndroidChromeOwnerSource.registry(this),
+            { dev.yab.chromium.AndroidChromeOwnerSource.ownership(sync) },
+            ::chromeBootstrapPort,
+            { check(Looper.myLooper() == Looper.getMainLooper()) { "Chrome owner calls must stay on the main thread" } },
+        )
+    }
+
+    /** Milestone 2 replaces this with the fork APK's bootstrap presence check. */
+    private fun chromePortPresent(): Boolean = false
+
+    private fun chromeBootstrapPort(): ChromeBootstrapPort =
+        throw IllegalStateException("The Chromium fork APK's bootstrap is not linked into this build")
 
     override fun onCreate() {
         super.onCreate()
