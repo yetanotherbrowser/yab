@@ -150,6 +150,11 @@ struct ChromiumInputMethodTests {
         // One character, even of two UTF-16 units, is still a key.
         read.edits = [.insert("🙂", replacing: none)]
         #expect(read.route(typed: "🙂", inputMethod: false, taken: true) == .page)
+        // One grapheme made of several scalars is several characters to the page.
+        for cluster in ["🇫🇷", "👍🏽", "e\u{301}"] {
+            read.edits = [.insert(cluster, replacing: none)]
+            #expect(read.route(typed: cluster, inputMethod: false, taken: true) == .inputMethod)
+        }
     }
 
     @Test func replacementCoordinatesAreUTF16AndMarkedTextStartsAtTheSelection() {
