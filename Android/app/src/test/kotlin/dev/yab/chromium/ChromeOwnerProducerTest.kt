@@ -203,6 +203,169 @@ class ChromeOwnerProducerTest {
         producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
     }
 
+    @Test fun leaseFailureBeforeNativeAcceptanceDiscardsTicketWithoutTouchingThePort() {
+        val registry = ChromeIdentityRegistry(Bytes()); var current = ownership()
+        val producer = ChromeOwnerProducer(registry) { current }
+        val owner = producer.prepareNew(account)
+        current = current.copy(available = false)
+        val port = Port()
+        assertFalse(producer.activate(owner, port))
+        assertEquals(0, port.savedCalls + port.freshCalls)
+        assertFalse(owner.lease.getAsBoolean())
+        // The discarded ticket is fully gone: the next owner needs no teardown.
+        current = ownership()
+        val next = producer.prepareNew(account)
+        assertTrue(producer.activate(next, Port()))
+        producer.revoke(next); producer.releaseAfterTeardown(next)
+        registry.close()
+    }
+
+    @Test fun leaseFailureAfterNativeAcceptanceKeepsTicketForForcedTeardown() {
+        val registry = ChromeIdentityRegistry(Bytes()); var current = ownership()
+        val producer = ChromeOwnerProducer(registry) { current }
+        val owner = producer.prepareNew(account)
+        val port = object : ChromeBootstrapPort {
+            var revoked = false; var released = false
+            override fun activateSavedOwner(accountUUID: String, expectedOwnerEpochUUID: String, lease: BooleanSupplier) = true
+            override fun startNewOwner(accountUUID: String, ownerEpochUUID: String, lease: BooleanSupplier) { current = current.copy(epoch = current.epoch + 1) }
+            override fun revokeOwner() { revoked = true }
+            override fun releaseAfterTeardown() { check(revoked); released = true }
+        }
+        assertFalse(producer.activate(owner, port))
+        assertTrue(port.revoked); assertFalse(owner.lease.getAsBoolean())
+        // The ticket stays current: the caller must finish teardown, not start another owner.
+        assertThrows(IllegalStateException::class.java) { producer.prepareNew(account) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        assertTrue(port.released)
+        // Only after confirmed teardown may a new owner be prepared.
+        val next = producer.prepareNew(account); assertTrue(producer.activate(next, Port()))
+        producer.revoke(next); producer.releaseAfterTeardown(next)
+        registry.close()
+    }
+
+    @Test fun throwingPortCallPreservesTeardownOwnershipAndSuppressesCleanupFailure() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val owner = producer.prepareNew(account)
+        val port = object : ChromeBootstrapPort {
+            var revokeCalls = 0
+            override fun activateSavedOwner(accountUUID: String, expectedOwnerEpochUUID: String, lease: BooleanSupplier): Boolean = throw IOException("native refused")
+            override fun startNewOwner(accountUUID: String, ownerEpochUUID: String, lease: BooleanSupplier) = throw IOException("native refused")
+            override fun revokeOwner() { revokeCalls++; if (revokeCalls == 1) throw IOException("cleanup refused") }
+            override fun releaseAfterTeardown() = Unit
+        }
+        val failure = assertThrows(IOException::class.java) { producer.activate(owner, port) }
+        assertEquals(1, port.revokeCalls)
+        assertEquals(1, failure.suppressed.size)
+        assertTrue(failure.suppressed[0] is IOException)
+        assertFalse(owner.lease.getAsBoolean())
+        // Teardown ownership is preserved: the caller still completes release, never a silent new owner.
+        assertThrows(IllegalStateException::class.java) { producer.prepareNew(account) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun cancelPreparedRejectsForeignTicketsAndThosePastActivation() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val foreignRegistry = ChromeIdentityRegistry(Bytes())
+        val foreign = ChromeOwnerProducer(foreignRegistry) { ownership() }.prepareNew(account)
+        assertThrows(IllegalStateException::class.java) { producer.cancelPrepared(foreign) }
+        val saved = producer.prepareNew(account)
+        producer.activate(saved, Port())
+        assertThrows(IllegalStateException::class.java) { producer.cancelPrepared(saved) }
+        producer.revoke(saved); producer.releaseAfterTeardown(saved)
+        assertThrows(IllegalStateException::class.java) { producer.cancelPrepared(saved) }
+        foreignRegistry.close()
+        registry.close()
+    }
+
+    @Test fun wedgedOwnerBetweenRevokeAndTeardownNeverStartsAnotherOwner() {
+        val registry = ChromeIdentityRegistry(Bytes()); var current = ownership()
+        val producer = ChromeOwnerProducer(registry) { current }
+        val owner = producer.prepareNew(account); val port = Port()
+        assertTrue(producer.activate(owner, port))
+        current = current.copy(epoch = current.epoch + 1)
+        producer.ownershipChanged()
+        assertTrue(port.revoked); assertFalse(owner.lease.getAsBoolean())
+        // Between revoke and confirmed teardown every prepare is refused: the wedged state is
+        // fail-stuck by design, and only confirmed native destruction or process death clears it.
+        assertThrows(IllegalStateException::class.java) { producer.prepareSaved(account) }
+        assertThrows(IllegalStateException::class.java) { producer.prepareNew(account) }
+        producer.releaseAfterTeardown(owner)
+        val next = producer.prepareNew(account)
+        assertTrue(producer.activate(next, Port()))
+        producer.revoke(next); producer.releaseAfterTeardown(next)
+        registry.close()
+    }
+
+    @Test fun savedOwnerSurvivesFullOwnerCycleWithoutPersistenceOfPrivateNamespaces() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val owner = producer.prepareNew(account); assertTrue(producer.activate(owner, Port()))
+        val publicTab = producer.tab(owner, tab("public-row"), WebsiteProfile("shared"), BooleanSupplier { true })
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        // A later owner reuses durable public mappings but never RAM-only private ones.
+        val next = producer.prepareSaved(account)!!
+        assertEquals(owner.identity, next.identity)
+        assertTrue(producer.activate(next, Port(next.identity)))
+        assertEquals(publicTab.identity, producer.tab(next, tab("public-row"), WebsiteProfile("shared"), BooleanSupplier { true }).identity)
+        registry.close()
+    }
+
+    @Test fun boundedIdentifiersAcceptUnicodeAndRejectControlCharactersAndOversize() {
+        val unicode = "ω-πλ-на-βrowser.域.example"
+        boundedIdentifier(unicode)
+        for (broken in listOf("", "line\nbreak", "carriage\rreturn", "bell\u0007", "del\u007f")) {
+            assertThrows(IllegalArgumentException::class.java) { boundedIdentifier(broken) }
+        }
+        // 1024 bytes is the boundary: accepted at the limit, refused beyond it.
+        boundedIdentifier("é".repeat(512))
+        assertThrows(IllegalArgumentException::class.java) { boundedIdentifier("é".repeat(513)) }
+        // Canonical UUIDs refuse the all-zero form and non-UUID spellings.
+        assertThrows(IllegalArgumentException::class.java) { canonicalUUID("00000000-0000-0000-0000-000000000000") }
+        assertThrows(IllegalArgumentException::class.java) { canonicalUUID("00000000000000000000000000000000000") }
+        assertThrows(IllegalArgumentException::class.java) { canonicalUUID("not-a-uuid") }
+        canonicalUUID(java.util.UUID.randomUUID().toString())
+        // A source account with control characters is refused at construction, not persisted.
+        assertThrows(IllegalArgumentException::class.java) { ChromeOwnerSource.Paired("bad\u0007account") }
+        // Unicode accounts work end to end through the durable registry.
+        val unicodeAccount = ChromeOwnerSource.Paired(unicode)
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership(unicodeAccount) }
+        val owner = producer.prepareNew(unicodeAccount)
+        assertTrue(producer.activate(owner, Port()))
+        val mapped = producer.tab(owner, tab(unicode), WebsiteProfile(unicode), BooleanSupplier { true })
+        assertEquals(mapped.identity, producer.tab(owner, tab(unicode), WebsiteProfile(unicode), BooleanSupplier { true }).identity)
+        producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
+    }
+
+    @Test fun oversizePrivateMappingsAreRefusedWithoutDiscardingExistingPrivateTabs() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val owner = producer.prepareNew(account); assertTrue(producer.activate(owner, Port()))
+        val privateTab = tab("private-existing", true); val privateProfile = WebsiteProfile("private-shared", true)
+        val first = producer.tab(owner, privateTab, privateProfile, BooleanSupplier { true })
+        // The cap protects the mapping tables: an unknown tab at the cap is refused,
+        // while an already-mapped tab keeps its identity.
+        repeat(CHROME_MAX_TABS_PER_OWNER - 1) { producer.tab(owner, tab("filler-$it", true), privateProfile, BooleanSupplier { true }) }
+        val existing = producer.tab(owner, privateTab, privateProfile, BooleanSupplier { true })
+        assertEquals(first.identity, existing.identity)
+        assertThrows(IllegalStateException::class.java) { producer.tab(owner, tab("one-past-cap", true), privateProfile, BooleanSupplier { true }) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
+    }
+
+    @Test fun oversizePublicRegistryEntriesAreRefusedAndBytesUnchanged() {
+        val storage = Bytes(); val registry = ChromeIdentityRegistry(storage)
+        val producer = ChromeOwnerProducer(registry) { ownership() }
+        val owner = producer.prepareNew(account); assertTrue(producer.activate(owner, Port()))
+        repeat(CHROME_MAX_PROFILES_PER_OWNER) { producer.tab(owner, tab("tab-$it"), WebsiteProfile("profile-$it"), BooleanSupplier { true }) }
+        val before = storage.value!!.copyOf()
+        assertThrows(IllegalArgumentException::class.java) { producer.tab(owner, tab("one-more-tab"), WebsiteProfile("one-more-profile"), BooleanSupplier { true }) }
+        assertArrayEquals(before, storage.value)
+        producer.revoke(owner); producer.releaseAfterTeardown(owner); registry.close()
+    }
+
     @Test fun atomicAccountPublicationRequiresImmediateIdentityAndCloseGateBeforeNativeUse() {
         val image = AccountRecordsSnapshot(account = "A", device = "device-A", epoch = 9, phase = "live")
         val lease = SyncIdentityLease("A", "device-A", 9)

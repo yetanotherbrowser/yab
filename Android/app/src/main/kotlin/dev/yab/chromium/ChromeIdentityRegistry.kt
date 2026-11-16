@@ -54,6 +54,10 @@ class FileChromeRegistryBytes(file: File) : ChromeRegistryBytes {
         check(!Files.isSymbolicLink(lockFile.toPath())) { "Registry lock must belong to this app" }
         channel = FileChannel.open(lockFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
         lock = try { channel.tryLock() ?: throw IOException("Local Chromium identities already have a writer") }
+        catch (overlap: java.nio.channels.OverlappingFileLockException) {
+            // Same-JVM second writer: identical contract, one IOException type for callers.
+            channel.close(); throw IOException("Local Chromium identities already have a writer")
+        }
         catch (error: Exception) { channel.close(); throw error }
     }
 
@@ -174,7 +178,7 @@ class ChromeIdentityRegistry(
         val ids = allUUIDs(value)
         ids.forEach(::canonicalUUID); require(ids.distinct().size == ids.size)
         value.entries.forEach { entry ->
-            require(entry.profiles.size <= 256 && entry.tabs.size <= 4096)
+            require(entry.profiles.size <= CHROME_MAX_PROFILES_PER_OWNER && entry.tabs.size <= CHROME_MAX_TABS_PER_OWNER)
             (entry.profiles.keys + entry.tabs.keys).forEach(::boundedIdentifier)
         }
     }
@@ -193,6 +197,11 @@ class ChromeIdentityRegistry(
     }
     @Synchronized override fun close() { if (!closed) { closed = true; storage.close() } }
 }
+
+/** One namespace per browser profile; enforced in both the durable registry and RAM-only Private mappings. */
+internal const val CHROME_MAX_PROFILES_PER_OWNER = 256
+/** One namespace per browser tab; enforced in both the durable registry and RAM-only Private mappings. */
+internal const val CHROME_MAX_TABS_PER_OWNER = 4096
 
 private const val MAX_REGISTRY_BYTES = 2 * 1024 * 1024
 internal fun boundedIdentifier(value: String) {
