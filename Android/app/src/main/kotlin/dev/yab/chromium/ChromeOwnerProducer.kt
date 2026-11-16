@@ -36,8 +36,10 @@ class ChromeOwnerActivation internal constructor(
     private val belongsToProducer: () -> Boolean,
 ) {
     internal val revoked = AtomicBoolean(false)
-    internal var port: ChromeBootstrapPort? = null
-    internal var activated = false
+    // Read by lease callbacks and teardown paths on Chromium's UI thread while
+    // transitions happen under the producer monitor. Volatile keeps those reads honest.
+    @Volatile internal var port: ChromeBootstrapPort? = null
+    @Volatile internal var activated = false
     @Volatile internal var privateGeneration = 0L
     internal val privateProfiles = mutableMapOf<String, String>()
     internal val privateTabs = mutableMapOf<String, String>()
@@ -58,6 +60,19 @@ class ChromeTabActivation internal constructor(
  * Prepares stable native IDs before ChromeActivity/Profile initialization. No Chrome int IDs,
  * cookies, seals, restored owner snapshot, or Sync credentials are read/written here.
  * Registry preparation is IO; activate/revoke/release calls run on Chromium's UI thread.
+ *
+ * Threading contract: this monitor is the single enforcement point of the one-active-owner
+ * invariant, so every mutating call (prepare*, activate, revoke, ownershipChanged, tab,
+ * privateTabsDisposed, releaseAfterTeardown) is @Synchronized and must run on Chromium's UI
+ * thread, while lease callbacks and ownershipChanged re-checks may fire from native or Sync
+ * threads. Port calls and registry IO happen under the monitor on purpose: the window where a
+ * revoked owner could reach the native port must not exist, and fail-stuck (a blocked caller)
+ * is preferred over fail-corrupt (a revoked owner activating native resources). Callers must
+ * never await this monitor from Android's main thread while native teardown runs elsewhere.
+ *
+ * The activation barrier gates only the Chrome engine, never Yab's process launch: when the
+ * Sync lease is unavailable at cold start, activate returns false and the caller must show
+ * Yab's own UI instead of starting a new Chrome owner; no automatic startNewOwner fallback.
  */
 class ChromeOwnerProducer(
     private val registry: ChromeIdentityRegistry,
@@ -92,9 +107,15 @@ class ChromeOwnerProducer(
         return prepared
     }
 
-    /** True is the startup barrier. Only then may the engine ensureProfile/create a Chrome Tab. */
+    /**
+     * True is the startup barrier for the Chrome engine alone; Yab's own launch never waits on it.
+     * Two refusal exits: a lease failure before native acceptance discards the ticket entirely
+     * (active cleared, no native work was done), while a failure after acceptance keeps the
+     * ticket current with a revoked lease and a revokeOwner() already sent, so the caller must
+     * finish native teardown and call releaseAfterTeardown. Never call this again on refusal.
+     */
     @Synchronized fun activate(owner: ChromeOwnerActivation, port: ChromeBootstrapPort): Boolean {
-        check(active.get() === owner && owner.port == null && !owner.activated)
+        check(active.get() === owner && owner.port == null && !owner.activated) { "This prepared Chrome owner is not current, already activated or already released" }
         if (!owner.lease.getAsBoolean()) { active.set(null); return false }
         owner.port = port
         try {
@@ -156,8 +177,8 @@ class ChromeOwnerProducer(
         boundedIdentifier(tab.id); boundedIdentifier(profile.id)
         val privateGeneration = owner.privateGeneration
         val identity = if (tab.isPrivate) {
-            check(owner.privateProfiles.size < 256 || profile.id in owner.privateProfiles)
-            check(owner.privateTabs.size < 4096 || tab.id in owner.privateTabs)
+            check(owner.privateProfiles.size < CHROME_MAX_PROFILES_PER_OWNER || profile.id in owner.privateProfiles)
+            check(owner.privateTabs.size < CHROME_MAX_TABS_PER_OWNER || tab.id in owner.privateTabs)
             ChromeNamespaceIdentity(owner.identity.accountUUID,
                 owner.privateTabs.getOrPut(tab.id) { UUID.randomUUID().toString() },
                 owner.privateProfiles.getOrPut(profile.id) { UUID.randomUUID().toString() }, inMemory = true, privateMode = true)
