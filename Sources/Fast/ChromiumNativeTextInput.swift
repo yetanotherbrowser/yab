@@ -84,9 +84,13 @@ struct ChromiumKeyInterpretation: Equatable {
             // keeps; passed on, the page would type it after all.
             return taken && commands == 0 ? .kept : .page
         }
+        // A key that types one character goes to the page as a key. One that
+        // carries several (a completion or snippet app typing a whole string
+        // with one key event) goes as text: the page's own handling of the
+        // key types only its first character.
         if !inputMethod, !composing, commands == 0, edits.count == 1,
            case .insert(let text, let range) = edits[0], range.location == NSNotFound,
-           let typed, !typed.isEmpty, text == typed { return .page }
+           let typed, typed.count == 1, text == typed { return .page }
         return .inputMethod
     }
 }

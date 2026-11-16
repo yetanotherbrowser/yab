@@ -140,6 +140,18 @@ struct ChromiumInputMethodTests {
         #expect(read.route(typed: "\u{7f}", inputMethod: false, taken: true) == .page)
     }
 
+    @Test func aKeyCarryingSeveralCharactersIsTypedAsText() {
+        // A completion or snippet app types a whole string with one key event.
+        // The page's own key handling types only the key's first character.
+        let none = NSRange(location: NSNotFound, length: 0)
+        var read = ChromiumKeyInterpretation()
+        read.edits = [.insert(" votre ", replacing: none)]
+        #expect(read.route(typed: " votre ", inputMethod: false, taken: true) == .inputMethod)
+        // One character, even of two UTF-16 units, is still a key.
+        read.edits = [.insert("🙂", replacing: none)]
+        #expect(read.route(typed: "🙂", inputMethod: false, taken: true) == .page)
+    }
+
     @Test func replacementCoordinatesAreUTF16AndMarkedTextStartsAtTheSelection() {
         #expect(ChromiumNativeTextInput.replacementFields(NSRange(location: NSNotFound, length: 0)).isEmpty)
         #expect(ChromiumNativeTextInput.replacementFields(NSRange(location: Int.max - 1, length: 4)).isEmpty)
