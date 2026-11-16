@@ -19,6 +19,7 @@ data class ChromeSyncOwnership(
 
 /** The unapplied Chromium fork's bootstrap implements this port on its required UI thread. */
 interface ChromeBootstrapPort {
+    /** False refuses the saved owner and guarantees native installed nothing; no revokeOwner follows. */
     fun activateSavedOwner(accountUUID: String, expectedOwnerEpochUUID: String, lease: BooleanSupplier): Boolean
     fun startNewOwner(accountUUID: String, ownerEpochUUID: String, lease: BooleanSupplier)
     fun revokeOwner()
@@ -68,7 +69,8 @@ class ChromeTabActivation internal constructor(
  * threads. Port calls and registry IO happen under the monitor on purpose: the window where a
  * revoked owner could reach the native port must not exist, and fail-stuck (a blocked caller)
  * is preferred over fail-corrupt (a revoked owner activating native resources). Callers must
- * never await this monitor from Android's main thread while native teardown runs elsewhere.
+ * never await this monitor from Android's main thread while native teardown runs elsewhere;
+ * the seam's first consumer enforces that exclusion with a main-Looper assertion.
  *
  * The activation barrier gates only the Chrome engine, never Yab's process launch: when the
  * Sync lease is unavailable at cold start, activate returns false and the caller must show
@@ -109,10 +111,12 @@ class ChromeOwnerProducer(
 
     /**
      * True is the startup barrier for the Chrome engine alone; Yab's own launch never waits on it.
-     * Two refusal exits: a lease failure before native acceptance discards the ticket entirely
-     * (active cleared, no native work was done), while a failure after acceptance keeps the
-     * ticket current with a revoked lease and a revokeOwner() already sent, so the caller must
-     * finish native teardown and call releaseAfterTeardown. Never call this again on refusal.
+     * Three refusal exits, none retryable on the same ticket: a dead lease before native
+     * acceptance and a refused activateSavedOwner both discard the ticket entirely (active
+     * cleared, native installed nothing, no revokeOwner), while a lease dying after acceptance
+     * keeps the ticket current with a revoked lease and a revokeOwner() already sent, so the
+     * caller must finish native teardown and call releaseAfterTeardown. Never call this again
+     * on refusal.
      */
     @Synchronized fun activate(owner: ChromeOwnerActivation, port: ChromeBootstrapPort): Boolean {
         check(active.get() === owner && owner.port == null && !owner.activated) { "This prepared Chrome owner is not current, already activated or already released" }
