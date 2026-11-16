@@ -54,7 +54,7 @@ class YabApplication : Application() {
         check(Application.getProcessName() == packageName) { "The Chrome owner lifecycle belongs to the main app process" }
         if (!chromePortPresent()) null else ChromeEngineHost.create(
             dev.yab.chromium.AndroidChromeOwnerSource.registry(this),
-            { dev.yab.chromium.AndroidChromeOwnerSource.ownership(sync) },
+            { dev.yab.chromium.AndroidChromeOwnerSource.ownershipOf(sync) },
             ::chromeBootstrapPort,
             { check(Looper.myLooper() == Looper.getMainLooper()) { "Chrome owner calls must stay on the main thread" } },
         )
