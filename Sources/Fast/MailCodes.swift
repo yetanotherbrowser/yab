@@ -533,7 +533,9 @@ extension Browser {
                 return
             }
             let fresh = SentCode(id: code.id, code: made, from: code.from, at: nil, source: .apple, mine: true)
-            guard request.accepts(fresh), self.offersAutofill(tab) else { return }
+            // The field was bound when the row was picked (document, field,
+            // request, above); the Touch ID sheet may hold key still.
+            guard request.accepts(fresh), self.offersAutofill(tab, key: false) else { return }
             web.window?.makeFirstResponder(web)
             self.putCode(fresh, into: web, site: list.site, document: document, field: field)
         }
