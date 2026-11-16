@@ -176,9 +176,12 @@ static void AccessibilityTypeIntoFocus() {
   using Setter = void (*)(::id, SEL, NSString*);
   const Setter chromium = (Setter)method_getImplementation(inherited);
   IMP typed = imp_implementationWithBlock(^(::id element, NSString* text) {
-    NSView* view = [text isKindOfClass:NSString.class] ? AccessibilityFocusView(element) : nil;
-    if (getenv("YAB_PROBE") && *getenv("YAB_PROBE")) fprintf(stderr, "YabCore AX selected text: %lu characters, %s\n", (unsigned long)text.length, view ? "typed into the page's focus" : "not a page's focus, Chromium's path");
-    if ([view respondsToSelector:@selector(insertText:replacementRange:)]) {
+    // A client can write any value: only a string is typed, or measured.
+    const bool string = [text isKindOfClass:NSString.class];
+    NSView* view = string ? AccessibilityFocusView(element) : nil;
+    const bool types = [view respondsToSelector:@selector(insertText:replacementRange:)];
+    if (getenv("YAB_PROBE") && *getenv("YAB_PROBE")) fprintf(stderr, "YabCore AX selected text: %lu characters, %s\n", string ? (unsigned long)text.length : 0ul, types ? "typed into the page's focus" : "not a page's focus, Chromium's path");
+    if (types) {
       [(id<NSTextInputClient>)view insertText:text replacementRange:NSMakeRange(NSNotFound, 0)];
       return;
     }
