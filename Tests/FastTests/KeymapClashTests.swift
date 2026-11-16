@@ -145,4 +145,48 @@ struct KeymapClashTests {
             #expect(snippets.snippet(snippet.id)?.hotkey == key.stored)
         }
     }
+
+    /// ⌘H is Hide Yab's, so macOS keeps it, until App Shortcuts gives Hide
+    /// Yab other keys: then an action may take it, and loses it again when
+    /// Hide Yab has ⌘H back (register 2989).
+    @Test func commandHIsFreeOnceAppShortcutsMoveHideYab() {
+        withDefaults { keymap in
+            let saved = NSApp.mainMenu
+            let menu = NSMenu(), app = NSMenuItem()
+            app.submenu = NSMenu()
+            let hide = NSMenuItem(title: "Hide Yab", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+            app.submenu?.addItem(hide)
+            menu.addItem(app)
+            NSApp.mainMenu = menu
+            defer {
+                NSApp.mainMenu = saved
+                keymap.take(system: [:])
+            }
+            let commandH = Hotkey("h", .command)
+            keymap.take(system: [:])
+            guard case .refused(let words) = keymap.clash(commandH, for: .duplicate) else {
+                Issue.record("⌘H is Hide Yab's while nobody moved it")
+                return
+            }
+            #expect(words == "macOS keeps this one.")
+
+            // App Shortcuts gives Hide Yab ⌃⌘H, and AppKit draws it so.
+            hide.keyEquivalentModifierMask = [.control, .command]
+            keymap.take(system: ["Hide Yab": "^@h"])
+            if case .refused(let words) = keymap.clash(commandH, for: .duplicate) {
+                Issue.record("⌘H refused after Hide Yab moved: \(words)")
+            }
+            // A choice of ⌘H is kept, not dropped as macOS's. (Not through
+            // `set`: it reads this Mac's own App Shortcuts again.)
+            let chose = [Shortcut.Action.duplicate.rawValue: commandH.stored]
+            #expect(Keymap.valid(commandH, for: .duplicate))
+            #expect(Keymap.resolved(chosen: chose)[.duplicate] == commandH)
+
+            // Given ⌘H back, Hide Yab has it again and the action does not.
+            hide.keyEquivalentModifierMask = .command
+            keymap.take(system: ["Hide Yab": "@h"])
+            #expect(!Keymap.valid(commandH, for: .duplicate))
+            #expect(Keymap.resolved(chosen: chose)[.duplicate] != commandH)
+        }
+    }
 }
