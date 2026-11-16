@@ -6,6 +6,7 @@ import java.io.File
 
 /** One atomic account/journal publication, confirmed against the bridge's immediate close lease. */
 class AndroidChromeOwnerSource private constructor(private val sync: AndroidSyncBridge) {
+    /** Null account/device snapshots map to the off state: only StandaloneLocal can be permitted, never Paired. */
     fun current(): ChromeSyncOwnership {
         val image = sync.accountRecords.value
         return ChromeSyncOwnership(image.account, image.device, image.epoch, sync.nativeOwnerCurrent(image))
