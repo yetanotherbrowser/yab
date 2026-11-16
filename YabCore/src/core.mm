@@ -1619,7 +1619,7 @@ static NSEvent* DispatchHostedKeyboard(NSEvent* event) {
   // whose focused element the other app was handed (accessibility.inc).
   if (!target && !event.window && event.type != NSEventTypeFlagsChanged && !KeyboardEnvelopeOwned(event)) {
     for (auto& [id, tab] : tabs) {
-      if (tab.externallyHosted && tab.focused && tab.visible && !tab.closing && tab.native) { target = &tab; break; }
+      if (tab.externallyHosted && tab.focused && tab.visible && !tab.closing && tab.native && tab.browser) { target = &tab; break; }
     }
     if (target && getenv("YAB_PROBE") && *getenv("YAB_PROBE"))
       fprintf(stderr, "YabCore keyboard from another app: %lu characters to %s\n", (unsigned long)event.characters.length, target->id.c_str());
