@@ -40,6 +40,7 @@ final class LinkRoutes: ObservableObject {
     static let shared = LinkRoutes()
 
     nonisolated static let key = "links.routes"
+    nonisolated static let displayOrderKey = "links.routes.display-order"
     nonisolated static let defaultSpaceKey = "links.routes.default-space"
     /// A destination token, not a space or a remembered last-used UUID.
     /// Old clients ignore rules with this unknown destination; old fixed
@@ -52,8 +53,19 @@ final class LinkRoutes: ObservableObject {
 
     @Published private(set) var defaultSpace: UUID?
     @Published private(set) var routes: [LinkRoute]
+    @Published private(set) var displayOrder: [String]
     @Published private(set) var kept: [Kept]
     @Published private(set) var declined: Set<String>
+    private let settings: UserDefaults
+
+    var displayedRoutes: [LinkRoute] {
+        let positions = Dictionary(displayOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return routes.enumerated().sorted { first, second in
+            let firstPosition = positions[first.element.id] ?? (displayOrder.count + first.offset)
+            let secondPosition = positions[second.element.id] ?? (displayOrder.count + second.offset)
+            return firstPosition < secondPosition
+        }.map(\.element)
+    }
 
     struct Kept: Codable, Equatable {
         var site: String
@@ -73,11 +85,13 @@ final class LinkRoutes: ObservableObject {
     nonisolated static let often = 3
     nonisolated static let window: TimeInterval = 7 * 24 * 3600
 
-    private init() {
-        defaultSpace = Store.settings.string(forKey: Self.defaultSpaceKey).flatMap(UUID.init(uuidString:))
-        routes = Self.decode([LinkRoute].self, Self.key) ?? []
-        kept = Self.decode([Kept].self, Self.keptKey) ?? []
-        declined = Set(Store.settings.stringArray(forKey: Self.declinedKey) ?? [])
+    init(settings: UserDefaults = Store.settings) {
+        self.settings = settings
+        defaultSpace = settings.string(forKey: Self.defaultSpaceKey).flatMap(UUID.init(uuidString:))
+        routes = Self.decode([LinkRoute].self, Self.key, settings: settings) ?? []
+        displayOrder = settings.stringArray(forKey: Self.displayOrderKey) ?? []
+        kept = Self.decode([Kept].self, Self.keptKey, settings: settings) ?? []
+        declined = Set(settings.stringArray(forKey: Self.declinedKey) ?? [])
     }
 
     // MARK: - finding
@@ -130,7 +144,7 @@ final class LinkRoutes: ObservableObject {
 
     func setDefaultSpace(_ space: UUID?) {
         defaultSpace = space
-        Store.settings.set(space?.uuidString, forKey: Self.defaultSpaceKey)
+        settings.set(space?.uuidString, forKey: Self.defaultSpaceKey)
     }
 
     /// Only the winning external rule may bypass Small Window. This does
@@ -297,6 +311,15 @@ final class LinkRoutes: ObservableObject {
 
     // MARK: - changing
 
+    func move(_ site: String, to index: Int) {
+        var order = displayedRoutes.map(\.id)
+        guard let from = order.firstIndex(of: site) else { return }
+        order.remove(at: from)
+        order.insert(site, at: min(max(0, index), order.count))
+        displayOrder = order
+        settings.set(order, forKey: Self.displayOrderKey)
+    }
+
     /// This site's links to `space`, in its place if it had a route.
     func set(_ site: String, to space: UUID) {
         if let at = routes.firstIndex(where: { $0.site == site }) {
@@ -311,6 +334,11 @@ final class LinkRoutes: ObservableObject {
     /// A rule edited: its text and space in the old one's place. Typed as
     /// another rule already there, the two become this one.
     func replace(_ old: String, with site: String, to space: UUID) {
+        if routes.contains(where: { $0.site == old }) {
+            displayOrder = displayedRoutes.map(\.id)
+                .filter { $0 != site || $0 == old }
+                .map { $0 == old ? site : $0 }
+        }
         routes = Self.replacing(routes, old, with: site, to: space)
         kept.removeAll { $0.site == site }
         save()
@@ -409,17 +437,19 @@ final class LinkRoutes: ObservableObject {
     // MARK: - kept
 
     private func save() {
-        Self.encode(routes, Self.key)
-        Self.encode(kept, Self.keptKey)
-        Store.settings.set(declined.sorted(), forKey: Self.declinedKey)
+        displayOrder = displayedRoutes.map(\.id)
+        settings.set(displayOrder, forKey: Self.displayOrderKey)
+        Self.encode(routes, Self.key, settings: settings)
+        Self.encode(kept, Self.keptKey, settings: settings)
+        settings.set(declined.sorted(), forKey: Self.declinedKey)
     }
 
-    private static func decode<T: Decodable>(_ type: T.Type, _ key: String) -> T? {
-        Store.settings.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
+    private static func decode<T: Decodable>(_ type: T.Type, _ key: String, settings: UserDefaults) -> T? {
+        settings.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
-    private static func encode<T: Encodable>(_ value: T, _ key: String) {
+    private static func encode<T: Encodable>(_ value: T, _ key: String, settings: UserDefaults) {
         guard let data = try? JSONEncoder().encode(value) else { return }
-        Store.settings.set(data, forKey: key)
+        settings.set(data, forKey: key)
     }
 }
