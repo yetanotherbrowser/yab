@@ -7,6 +7,7 @@ import dev.yab.sync.SyncIdentityLease
 import dev.yab.sync.nativeAccountOwnerCurrent
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -408,5 +409,323 @@ class ChromeOwnerProducerTest {
         assertFalse(nativeAccountOwnerCurrent(standalone, standalone, null, 11, true))
         assertFalse(nativeAccountOwnerCurrent(standalone, standalone, lease, 11, false))
         assertFalse(nativeAccountOwnerCurrent(standalone, standalone, null, 12, false))
+    }
+
+    @Test fun doubleActivationIsRefusedAndTheTicketStaysUsableOnce() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        val port = Port()
+        assertTrue(producer.activate(owner, port))
+        assertThrows(IllegalStateException::class.java) { producer.activate(owner, Port()) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun releaseWithoutRevocationIsRefusedAndReleaseAfterUnactivatedRevokeSkipsThePort() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        val port = Port()
+        assertTrue(producer.activate(owner, port))
+        // Teardown requires the revoke first: the native side is still live.
+        assertThrows(IllegalStateException::class.java) { producer.releaseAfterTeardown(owner) }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        assertTrue(port.revoked)
+        // A revoked-before-activation ticket has no port to release; the dead-lease refusal
+        // discards it, and its port never hears a native call.
+        val other = producer.prepareNew(account)
+        producer.revoke(other)
+        val bare = Port()
+        assertFalse(producer.activate(other, bare))
+        assertFalse(bare.revoked)
+        registry.close()
+    }
+
+    @Test fun tabCallsAfterRevokeAreRefusedByTheEntryCheckBeforeMapping() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        assertTrue(producer.activate(owner, Port()))
+        producer.revoke(owner)
+        assertThrows(IllegalStateException::class.java) {
+            producer.tab(owner, tab("public-row"), WebsiteProfile("shared")) { true }
+        }
+        producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun aDuplicateMintedUUIDIsRefusedInsteadOfReusingAnIdentity() {
+        var first = true
+        val minted = mutableListOf<String>()
+        val registry = ChromeIdentityRegistry(Bytes()) { if (first) { first = false; "0d9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d" } else "1d9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d".also { minted.add(it) } }
+        val owner = registry.beginNewOwner(account)
+        // beginNewOwner minted two ids (account + generation); publicIdentity re-mints only
+        // fresh ones. Forcing a collision: a registry whose mint repeats the account UUID.
+        val repeating = ChromeIdentityRegistry(Bytes()) { "2d9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d" }
+        assertThrows(IllegalStateException::class.java) { repeating.beginNewOwner(account) }
+        repeating.close()
+        registry.close()
+    }
+
+    @Test fun anOverfullPerOwnerEntryIsRefusedAtLoad() {
+        val storage = Bytes()
+        val profiles = (1..CHROME_MAX_PROFILES_PER_OWNER + 1).joinToString(",") { "\"p$it\":\"0d9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d\"" }
+        val roguePayload = """{"entries":[{"kind":"standalone","account":"0e9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d","generation":"0f9f6b84-1111-4a66-9d1f-3f4e5a6b7c8d","profiles":{$profiles}}]}"""
+        val envelope = "{\"format\":1,\"payload\":${jsonString(roguePayload)},\"sha256\":\"${digest(roguePayload.toByteArray())}\"}"
+        storage.value = envelope.toByteArray()
+        assertThrows(Exception::class.java) { ChromeIdentityRegistry(storage) }
+    }
+
+    @Test fun anUnknownOwnerKindIsRefusedAtLoadInsteadOfBecomingAnOwner() {
+        val storage = Bytes()
+        val roguePayload = """{"entries":[{"kind":"rogue","account":"a","generation":"b"}]}"""
+        val envelope = "{\"format\":1,\"payload\":${jsonString(roguePayload)},\"sha256\":\"${digest(roguePayload.toByteArray())}\"}"
+        storage.value = envelope.toByteArray()
+        assertThrows(Exception::class.java) { ChromeIdentityRegistry(storage) }
+        assertArrayEquals(envelope.toByteArray(), storage.value)
+    }
+
+    @Test fun aStandaloneEntryCarryingAnOpaqueAccountIsRefusedAtLoad() {
+        val storage = Bytes()
+        val roguePayload = """{"entries":[{"kind":"standalone","opaqueAccount":"x","account":"a","generation":"b"}]}"""
+        val envelope = "{\"format\":1,\"payload\":${jsonString(roguePayload)},\"sha256\":\"${digest(roguePayload.toByteArray())}\"}"
+        storage.value = envelope.toByteArray()
+        assertThrows(Exception::class.java) { ChromeIdentityRegistry(storage) }
+    }
+
+    @Test fun aPairedEntryWithoutItsOpaqueAccountIsRefusedAtLoad() {
+        val storage = Bytes()
+        val roguePayload = """{"entries":[{"kind":"paired","account":"a","generation":"b"}]}"""
+        val envelope = "{\"format\":1,\"payload\":${jsonString(roguePayload)},\"sha256\":\"${digest(roguePayload.toByteArray())}\"}"
+        storage.value = envelope.toByteArray()
+        assertThrows(Exception::class.java) { ChromeIdentityRegistry(storage) }
+    }
+
+    private fun digest(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    private fun jsonString(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    @Test fun ownershipChangedWithNoActiveOwnerOrLiveLeaseIsANoOpOrRevokes() {
+        val registry = ChromeIdentityRegistry(Bytes()); var current = ownership()
+        val producer = ChromeOwnerProducer(registry) { current }
+        // No active owner: the collector fires and nothing happens.
+        producer.ownershipChanged()
+        val owner = producer.prepareNew(account)
+        producer.activate(owner, Port())
+        // The lease still holds: no revoke.
+        producer.ownershipChanged()
+        // The lease dies underneath the collector: revoke before teardown.
+        current = current.copy(epoch = current.epoch + 1)
+        producer.ownershipChanged()
+        assertFalse(owner.lease.getAsBoolean())
+        producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun aStaleSourceDuringTabMappingRefusesInsteadOfMapping() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        producer.activate(owner, Port())
+        assertThrows(IllegalStateException::class.java) {
+            producer.tab(owner, tab("public-row"), WebsiteProfile("shared")) { false }
+        }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun revokeBeforeActivationHasNoPortToCallAndStillCycles() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        // Revoke before activate: owner.port is null, no native call, and the documented
+        // dead-lease refusal discards the ticket instead of reaching the port.
+        producer.revoke(owner)
+        assertTrue(owner.revoked.get())
+        val port = Port()
+        assertFalse(producer.activate(owner, port))
+        assertEquals(0, port.savedCalls + port.freshCalls)
+        // The dead-lease refusal discarded the ticket: no teardown is owed on it.
+        registry.close()
+    }
+
+    @Test fun aPublicTabWithAPrivateProfileIsRefusedBeforeAnyMapping() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        producer.activate(owner, Port())
+        assertThrows(IllegalArgumentException::class.java) {
+            producer.tab(owner, tab("public-row"), WebsiteProfile("shared", isPrivate = true)) { true }
+        }
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun revokeReleaseAndDisposalRejectForeignOrOutOfOrderTickets() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        producer.cancelPrepared(owner)
+        // A second owner is a foreign ticket to the first one's teardown entry points;
+        // canceling the first left no active owner, so every teardown call on it fails its check.
+        val other = producer.prepareNew(account)
+        assertThrows(IllegalStateException::class.java) { producer.revoke(owner) }
+        assertThrows(IllegalStateException::class.java) { producer.releaseAfterTeardown(owner) }
+        assertThrows(IllegalStateException::class.java) { producer.privateTabsDisposed(owner) }
+        // The live ticket still cycles cleanly after the refusals.
+        producer.activate(other, Port())
+        producer.revoke(other); producer.privateTabsDisposed(other); producer.releaseAfterTeardown(other)
+        registry.close()
+    }
+
+    @Test fun syncOwnershipPermissionCoversEveryAccountDeviceAndAvailabilityArm() {
+        val paired = ChromeOwnerSource.Paired("opaque/account-A")
+        assertTrue(ChromeSyncOwnership("opaque/account-A", "device", 4, available = true).permits(paired))
+        // A Paired owner is refused with a missing device, a different account, or no availability.
+        assertFalse(ChromeSyncOwnership("opaque/account-A", null, 4, available = true).permits(paired))
+        assertFalse(ChromeSyncOwnership("opaque/account-A", "", 4, available = true).permits(paired))
+        assertFalse(ChromeSyncOwnership("other", "device", 4, available = true).permits(paired))
+        assertFalse(ChromeSyncOwnership("opaque/account-A", "device", 4, available = false).permits(paired))
+        assertTrue(ChromeSyncOwnership(null, null, 4, available = true).permits(ChromeOwnerSource.StandaloneLocal))
+        assertFalse(ChromeSyncOwnership("opaque/account-A", null, 4, available = true).permits(ChromeOwnerSource.StandaloneLocal))
+        assertFalse(ChromeSyncOwnership(null, "device", 4, available = true).permits(ChromeOwnerSource.StandaloneLocal))
+        assertFalse(ChromeSyncOwnership(null, null, 4, available = false).permits(ChromeOwnerSource.StandaloneLocal))
+    }
+
+    @Test fun aThrowingOwnershipSupplierFailsTheLeaseClosedInsteadOfLeakingTheProducer() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        var throwing = false
+        val producer = ChromeOwnerProducer(registry, { if (throwing) throw IllegalStateException("sync snapshot vanished") else ownership() })
+        val owner = producer.prepareNew(account)
+        throwing = true
+        assertFalse(owner.lease.getAsBoolean())
+        // The revoked lease is sticky and never self-heals.
+        throwing = false
+        assertFalse(owner.lease.getAsBoolean())
+        registry.close()
+    }
+
+    @Test fun savedOwnerLookupWhenOwnershipShiftsDuringIORefusesWithoutATicket() {
+        val storage = Bytes()
+        val registry = ChromeIdentityRegistry(storage)
+        registry.beginNewOwner(account)
+        // Ownership must be stable between the capture and the post-IO recheck; the second
+        // supplier call simulates Sync mutating it inside that window.
+        var calls = 0
+        val producer = ChromeOwnerProducer(registry, { if (calls++ == 1) ownership(epoch = 5) else ownership() })
+        assertThrows(Exception::class.java) { producer.prepareSaved(account) }
+        // The refusal left no ticket: an explicit new owner can still be prepared.
+        val owner = producer.prepareNew(account)
+        producer.cancelPrepared(owner)
+        registry.close()
+    }
+
+    @Test fun prepareSavedWithoutASavedOwnerReturnsNullAndLeavesNoTicket() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        assertNull(producer.prepareSaved(account))
+        registry.close()
+    }
+
+    @Test fun aThrowingOwnershipSupplierDuringTabMappingFailsTheTabLeaseClosed() {
+        val registry = ChromeIdentityRegistry(Bytes())
+        val producer = ChromeOwnerProducer(registry, ::ownership)
+        val owner = producer.prepareNew(account)
+        val port = Port(); producer.activate(owner, port)
+        var throwing = false
+        val tabActivation = producer.tab(owner, tab("t", privateMode = true), WebsiteProfile("p", isPrivate = true), BooleanSupplier {
+            if (throwing) throw IllegalStateException("native tab source vanished") else true })
+        throwing = true
+        assertFalse(tabActivation.lease.getAsBoolean())
+        // The revoked lease is sticky: a recovered source does not resurrect it.
+        throwing = false
+        assertFalse(tabActivation.lease.getAsBoolean())
+        producer.revoke(owner); producer.releaseAfterTeardown(owner)
+        registry.close()
+    }
+
+    @Test fun fileBytesRefuseDirectoryRegistriesSymlinksAndSecondJVMWritersPerArm() {
+        val directory = Files.createTempDirectory("chrome-file-bytes-").toFile()
+        try {
+            val file = directory.resolve("identities.json")
+            // An existing regular file is accepted: the happy path owns read/replace.
+            FileChromeRegistryBytes(file).use { bytes -> assertNull(bytes.read()) }
+            // A directory in place of the registry file is refused.
+            val nested = directory.resolve("as-directory"); nested.mkdirs()
+            FileChromeRegistryBytes(nested).use { bytes -> assertThrows(IllegalStateException::class.java) { bytes.read() } }
+            // The registry file itself becoming a symbolic link is refused on open and on read.
+            val target = directory.resolve("elsewhere.json")
+            val link = directory.resolve("as-link.json")
+            Files.createSymbolicLink(link.toPath(), target.toPath())
+            assertThrows(IllegalStateException::class.java) { FileChromeRegistryBytes(link) }
+            // A symbolic link in place of the lock file is refused too.
+            val lockTarget = directory.resolve("lock-target")
+            val lockLink = directory.resolve("lock-link.json.lock")
+            Files.createSymbolicLink(lockLink.toPath(), lockTarget.toPath())
+            assertThrows(IllegalStateException::class.java) { FileChromeRegistryBytes(directory.resolve("lock-link.json")) }
+            // A missing parent directory is created on open; a rooted parent that cannot be
+            // created fails the directory check instead.
+            val fresh = directory.resolve("fresh/sub/identities.json")
+            FileChromeRegistryBytes(fresh).close()
+            assertTrue(fresh.parentFile!!.isDirectory)
+            assertThrows(IllegalStateException::class.java) { FileChromeRegistryBytes(File("/nonexistent-root/identities.json")) }
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun aSecondProcessHoldingTheLockFileRefusesOpenWithTheWriterMessage() {
+        val directory = Files.createTempDirectory("chrome-foreign-lock-").toFile()
+        try {
+            val file = directory.resolve("identities.json")
+            val lockFile = File(file.parentFile, file.name + ".lock")
+            // fcntl/flock taken by another process makes tryLock return null; python3 is the
+            // portable holder on both macOS and Linux CI.
+            val holder = ProcessBuilder("python3", "-c", """
+                import fcntl, time
+                f = open(r'${lockFile.absolutePath}', 'w')
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                print('held', flush=True)
+                time.sleep(60)
+                """.trimIndent()).start()
+            try {
+                // The holder prints its marker only after the lock is taken; read it to close
+                // the race instead of sleeping.
+                holder.inputStream.bufferedReader().readLine()
+                val refused = try { FileChromeRegistryBytes(file); null } catch (error: Exception) { error }
+                assertNotNull(refused)
+                assertTrue(refused is IOException)
+                assertEquals("Local Chromium identities already have a writer", refused!!.message)
+            } finally { holder.destroyForcibly() }
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun closedFileBytesFailClosedOnReadAndReplace() {
+        val directory = Files.createTempDirectory("chrome-file-closed-").toFile()
+        try {
+            val bytes = FileChromeRegistryBytes(directory.resolve("identities.json"))
+            bytes.close()
+            assertThrows(IllegalStateException::class.java) { bytes.read() }
+            assertThrows(IllegalStateException::class.java) { bytes.replace(null, "{}".toByteArray()) }
+            // Closing twice stays a no-op: releasing a dead lock is not an error path callers see.
+            bytes.close()
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun fileBytesReplaceRefusesOversizeAndForeignByteChanges() {
+        val directory = Files.createTempDirectory("chrome-file-replace-").toFile()
+        try {
+            val file = directory.resolve("identities.json")
+            FileChromeRegistryBytes(file).use { bytes ->
+                bytes.replace(null, "{}".toByteArray())
+                // The expected digest pins the current bytes: an existing file no longer
+                // matches a null expectation, and a foreign byte change is refused.
+                val digest = MessageDigest.getInstance("SHA-256").digest("{}".toByteArray()).joinToString("") { "%02x".format(it) }
+                assertThrows(IllegalStateException::class.java) { bytes.replace(null, "x".toByteArray()) }
+                file.writeText("tampered")
+                assertThrows(IllegalStateException::class.java) { bytes.replace(digest, "x".toByteArray()) }
+                // Size bounds are checked before the digest: check() throws, not require().
+                assertThrows(IllegalStateException::class.java) { bytes.replace(digest, ByteArray(0)) }
+                assertThrows(IllegalStateException::class.java) { bytes.replace(digest, ByteArray(2 * 1024 * 1024 + 1)) }
+            }
+        } finally { directory.deleteRecursively() }
     }
 }
