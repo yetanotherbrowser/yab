@@ -774,7 +774,7 @@ final class SyncCenter: ObservableObject {
         client.deliver = { [weak self, weak client] items in
             let contextEpoch = ContextPrivacy.shared.epoch
             syncFlushing.sync {
-                var asked: (journal: Journal, rows: [UUID]?, items: [(record: SyncKit.Record, version: Int64)])?
+                var asked: (journal: Journal, rows: [UUID]?, pinsShown: Bool, items: [(record: SyncKit.Record, version: Int64)])?
                 DispatchQueue.main.sync {
                     let span = MainBudget.begin("sync.deliver"); defer { span?.end() }
                     guard let self, let client, self.client === client, let journal = self.journal else { return }
@@ -800,11 +800,11 @@ final class SyncCenter: ObservableObject {
                         self.primary?.writeRows()
                         rows = Spaces.read().map(\.id)
                     }
-                    asked = (journal, rows, items)
+                    asked = (journal, rows, rows != nil && SharedPins.sentAsFirst, items)
                 }
                 guard let asked else { return }
                 let changed = MainBudget.chunk("sync.receive") {
-                    try? Self.receive(asked.items, into: asked.journal, localRows: asked.rows.map { Self.rows($0) })
+                    try? Self.receive(asked.items, into: asked.journal, localRows: asked.rows.map { Self.rows($0, pinsShown: asked.pinsShown) })
                 }
                 var fetched = changed.map { Self.fetch(for: $0, from: asked.journal) } ?? Fetched()
                 fetched.contextEpoch = contextEpoch
@@ -1126,6 +1126,9 @@ final class SyncCenter: ObservableObject {
         var spaces: [Space]?
         /// The spaces whose rows go; the rows are read with the journal work.
         var rows: [UUID]?
+        /// Whether the shared pins head the first space here, so go as its
+        /// pins (SharedPins.syncRow).
+        var pinsShown = false
         var bookmarks: [Bookmark]?
         var settings: [String: Any]?
         var addons = false
@@ -1148,7 +1151,10 @@ final class SyncCenter: ObservableObject {
         let collections = collections.subtracting(excludedCollections)
         var read = Flush(collections: collections)
         if collections.contains(SyncShapes.space) { read.spaces = Spaces.read() }
-        if collections.contains(SyncShapes.tab) { read.rows = Spaces.read().map(\.id) }
+        if collections.contains(SyncShapes.tab) {
+            read.rows = Spaces.read().map(\.id)
+            read.pinsShown = SharedPins.sentAsFirst
+        }
         if collections.contains(SyncShapes.bookmark) { read.bookmarks = Bookmarks.shared.roots }
         if collections.contains(SyncShapes.setting) {
             read.settings = Store.settings.dictionaryRepresentation()
@@ -1181,7 +1187,7 @@ final class SyncCenter: ObservableObject {
         if let spaces = read.spaces {
             try journal.reconcile(SyncShapes.space, SyncShapes.spaces(spaces, orders: orders(SyncShapes.space, in: journal)))
         }
-        if let spaces = read.rows { try reconcileRows(rows(spaces), into: journal, device: deviceID) }
+        if let spaces = read.rows { try reconcileRows(rows(spaces, pinsShown: read.pinsShown), into: journal, device: deviceID) }
         if let bookmarks = read.bookmarks {
             try journal.reconcile(SyncShapes.bookmark, SyncShapes.bookmarks(bookmarks, orders: orders(SyncShapes.bookmark, in: journal)))
         }
@@ -1253,13 +1259,14 @@ final class SyncCenter: ObservableObject {
     }
 
     /// Each space's row as its file has it, or as last asked to be written
-    /// (Session.read), on any thread.
-    nonisolated private static func rows(_ spaces: [UUID]) -> [UUID: Session.Shape] {
+    /// (Session.read), on any thread. `pinsShown`: the shared pins head the
+    /// first space here (SharedPins.on, read on the main thread).
+    nonisolated static func rows(_ spaces: [UUID], pinsShown: Bool) -> [UUID: Session.Shape] {
         // The shared pins go as the first space's (SharedPins.syncRow).
-        var rows = Dictionary(spaces.map { ($0, SharedPins.syncRow($0)) }, uniquingKeysWith: { first, _ in first })
+        var rows = Dictionary(spaces.map { ($0, SharedPins.syncRow($0, pinsShown: pinsShown)) }, uniquingKeysWith: { first, _ in first })
         // Personal can be gone while the shared pins still exist. Keep
         // their sync parent, without reviving Personal's old tabs or space.
-        if rows[Space.firstID] == nil {
+        if pinsShown, rows[Space.firstID] == nil {
             let pins = Session.read(space: Space.pinsID)
             rows[Space.firstID] = SharedPins.folded(pins.tabs, into: .init(tabs: [], front: nil), pinPairs: pins.pairs)
         }
@@ -1735,6 +1742,12 @@ final class SyncCenter: ObservableObject {
             let gone = local.keys.filter { id in !fresh.contains { $0.id == id } }
             addedSpaces = Set(fresh.map(\.id)).subtracting(local.keys)
             for id in gone { primary?.deleteSpace(id) }
+            // The first space never takes sign-ins of its own, as it is
+            // never given them here (Spaces.firstShares, #909): kept
+            // sharing, and the account told so once this delivery is in.
+            if Spaces.firstShares(&fresh) {
+                DispatchQueue.main.async { [weak self] in self?.changed(SyncShapes.space) }
+            }
             Spaces.write(fresh)
         }
 
@@ -1760,7 +1773,7 @@ final class SyncCenter: ObservableObject {
                 let virtual = id == Space.firstID && !localSpaces.contains(id)
                 let pinsRow = Session.read(space: Space.pinsID)
                 let here = virtual ? SharedPins.folded(pinsRow.tabs, into: .init(tabs: [], front: nil), pinPairs: pinsRow.pairs)
-                    : SharedPins.syncRow(id)
+                    : SharedPins.syncRow(id, pinsShown: SharedPins.on)
                 let shape = SyncShapes.row(id, tabs: tabs, folders: folders, pairs: pairs, here: here, device: Self.deviceID, marked: SyncShapes.marked)
                 // The first space's pins are the shared ones while pins are
                 // shared here: apart again, each to its own row.

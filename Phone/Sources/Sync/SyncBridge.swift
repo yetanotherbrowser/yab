@@ -1757,6 +1757,12 @@ final class SyncBridge {
         for id in doomed { deleteSpace(ids.local(id)) }
     }
 
+    /// Whether a space is the Mac's first, Personal: its sign-ins are every
+    /// device's, so Settings offers it no others, as the Mac doesn't (#909).
+    func isFirstSpace(_ spaceID: Space.ID) -> Bool {
+        ids.known(spaceID).map(SyncCollection.isFirstSpace) ?? false
+    }
+
     /// The Mac's first space is where everything was before: it stays, as
     /// on the Mac, whose Delete Space never offers it.
     func mayDeleteSpace(_ spaceID: Space.ID) -> Bool {
@@ -1868,9 +1874,12 @@ final class SyncBridge {
         }
         for space in spaces {
             let id = ids.sync(space.id)
-            let profile = space.signInWith.map { ids.sync($0) }
-            if mirror.spaces[id]?.ownSignIns != space.ownSignIns || mirror.spaces[id]?.signInWith != profile {
-                attempt("space sign-ins") { try [.space(engine.setSpaceSignIns(id, own: space.ownSignIns, signInWith: profile))] }
+            // Never sign-ins of its own for the Mac's first space (#909).
+            let first = SyncCollection.isFirstSpace(id)
+            let own = space.ownSignIns && !first
+            let profile = first ? nil : space.signInWith.map { ids.sync($0) }
+            if mirror.spaces[id]?.ownSignIns != own || mirror.spaces[id]?.signInWith != profile {
+                attempt("space sign-ins") { try [.space(engine.setSpaceSignIns(id, own: own, signInWith: profile))] }
             }
         }
         // Dissolve removed folders before writing their promoted children.
@@ -2001,8 +2010,9 @@ final class SyncBridge {
             let icon = SpaceSymbols.wire(shown: space.emoji, synced: synced.icon)
             if icon != synced.icon { synced.iconChoice = icon; synced.iconChoiceID = UUID().uuidString }
             synced.icon = icon
-            synced.ownSignIns = space.ownSignIns
-            synced.signInWith = space.signInWith.map { ids.sync($0) }
+            let first = SyncCollection.isFirstSpace(sid)
+            synced.ownSignIns = space.ownSignIns && !first
+            synced.signInWith = first ? nil : space.signInWith.map { ids.sync($0) }
             if let look = space.look { synced.paint = SyncPaint(look.raw) }
             synced.order = places[sid]
             out.spaces[sid] = synced
