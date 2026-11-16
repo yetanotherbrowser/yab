@@ -114,6 +114,8 @@ class ChromeOwnerProducerTest {
         assertThrows(IOException::class.java) { producer.prepareNew(account) }
         assertArrayEquals(original, storage.value); assertEquals(old, registry.savedOwner(account))
         val saved = producer.prepareSaved(account)!!
+        // The activation records the ownership snapshot it was prepared under.
+        assertEquals(ownership(), saved.captured)
         assertEquals(old, saved.identity); producer.cancelPrepared(saved); registry.close()
     }
 

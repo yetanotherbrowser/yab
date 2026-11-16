@@ -16,5 +16,8 @@ class AndroidChromeOwnerSourceTest {
         // A stale native gate flips availability without changing the recorded fields.
         val stale = AndroidChromeOwnerSource.ownership(AccountSnapshot("opaque/account-A", "device-A", 9), nativeCurrent = false)
         assertFalse(stale.permits(ChromeOwnerSource.Paired("opaque/account-A")))
+        // The fields stay readable for callers that render or log the capture.
+        assertEquals("opaque/account-A", stale.account); assertEquals("device-A", stale.device)
+        assertEquals(9L, stale.epoch); assertFalse(stale.available)
     }
 }
