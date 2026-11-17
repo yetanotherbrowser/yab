@@ -679,11 +679,17 @@ class ChromeOwnerProducerTest {
         try {
             val file = directory.resolve("identities.json")
             val lockFile = File(file.parentFile, file.name + ".lock")
-            // fcntl/flock taken by another process makes tryLock return null; python3 is the
-            // portable holder on both macOS and Linux CI.
+            // A foreign writer makes tryLock return null. The JDK locks with flock on
+            // macOS and with fcntl record locks on Linux. On Linux the two kinds never
+            // conflict, so the holder takes both there; on macOS both go through the
+            // same inode lock, so taking both after flock would deadlock against
+            // itself and flock alone is the conflict.
+            val isLinux = System.getProperty("os.name").lowercase().contains("linux")
+            val secondLock = if (isLinux) "fcntl.lockf(f.fileno(), fcntl.LOCK_EX)" else ""
             val holder = ProcessBuilder("python3", "-c", """
                 import fcntl, time
                 f = open(r'${lockFile.absolutePath}', 'w')
+                $secondLock
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 print('held', flush=True)
                 time.sleep(60)
