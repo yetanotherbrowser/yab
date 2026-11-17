@@ -700,7 +700,7 @@ struct QuestionStand: View {
             let window = proxy.size
             ZStack {
                 Color.clear.allowsHitTesting(false)
-                    .background(QuestionHost(window: $host))
+                    .background(QuestionHost(window: $host).accessibilityHidden(true))
                 if let question = questions.current, question.place != .settings, question.anchor == nil,
                    host.map(questions.stands(in:)) ?? (question.window == nil) {
                     if question.place == .page {

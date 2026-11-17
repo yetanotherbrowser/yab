@@ -1789,7 +1789,7 @@ struct ReadingPlateHost: NSViewRepresentable {
                 .padding(.trailing, Metrics.rim)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .coordinateSpace(name: Self.space)
-                .environment(\.self, context.environment)
+                .hosted(in: context.environment)
         )
     }
 

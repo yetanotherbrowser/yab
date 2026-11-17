@@ -2381,7 +2381,7 @@ struct WindowSetup: NSViewRepresentable {
 /// bar's is, so the screen's edges tile it, the Option key shows the tiles,
 /// and a tiled window pulled away comes back to its own size. It used to
 /// set the window's origin by hand, which no edge ever saw.
-struct DragStrip: NSViewRepresentable {
+struct DragStrip: View {
     /// How much of the leading edge belongs to the tabs. A representable is a
     /// real view sitting under everything SwiftUI draws on top of it, and a
     /// real view takes the click first, so the run the tabs occupy is refused
@@ -2412,19 +2412,27 @@ struct DragStrip: NSViewRepresentable {
     /// An empty sidebar opens New Tab; title-bar strips keep the system action.
     var doubled: (@MainActor () -> Void)? = nil
 
-    func makeNSView(context: Context) -> NSView { Strip() }
+    // Nothing to read or press: under the lights and the tabs, SwiftUI's
+    // accessibility hit test stopped here and found neither.
+    var body: some View { Host(strip: self).accessibilityHidden(true) }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        (view as? Strip)?.reserved = reserved
-        (view as? Strip)?.tabAir = tabAir
-        (view as? Strip)?.exclusions = exclusions
-        (view as? Strip)?.below = below
-        (view as? Strip)?.trailing = trailing
-        (view as? Strip)?.notch = notch
-        (view as? Strip)?.leadNotch = leadNotch
-        (view as? Strip)?.made = menu
-        (view as? Strip)?.contextTail = contextTail
-        (view as? Strip)?.doubled = doubled
+    private struct Host: NSViewRepresentable {
+        let strip: DragStrip
+
+        func makeNSView(context: Context) -> Strip { Strip() }
+
+        func updateNSView(_ view: Strip, context: Context) {
+            view.reserved = strip.reserved
+            view.tabAir = strip.tabAir
+            view.exclusions = strip.exclusions
+            view.below = strip.below
+            view.trailing = strip.trailing
+            view.notch = strip.notch
+            view.leadNotch = strip.leadNotch
+            view.made = strip.menu
+            view.contextTail = strip.contextTail
+            view.doubled = strip.doubled
+        }
     }
 
     final class Strip: NSView, WindowHandle {

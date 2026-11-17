@@ -18,7 +18,7 @@ struct PeekSurface<Content: View>: NSViewRepresentable {
     func updateNSView(_ view: PeekSurfaceView, context: Context) {
         // A separate native host must retain the surrounding card's full
         // environment (tone, typography, accessibility and color scheme).
-        view.host.rootView = AnyView(content.environment(\.self, context.environment).ignoresSafeArea())
+        view.host.rootView = AnyView(content.hosted(in: context.environment).ignoresSafeArea())
         view.configure(browser: browser, front: front, corner: corner, padding: padding)
     }
 
