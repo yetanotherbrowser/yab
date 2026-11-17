@@ -124,3 +124,17 @@ tasks.withType<Test>().configureEach {
     if (oracle.isPresent) inputs.file(oracle.get()).withPathSensitivity(PathSensitivity.NONE)
 }
 
+
+// Some checkouts do not carry the private chat-work fixture file
+// (Android/parity/chat-work/fixtures.json), so its suite cannot run there.
+// yabExcludeSuites lists suites to skip on such a checkout; an owner
+// machine with the fixtures keeps running everything.
+val excludedSuites = providers.gradleProperty("yabExcludeSuites").orElse("").get()
+    .split(',').map(String::trim).filter(String::isNotEmpty)
+if (excludedSuites.isNotEmpty()) {
+    tasks.withType<Test>().configureEach {
+        filter {
+            excludedSuites.forEach { excludeTestsMatching("$it.*") }
+        }
+    }
+}
