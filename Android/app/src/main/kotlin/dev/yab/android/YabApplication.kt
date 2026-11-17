@@ -4,7 +4,6 @@ import android.app.Application
 import android.os.Looper
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
-import dev.yab.chromium.ChromeBootstrapPort
 import dev.yab.chromium.ChromeEngineHost
 import dev.yab.sync.AndroidSyncBridge
 import dev.yab.notifications.AndroidNotificationSyncPort
@@ -41,8 +40,18 @@ class YabApplication : Application() {
         private set
 
     /**
+     * The Chromium fork's bootstrap presence, resolved once per process from
+     * the classpath link. Null on a build without the fork; never initialized
+     * here, because the producer's activation barrier owns when the fork's
+     * bootstrap first runs.
+     */
+    private val chromePresence: dev.yab.chromium.ChromeForkPresence? by lazy(LazyThreadSafetyMode.NONE) {
+        dev.yab.chromium.ChromeForkPresence.resolve()
+    }
+
+    /**
      * The Chromium seam's first consumer, application-scoped. Null until the
-     * fork APK is present; a build without it never opens the Chrome identity
+     * fork is present; a build without it never opens the Chrome identity
      * registry nor installs a Chrome owner. Gecko keeps serving Android: this
      * host owns only the Chrome-side lifecycle and starts no engine by itself.
      *
@@ -52,19 +61,14 @@ class YabApplication : Application() {
      */
     val chromeHost: ChromeEngineHost? by lazy(LazyThreadSafetyMode.NONE) {
         check(Application.getProcessName() == packageName) { "The Chrome owner lifecycle belongs to the main app process" }
-        if (!chromePortPresent()) null else ChromeEngineHost.create(
+        val presence = chromePresence ?: return@lazy null
+        ChromeEngineHost.create(
             dev.yab.chromium.AndroidChromeOwnerSource.registry(this),
             { dev.yab.chromium.AndroidChromeOwnerSource.ownershipOf(sync) },
-            ::chromeBootstrapPort,
+            { dev.yab.chromium.YabChromeBootstrapPort(presence) },
             { check(Looper.myLooper() == Looper.getMainLooper()) { "Chrome owner calls must stay on the main thread" } },
         )
     }
-
-    /** Milestone 2 replaces this with the fork APK's bootstrap presence check. */
-    private fun chromePortPresent(): Boolean = false
-
-    private fun chromeBootstrapPort(): ChromeBootstrapPort =
-        throw IllegalStateException("The Chromium fork APK's bootstrap is not linked into this build")
 
     override fun onCreate() {
         super.onCreate()
