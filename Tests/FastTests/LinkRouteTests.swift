@@ -3,7 +3,7 @@ import Testing
 @testable import Fast
 
 // Links from other apps kept to a space: what a typed rule becomes, and
-// which route takes an address, patterns before the closest site.
+// which route takes an address in Settings order.
 struct LinkRouteTests {
     static let work = UUID()
     static let home = UUID()
@@ -17,9 +17,11 @@ struct LinkRouteTests {
         #expect(!LinkRoutes.opensInMain([route], for: URL(string: "https://docs.google.com.evil.test/")!))
         #expect(!LinkRoutes.opensInMain([route], for: URL(string: "ftp://docs.google.com/a")!))
         let narrower = LinkRoute(site: "docs.google.com/document", space: Self.home)
-        #expect(!LinkRoutes.opensInMain([route, narrower], for: docs))
+        #expect(LinkRoutes.opensInMain([route, narrower], for: docs))
+        #expect(!LinkRoutes.opensInMain([narrower, route], for: docs))
         let pattern = LinkRoute(site: "*public-example*", space: Self.home, opensInMain: true)
-        #expect(LinkRoutes.opensInMain([narrower, pattern], for: docs))
+        #expect(!LinkRoutes.opensInMain([narrower, pattern], for: docs))
+        #expect(LinkRoutes.opensInMain([pattern, narrower], for: docs))
         #expect(LinkRoutes.best([route], for: docs)?.space == Self.work)
     }
 
@@ -39,7 +41,7 @@ struct LinkRouteTests {
             #expect(LinkRoutes.destination(routes: [gitlab], for: url, available: available, recent: Self.home, fallback: Self.home) == Self.work)
         }
         let pattern = LinkRoute(site: "*merge_requests*", space: Self.home)
-        #expect(LinkRoutes.best([gitlab, pattern], for: URL(string: wrapped[0])!)?.space == Self.home)
+        #expect(LinkRoutes.best([pattern, gitlab], for: URL(string: wrapped[0])!)?.space == Self.home)
         // The page itself is what opens: only the rule looks through it.
         #expect(LinkRoutes.carried(URL(string: wrapped[1])!).absoluteString == "https://gitlab.com/")
         // Not a checker's page, or nothing to carry: matched as it is.
@@ -172,8 +174,8 @@ struct LinkRouteTests {
     }
 
     @Test func normalizedAddressIncludesQueryButNotFragmentOrWww() {
-        let routes = [LinkRoute(site: "github.com", space: Self.home),
-                      LinkRoute(site: "*github.com/acme?q=megatron", space: Self.work)]
+        let routes = [LinkRoute(site: "*github.com/acme?q=megatron", space: Self.work),
+                      LinkRoute(site: "github.com", space: Self.home)]
         #expect(LinkRoutes.best(routes, for: URL(string: "https://www.GITHUB.com/ACME?q=%6Degatron#other")!)?.space == Self.work)
         let www = [LinkRoute(site: "*www.github.com*", space: Self.work)]
         #expect(LinkRoutes.best(www, for: URL(string: "https://www.github.com/")!) == nil)
@@ -193,16 +195,16 @@ struct LinkRouteTests {
         }
     }
 
-    @Test func patternsTakePriorityThenMostLiteralCharacters() {
+    @Test func firstMatchingRuleWinsAcrossSitesAndPatterns() {
         let routes = [
             LinkRoute(site: "github.com/acme/megatron", space: Self.home),
             LinkRoute(site: "*megatron*", space: Self.work),
             LinkRoute(site: "***mega***", space: Self.home),
         ]
         let url = URL(string: "https://github.com/acme/megatron/pull/1")!
-        #expect(LinkRoutes.best(routes, for: url)?.site == "*megatron*")
+        #expect(LinkRoutes.best(routes, for: url)?.site == "github.com/acme/megatron")
         let narrower = routes + [LinkRoute(site: "github.com/acme/megatron/*", space: Self.home)]
-        #expect(LinkRoutes.best(narrower, for: url)?.site == "github.com/acme/megatron/*")
+        #expect(LinkRoutes.best(narrower, for: url)?.site == "github.com/acme/megatron")
         #expect(LinkRoutes.best(Array(narrower.reversed()), for: url)?.site == "github.com/acme/megatron/*")
     }
 
@@ -248,14 +250,15 @@ struct LinkRouteTests {
         #expect(LinkRoutes.best(routes, for: URL(string: "https://github.com/")!) == nil)
     }
 
-    @Test func closestWins() {
+    @Test func sitesFollowListOrderRatherThanSpecificity() {
         let routes = [
             LinkRoute(site: "google.com", space: Self.home),
             LinkRoute(site: "docs.google.com", space: Self.work),
             LinkRoute(site: "docs.google.com/spreadsheets", space: Self.home),
         ]
-        #expect(LinkRoutes.best(routes, for: URL(string: "https://docs.google.com/document/d/1")!)?.space == Self.work)
-        #expect(LinkRoutes.best(routes, for: URL(string: "https://docs.google.com/spreadsheets/d/1")!)?.site == "docs.google.com/spreadsheets")
+        #expect(LinkRoutes.best(routes, for: URL(string: "https://docs.google.com/document/d/1")!)?.space == Self.home)
+        #expect(LinkRoutes.best(routes, for: URL(string: "https://docs.google.com/spreadsheets/d/1")!)?.site == "google.com")
+        #expect(LinkRoutes.best(Array(routes.reversed()), for: URL(string: "https://docs.google.com/spreadsheets/d/1")!)?.site == "docs.google.com/spreadsheets")
         #expect(LinkRoutes.best(routes, for: URL(string: "https://youtube.google.com/")!)?.site == "google.com")
     }
 
@@ -363,10 +366,9 @@ struct LinkRouteSuggestionTests {
         // "Most recent space" is the one the page is in: it stays.
         let recent = [LinkRoute(site: "example.com", space: LinkRoutes.recentSpaceID)]
         #expect(LinkRoutes.pageLinkDestination(routes: recent, for: link, available: [a, b], current: a) == nil)
-        // Patterns and the closest site win as for links from other apps.
         let both = rules + [LinkRoute(site: "example.com/home", space: a)]
-        #expect(LinkRoutes.pageLinkDestination(routes: both, for: URL(string: "https://example.com/home/x")!, available: [a, b], current: a) == nil)
-        #expect(LinkRoutes.pageLinkDestination(routes: both, for: URL(string: "https://example.com/home/x")!, available: [a, b], current: b) == a)
+        #expect(LinkRoutes.pageLinkDestination(routes: both, for: URL(string: "https://example.com/home/x")!, available: [a, b], current: a) == b)
+        #expect(LinkRoutes.pageLinkDestination(routes: both, for: URL(string: "https://example.com/home/x")!, available: [a, b], current: b) == nil)
     }
 
     // The fallback space is for links from other apps only: a page's link
