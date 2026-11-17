@@ -11,26 +11,30 @@ struct LinkRouteOrderTests {
         try test(settings)
     }
 
-    @Test func movingPersistsWithoutChangingRulesOrTheirWinner() throws {
+    @Test func movingChangesTheWinningRuleAndPersists() throws {
         try withSettings { settings in
             let routes = LinkRoutes(settings: settings)
-            routes.set("*abc*", to: UUID())
-            routes.set("*bcd*", to: UUID())
+            let home = UUID(), work = UUID()
+            routes.set("*abc*", to: home)
+            routes.set("*bcd*", to: work)
             routes.set("other.example", to: UUID())
             let url = try #require(URL(string: "https://abcd.example"))
             let original = routes.routes
-            let winner = LinkRoutes.best(original, for: url)
-            let saved = settings.data(forKey: LinkRoutes.key)
+            #expect(LinkRoutes.best(original, for: url)?.space == home)
 
             routes.move("*bcd*", to: 0)
 
             #expect(routes.displayedRoutes.map(\.site) == ["*bcd*", "*abc*", "other.example"])
-            #expect(routes.routes == original)
-            #expect(settings.data(forKey: LinkRoutes.key) == saved)
-            #expect(LinkRoutes.best(routes.routes, for: url) == winner)
+            #expect(Set(routes.routes.map(\.id)) == Set(original.map(\.id)))
+            #expect(routes.routes == routes.displayedRoutes)
+            #expect(LinkRoutes.best(routes.routes, for: url)?.space == work)
+            #expect(LinkRoutes.destination(routes: routes.routes, for: url, available: [home, work], recent: home, fallback: home) == work)
+            #expect(LinkRoutes.pageLinkDestination(routes: routes.routes, for: url, available: [home, work], current: home) == work)
             let reopened = LinkRoutes(settings: settings)
             #expect(reopened.displayedRoutes == routes.displayedRoutes)
-            #expect(LinkRoutes.best(reopened.routes, for: url) == winner)
+            #expect(LinkRoutes.best(reopened.routes, for: url)?.space == work)
+            routes.move("*bcd*", to: 2)
+            #expect(LinkRoutes.best(routes.routes, for: url)?.space == home)
         }
     }
 
@@ -78,20 +82,70 @@ struct LinkRouteOrderTests {
         }
     }
 
-    @Test func legacyRulesKeepTheirOrderAndStaleDisplayEntriesAreIgnored() throws {
+    @Test func staleAndDuplicateSavedOrderEntriesAreIgnored() throws {
         try withSettings { settings in
             let rules = [LinkRoute(site: "first.example", space: UUID()), LinkRoute(site: "second.example", space: UUID())]
             settings.set(try JSONEncoder().encode(rules), forKey: LinkRoutes.key)
-            #expect(LinkRoutes(settings: settings).displayedRoutes == rules)
+            #expect(LinkRoutes(settings: settings).displayedRoutes == Array(rules.reversed()))
             settings.set(["gone.example", "second.example", "second.example"], forKey: LinkRoutes.displayOrderKey)
             let routes = LinkRoutes(settings: settings)
             #expect(routes.displayedRoutes.map(\.site) == ["second.example", "first.example"])
             routes.move("missing.example", to: 0)
-            #expect(routes.routes == rules)
+            #expect(routes.routes == Array(rules.reversed()))
             routes.move("first.example", to: -1)
             #expect(routes.displayOrder == ["first.example", "second.example"])
             routes.move("first.example", to: 100)
             #expect(routes.displayOrder == ["second.example", "first.example"])
+        }
+    }
+
+    @Test func legacyRulesMigrateToTheirPreviousPriorityOnce() throws {
+        try withSettings { settings in
+            let home = UUID(), work = UUID()
+            let rules = [
+                LinkRoute(site: "example.com", space: home),
+                LinkRoute(site: "docs.example.com", space: work),
+                LinkRoute(site: "docs.example.com/work", space: home),
+                LinkRoute(site: "*example*", space: work),
+                LinkRoute(site: "*docs.example*", space: home),
+            ]
+            settings.set(try JSONEncoder().encode(rules), forKey: LinkRoutes.key)
+            let routes = LinkRoutes(settings: settings)
+            #expect(routes.displayOrder == ["*docs.example*", "*example*", "docs.example.com/work", "docs.example.com", "example.com"])
+            let url = try #require(URL(string: "https://docs.example.com/work/task"))
+            #expect(LinkRoutes.best(routes.routes, for: url)?.site == "*docs.example*")
+            routes.move("example.com", to: 0)
+            let reopened = LinkRoutes(settings: settings)
+            #expect(reopened.displayOrder.first == "example.com")
+            #expect(LinkRoutes.best(reopened.routes, for: url)?.space == home)
+        }
+    }
+
+    @Test func movingASiteAboveAPatternChangesPriorityAndWindowChoice() throws {
+        try withSettings { settings in
+            let home = UUID(), work = UUID()
+            let rules = [
+                LinkRoute(site: "*example*", space: work, opensInMain: true),
+                LinkRoute(site: "example.com", space: home),
+            ]
+            settings.set(try JSONEncoder().encode(rules), forKey: LinkRoutes.key)
+            let routes = LinkRoutes(settings: settings)
+            let url = try #require(URL(string: "https://example.com/"))
+            #expect(LinkRoutes.opensInMain(routes.routes, for: url))
+            routes.move("example.com", to: 0)
+            #expect(LinkRoutes.best(routes.routes, for: url)?.space == home)
+            #expect(!LinkRoutes.opensInMain(routes.routes, for: url))
+            #expect(LinkRoutes(settings: settings).routes == routes.routes)
+        }
+    }
+
+    @Test func legacyEqualPriorityRulesKeepTheirPreviousWinner() throws {
+        try withSettings { settings in
+            let rules = [LinkRoute(site: "*abc*", space: UUID()), LinkRoute(site: "*bcd*", space: UUID())]
+            settings.set(try JSONEncoder().encode(rules), forKey: LinkRoutes.key)
+            let routes = LinkRoutes(settings: settings)
+            #expect(routes.routes == rules)
+            #expect(LinkRoutes.best(routes.routes, for: try #require(URL(string: "https://abcd.example"))) == rules.first)
         }
     }
 }

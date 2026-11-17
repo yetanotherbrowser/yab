@@ -9,10 +9,9 @@ import Foundation
 // from other apps. With no window choice it keeps the global behavior.
 //
 // A site is what was typed: linear.app is the site and every host under it;
-// docs.google.com/spreadsheets is only the pages under that path. There is
-// no order to them: the closest match wins, a path over a host, a longer
-// host over a shorter one. A word or a * pattern is an exception for any
-// matching address, taking priority over a site. Links from other apps,
+// docs.google.com/spreadsheets is only the pages under that path.
+// Rules run in Settings order: the first matching site, word or * pattern
+// wins. Links from other apps,
 // a new site explicitly opened from Cmd-T, and a link a page opens in a
 // new tab (a Cmd-click, a middle click, target=_blank, a mail's link, a
 // peek opened as a tab) follow the rules, as Arc's do; a plain click and
@@ -53,19 +52,12 @@ final class LinkRoutes: ObservableObject {
 
     @Published private(set) var defaultSpace: UUID?
     @Published private(set) var routes: [LinkRoute]
-    @Published private(set) var displayOrder: [String]
     @Published private(set) var kept: [Kept]
     @Published private(set) var declined: Set<String>
     private let settings: UserDefaults
 
-    var displayedRoutes: [LinkRoute] {
-        let positions = Dictionary(displayOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
-        return routes.enumerated().sorted { first, second in
-            let firstPosition = positions[first.element.id] ?? (displayOrder.count + first.offset)
-            let secondPosition = positions[second.element.id] ?? (displayOrder.count + second.offset)
-            return firstPosition < secondPosition
-        }.map(\.element)
-    }
+    var displayOrder: [String] { routes.map(\.id) }
+    var displayedRoutes: [LinkRoute] { routes }
 
     struct Kept: Codable, Equatable {
         var site: String
@@ -88,10 +80,24 @@ final class LinkRoutes: ObservableObject {
     init(settings: UserDefaults = Store.settings) {
         self.settings = settings
         defaultSpace = settings.string(forKey: Self.defaultSpaceKey).flatMap(UUID.init(uuidString:))
-        routes = Self.decode([LinkRoute].self, Self.key, settings: settings) ?? []
-        displayOrder = settings.stringArray(forKey: Self.displayOrderKey) ?? []
+        let savedRoutes = Self.decode([LinkRoute].self, Self.key, settings: settings) ?? []
+        if let order = settings.stringArray(forKey: Self.displayOrderKey) {
+            let positions = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            routes = savedRoutes.enumerated().sorted { first, second in
+                let firstPosition = positions[first.element.id] ?? (order.count + first.offset)
+                let secondPosition = positions[second.element.id] ?? (order.count + second.offset)
+                return firstPosition < secondPosition
+            }.map(\.element)
+        } else {
+            routes = savedRoutes.enumerated().sorted { first, second in
+                let firstPriority = Self.priority(first.element)
+                let secondPriority = Self.priority(second.element)
+                return firstPriority == secondPriority ? first.offset < second.offset : firstPriority > secondPriority
+            }.map(\.element)
+        }
         kept = Self.decode([Kept].self, Self.keptKey, settings: settings) ?? []
         declined = Set(settings.stringArray(forKey: Self.declinedKey) ?? [])
+        save()
     }
 
     // MARK: - finding
@@ -169,9 +175,7 @@ final class LinkRoutes: ObservableObject {
     /// The route for exactly this site, not a wider or narrower one.
     func route(site: String) -> LinkRoute? { routes.first { $0.site == site } }
 
-    /// An address pattern takes priority over a site; the pattern with
-    /// more literal characters wins. Sites keep their former precedence:
-    /// the longer path, then the longer host.
+    /// The first matching rule in Settings order wins.
     nonisolated static func best(_ routes: [LinkRoute], for url: URL) -> LinkRoute? {
         guard let host = url.host().map(bare), !host.isEmpty else { return nil }
         let path = url.path(percentEncoded: false).lowercased()
@@ -182,14 +186,13 @@ final class LinkRoutes: ObservableObject {
         let root = path.isEmpty || path == "/"
         let address = patternHost + (root ? "" : path) + query
         return routes
-            .filter { route in
+            .first { route in
                 if route.pattern {
                     return matches(route.site, address) || (root && matches(route.site, patternHost + "/" + query))
                 }
                 return (host == route.host || host.hasSuffix("." + route.host))
                     && (route.path.isEmpty || path == route.path || path.hasPrefix(route.path + "/"))
             }
-            .max { a, b in priority(a) < priority(b) }
     }
 
     private nonisolated static func priority(_ route: LinkRoute) -> (Int, Int, Int) {
@@ -280,12 +283,14 @@ final class LinkRoutes: ObservableObject {
     // MARK: - changing
 
     func move(_ site: String, to index: Int) {
-        var order = displayedRoutes.map(\.id)
-        guard let from = order.firstIndex(of: site) else { return }
-        order.remove(at: from)
-        order.insert(site, at: min(max(0, index), order.count))
-        displayOrder = order
-        settings.set(order, forKey: Self.displayOrderKey)
+        guard let from = routes.firstIndex(where: { $0.id == site }) else { return }
+        let to = min(max(0, index), routes.count - 1)
+        guard from != to else { return }
+        var reordered = routes
+        let route = reordered.remove(at: from)
+        reordered.insert(route, at: to)
+        routes = reordered
+        save()
     }
 
     /// This site's links to `space`, in its place if it had a route.
@@ -302,11 +307,6 @@ final class LinkRoutes: ObservableObject {
     /// A rule edited: its text and space in the old one's place. Typed as
     /// another rule already there, the two become this one.
     func replace(_ old: String, with site: String, to space: UUID) {
-        if routes.contains(where: { $0.site == old }) {
-            displayOrder = displayedRoutes.map(\.id)
-                .filter { $0 != site || $0 == old }
-                .map { $0 == old ? site : $0 }
-        }
         routes = Self.replacing(routes, old, with: site, to: space)
         kept.removeAll { $0.site == site }
         save()
@@ -405,7 +405,6 @@ final class LinkRoutes: ObservableObject {
     // MARK: - kept
 
     private func save() {
-        displayOrder = displayedRoutes.map(\.id)
         settings.set(displayOrder, forKey: Self.displayOrderKey)
         Self.encode(routes, Self.key, settings: settings)
         Self.encode(kept, Self.keptKey, settings: settings)
