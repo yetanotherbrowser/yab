@@ -90,6 +90,10 @@ enum class SearchEngine(val title: String, val template: String) {
     CUSTOM("Other", ""),
 }
 
+/** The browsing engine a window's pages run on. Gecko is the shipped default; Chromium needs the fork present. */
+@Serializable
+enum class BrowserEngineKind { GECKO, CHROMIUM }
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class BrowserSettings(
@@ -106,6 +110,8 @@ data class BrowserSettings(
     val swipeAnywhere: Boolean = true,
     // Preserve pre-upgrade checkpoint hashes; an explicit local false still persists.
     @EncodeDefault(EncodeDefault.Mode.NEVER) val openKeyboardAtLaunch: Boolean = true,
+    // Absent means Gecko on every pre-upgrade checkpoint; a Chromium choice persists explicitly.
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val engineKind: BrowserEngineKind = BrowserEngineKind.GECKO,
 )
 
 @Serializable
