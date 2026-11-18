@@ -343,12 +343,15 @@ enum Calc {
         return nil
     }
 
-    /// "5 km", "5km", "72°f": a number and a unit.
+    /// "5 km", "5km", "72°f", "-40 c": a number and a unit. Below zero
+    /// with a hyphen or a minus sign: a winter's day had no answer.
     static func amount(_ words: String) -> (Double, UnitName)? {
-        let text = words.trimmingCharacters(in: .whitespaces)
+        var text = words.trimmingCharacters(in: .whitespaces)
+        let below = text.hasPrefix("-") || text.hasPrefix("−")
+        if below { text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces) }
         guard let first = text.firstIndex(where: { !($0.isNumber || $0 == "." || $0 == ",") }), first > text.startIndex,
               let value = number(String(text[..<first])), let named = unit(String(text[first...])) else { return nil }
-        return (value, named)
+        return (below ? -value : value, named)
     }
 
     // MARK: money

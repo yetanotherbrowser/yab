@@ -65,6 +65,18 @@ struct CalcTests {
         }
     }
 
+    /// A temperature below zero is asked as often as one above.
+    @Test func unitsBelowZero() {
+        #expect(answer("-40 c in f")?.result == "-40°F")
+        #expect(answer("-40 c in f")?.question == "-40°C")
+        #expect(answer("-5c to f")?.result == "23°F")
+        #expect(answer("−10 f in c")?.result == "-23.3333°C")
+        #expect(answer("- 2.5 km in m")?.result == "-2,500 m")
+        // Not a sum cut in two, and not a unit with nothing before it.
+        #expect(answer("5-10 km in miles") == nil)
+        #expect(answer("- km in miles") == nil)
+    }
+
     @Test func sumsAndPercentages() {
         #expect(answer("2400*12")?.result == "28,800")
         #expect(answer("2400*12")?.copy == "28800")
