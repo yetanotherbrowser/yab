@@ -1,3 +1,5 @@
+diff --git a/chrome/android/chrome_java_sources.gni b/chrome/android/chrome_java_sources.gni
+index ccfc8ad25a..4770c29b72 100644
 --- a/chrome/android/chrome_java_sources.gni
 +++ b/chrome/android/chrome_java_sources.gni
 @@ -5,6 +5,8 @@
@@ -9,9 +11,11 @@
    "java/src/com/google/android/apps/chrome/appwidget/bookmarks/BookmarkThumbnailWidgetProvider.java",
    "java/src/org/chromium/chrome/browser/ActivityTabProvider.java",
    "java/src/org/chromium/chrome/browser/ActivityUtils.java",
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
+index 1ee4c2d520..9c0b4c3a21 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
-@@ -27,6 +27,7 @@
+@@ -27,6 +27,7 @@ import org.chromium.chrome.browser.fonts.FontPreloader;
  import org.chromium.chrome.browser.night_mode.SystemNightModeMonitor;
  import org.chromium.chrome.browser.notifications.chime.ChimeDelegate;
  import org.chromium.chrome.browser.profiles.ProfileResolver;
@@ -19,7 +23,7 @@
  import org.chromium.components.browser_ui.util.BrowserUiUtilsCachedFlags;
  import org.chromium.components.browser_ui.util.GlobalDiscardableReferencePool;
  import org.chromium.components.embedder_support.browser_context.PartitionResolverSupplier;
-@@ -51,6 +52,7 @@
+@@ -51,6 +52,7 @@ public class ChromeApplicationImpl extends SplitCompatApplication.Impl {
          // This Impl is only instantiated in the browser process; SplitChromeApplication uses the
          // base Impl for all other processes so that the chrome split is never loaded there.
          assert SplitCompatApplication.isBrowserProcess();
@@ -27,9 +31,11 @@
  
          // Popup creation can be requested before the first ChromeActivity starts.
          PopupCreatorFactory.setInstance(new PopupCreatorImpl());
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
+index 92df6e96a9..a8be512fd7 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
-@@ -197,6 +197,7 @@
+@@ -197,6 +197,7 @@ public class TabBuilder {
          }
  
          TabImpl tab = new TabImpl(mId, mProfile, mLaunchType);
@@ -37,7 +43,7 @@
          Tab parent = null;
          if (mParent != null) {
              parent = mParent;
-@@ -211,6 +212,7 @@
+@@ -211,6 +212,7 @@ public class TabBuilder {
              mDelegateFactory = ((TabImpl) parent).getDelegateFactory();
          }
  
@@ -45,9 +51,11 @@
          if (mPreInitializeAction != null) mPreInitializeAction.onResult(tab);
  
          tab.setContentViewDeferred(mIsContentViewDeferred);
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
+index 8f9a561242..de37561fde 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
-@@ -1243,14 +1243,14 @@
+@@ -1243,14 +1243,14 @@ class TabImpl implements Tab, TabInternal {
      @CalledByNative
      @Override
      public boolean loadIfNeeded(boolean forceBackingSize) {
@@ -64,7 +72,7 @@
                                  mProfile, isHidden(), /* initializeRenderer= */ false);
                  initWebContents(webContents);
              }
-@@ -1700,6 +1700,7 @@
+@@ -1700,6 +1700,7 @@ class TabImpl implements Tab, TabInternal {
              TabImplJni.get().destroy(mNativeTabAndroid);
              assert mNativeTabAndroid == 0;
          }
@@ -72,7 +80,7 @@
          return status;
      }
  
-@@ -1846,10 +1847,22 @@
+@@ -1846,10 +1847,22 @@ class TabImpl implements Tab, TabInternal {
          TraceEvent.end("Tab.initialize");
      }
  
@@ -95,7 +103,7 @@
          if (isDormant()) {
              assert webContents == null : "Dormant tabs must never have WebContents initialized.";
              return;
-@@ -1865,7 +1878,7 @@
+@@ -1865,7 +1878,7 @@ class TabImpl implements Tab, TabInternal {
              if (!mIsContentViewDeferred) {
                  return;
              }
@@ -104,7 +112,7 @@
              webContents = getWebContents();
              // unfreezeContents() already called initWebContents().
              needsToCallInitWebContents = false;
-@@ -1877,11 +1890,11 @@
+@@ -1877,11 +1890,11 @@ class TabImpl implements Tab, TabInternal {
                  return;
              }
              webContents =
@@ -118,7 +126,7 @@
                              mProfile, initiallyHidden, initializeRenderer);
          }
  
-@@ -2841,6 +2854,7 @@
+@@ -2841,6 +2854,7 @@ class TabImpl implements Tab, TabInternal {
       * history load are used.
       */
      private void restoreIfNeeded() {
@@ -126,7 +134,7 @@
          // Attempts to display the Paint Preview representation of this Tab.
          if (isFrozen() && getWindowAndroid() != null) {
              StartupPaintPreviewHelper.showPaintPreviewOnRestore(this);
-@@ -2892,15 +2906,27 @@
+@@ -2892,15 +2906,27 @@ class TabImpl implements Tab, TabInternal {
              TraceEvent.begin("Tab.unfreezeContents");
              assert mWebContentsState != null;
  
@@ -157,9 +165,11 @@
                                  mProfile, isHidden(), /* initializeRenderer= */ false);
                  for (TabObserver observer : mObservers) observer.onRestoreFailed(this);
                  restored = false;
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
+index 322ff2a7b5..fa28219e01 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
-@@ -42,6 +42,8 @@
+@@ -42,6 +42,8 @@ import org.chromium.chrome.browser.tab.TabLaunchTypeUtils;
  import org.chromium.chrome.browser.tab.TabParentIntent;
  import org.chromium.chrome.browser.tab.TabResolver;
  import org.chromium.chrome.browser.tab.TabState;
@@ -168,7 +178,7 @@
  import org.chromium.chrome.browser.tabmodel.TabCreator.NeedsTabModel;
  import org.chromium.chrome.browser.tabmodel.TabCreator.NeedsTabModelOrderController;
  import org.chromium.components.embedder_support.util.UrlConstants;
-@@ -669,6 +671,8 @@
+@@ -669,6 +671,8 @@ public class ChromeTabCreator implements TabCreator, NeedsTabModel, NeedsTabMode
  
      @Override
      public @Nullable Tab createFrozenTab(TabState state, int id, int index) {
@@ -177,6 +187,9 @@
          if (mTabModel == null || mOrderController == null) return null;
          TabModelSelector selector = mTabModelSelectorSupplier.get();
          TabResolver resolver =
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java
+new file mode 100644
+index 0000000000..9ff15dd6b2
 --- /dev/null
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java
 @@ -0,0 +1,506 @@
@@ -223,10 +236,10 @@
 +    private static @Nullable Application sApplication;
 +    private static @Nullable Snapshot sSnapshot;
 +    private static @Nullable Activation sActivation;
-+    private static final Map<Profile, Activation> sInstalled = new IdentityHashMap<>();
++    private static final IdentityHashMap<Profile, Activation> sInstalled = new IdentityHashMap<>();
 +    private static @Nullable PrivateActivation sPrivateActivation;
-+    private static final Map<Profile, PrivateActivation> sPrivateInstalled = new IdentityHashMap<>();
-+    private static final Map<Profile, PrivateDestruction> sPrivateDestruction = new IdentityHashMap<>();
++    private static final IdentityHashMap<Profile, PrivateActivation> sPrivateInstalled = new IdentityHashMap<>();
++    private static final IdentityHashMap<Profile, PrivateDestruction> sPrivateDestruction = new IdentityHashMap<>();
 +
 +    private static final class PrivateActivation {
 +        final Activation accountOwner;
@@ -686,9 +699,12 @@
 +        }
 +    }
 +}
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java
+new file mode 100644
+index 0000000000..2d5f9d4cd7
 --- /dev/null
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,329 @@
 +// Source scaffold for Chromium ac19329a1d32108fd05ead15568cb6e188f8615a.
 +// Not compiled, applied, or used by the active upstream baseline build.
 +package org.chromium.chrome.browser.yab;
@@ -874,16 +890,28 @@
 +            throw new IllegalStateException("Partial Tab destruction is not safely retryable; retain native owner");
 +        }
 +        // This is our temporary, unregistered Tab, including a partial initialize() failure.
++        @Nullable Throwable tabDestroyFailure = null;
 +        try {
 +            if (owner != null && !owner.isDestroyed()) owner.destroy();
-+        } finally {
-+            if (!contents.isDestroyed()) {
-+                if ((owner != null && owner.getWebContents() == contents)
-+                        || TabUtils.fromWebContents(contents) != null) {
-+                    throw new IllegalStateException("Contents is still Tab-owned after failed creation");
-+                }
-+                contents.destroy();
++        } catch (RuntimeException | Error error) {
++            tabDestroyFailure = error;
++        }
++        // Cleanup must run even when Tab.destroy() failed. The ownership guard and
++        // the rethrow sit outside any finally so neither can swallow the other.
++        if (!contents.isDestroyed()) {
++            if ((owner != null && owner.getWebContents() == contents)
++                    || TabUtils.fromWebContents(contents) != null) {
++                throw new IllegalStateException("Contents is still Tab-owned after failed creation");
 +            }
++            contents.destroy();
++        }
++        if (tabDestroyFailure != null) {
++            // Same propagation as the old throw-in-finally: surface the destroy
++            // failure once the WebContents is released.
++            if (tabDestroyFailure instanceof RuntimeException) {
++                throw (RuntimeException) tabDestroyFailure;
++            }
++            throw (Error) tabDestroyFailure;
 +        }
 +        YabNamespaceRuntime.abandonDisposedCreation(contents);
 +    }
@@ -1006,9 +1034,11 @@
 +        }
 +    }
 +}
+diff --git a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java b/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
+index f6fd8117d5..a9738c0d10 100644
 --- a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
 +++ b/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
-@@ -8,12 +8,15 @@
+@@ -8,6 +8,7 @@ import org.jni_zero.JniType;
  import org.jni_zero.NativeMethods;
  
  import org.chromium.base.ResettersForTesting;
@@ -1016,15 +1046,16 @@
  import org.chromium.build.BuildConfig;
  import org.chromium.build.annotations.NullMarked;
  import org.chromium.build.annotations.Nullable;
- import org.chromium.chrome.browser.profiles.Profile;
+@@ -15,6 +16,8 @@ import org.chromium.chrome.browser.profiles.Profile;
  import org.chromium.content_public.browser.WebContents;
  import org.chromium.net.NetId;
-+
-+import java.util.UUID;
  
++import java.util.UUID;
++
  /**
   * This factory creates WebContents objects and the associated native counterpart. TODO(dtrainor):
-@@ -136,8 +139,34 @@
+  * Move this to the content/ layer if BrowserContext is ever supported in Java.
+@@ -136,8 +139,34 @@ public class WebContentsFactory {
                  profile, initiallyHidden, true, usesPlatformAutofill, targetNetwork);
      }
  
@@ -1059,6 +1090,8 @@
          WebContents createWebContents(
                  @JniType("Profile*") Profile profile,
                  boolean initiallyHidden,
+diff --git a/chrome/browser/android/content/web_contents_factory.cc b/chrome/browser/android/content/web_contents_factory.cc
+index ad2344b37a..a227afdcfe 100644
 --- a/chrome/browser/android/content/web_contents_factory.cc
 +++ b/chrome/browser/android/content/web_contents_factory.cc
 @@ -2,7 +2,11 @@
@@ -1073,11 +1106,10 @@
  #include "chrome/browser/android/content/web_contents_factory_data_deleter.h"
  #include "chrome/browser/browser_process.h"
  #include "chrome/browser/profiles/profile.h"
-@@ -16,6 +20,36 @@
- 
+@@ -17,6 +21,36 @@
  using base::android::JavaRef;
  using base::android::ScopedJavaLocalRef;
-+
+ 
 +static ScopedJavaLocalRef<jobject>
 +JNI_WebContentsFactory_CreateWebContentsForYabNamespace(
 +    JNIEnv* env,
@@ -1107,25 +1139,15 @@
 +  contents.release();
 +  return java_contents;
 +}
- 
++
  static ScopedJavaLocalRef<jobject> JNI_WebContentsFactory_CreateWebContents(
      JNIEnv* env,
---- a/chrome/browser/profiles/BUILD.gn
-+++ b/chrome/browser/profiles/BUILD.gn
-@@ -551,6 +551,10 @@
- 
-   if (enable_extensions) {
-     deps += [ "//chrome/browser/extensions" ]
-+  }
-+
-+  if (is_android) {
-+    deps += [ "//chrome/browser/profiles/android:jni_headers" ]
-   }
- 
-   if (!is_android) {
+     Profile* profile,
+diff --git a/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java b/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
+index a026765d84..ba23fa2453 100644
 --- a/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
 +++ b/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
-@@ -28,6 +28,7 @@
+@@ -28,6 +28,7 @@ public class Profile implements BrowserContextHandle {
      private long mNativeProfile;
  
      private boolean mDestroyNotified;
@@ -1133,7 +1155,7 @@
  
      @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
      @CalledByNative
-@@ -259,6 +260,19 @@
+@@ -259,6 +260,19 @@ public class Profile implements BrowserContextHandle {
          }
      }
  
@@ -1153,38 +1175,59 @@
      @CalledByNative
      private long getNativePointer() {
          return mNativeProfile;
+diff --git a/chrome/browser/profiles/profile.h b/chrome/browser/profiles/profile.h
+index d0ee935199..4b956005a4 100644
+--- a/chrome/browser/profiles/profile.h
++++ b/chrome/browser/profiles/profile.h
+@@ -512,6 +512,10 @@ class Profile : public content::BrowserContext {
+ #if BUILDFLAG(IS_ANDROID)
+   static Profile* FromJavaObject(const jni_zero::JavaRef<jobject>& obj);
+   jni_zero::ScopedJavaLocalRef<jobject> GetJavaObject() const;
++  // Yab: completes Java-side OTR teardown after DestroyOffTheRecordProfile
++  // returns. The implementation attaches its own JNIEnv in the owning TU.
++  static void NotifyYabOffTheRecordDestructionCompleted(
++      const jni_zero::JavaRef<jobject>& java_profile);
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
+ #if BUILDFLAG(IS_WIN)
+diff --git a/chrome/browser/profiles/profile_android.cc b/chrome/browser/profiles/profile_android.cc
+index 399a7ef5ba..c25e9aa248 100644
+--- a/chrome/browser/profiles/profile_android.cc
++++ b/chrome/browser/profiles/profile_android.cc
+@@ -155,3 +155,11 @@ static ScopedJavaLocalRef<jobject> JNI_Profile_FromWebContents(
+ }
+ 
+ DEFINE_JNI(Profile)
++
++// Yab: sole caller lives in profile_destroyer.cc, which must not include the
++// generated JNI header (its DEFINE_JNI trap fires in non-owner TUs).
++void Profile::NotifyYabOffTheRecordDestructionCompleted(
++    const jni_zero::JavaRef<jobject>& java_profile) {
++  Java_Profile_onYabOffTheRecordDestructionCompleted(
++      jni_zero::AttachCurrentThread(), java_profile);
++}
+diff --git a/chrome/browser/profiles/profile_destroyer.cc b/chrome/browser/profiles/profile_destroyer.cc
+index b21c05ff43..f8fe1f71d7 100644
 --- a/chrome/browser/profiles/profile_destroyer.cc
 +++ b/chrome/browser/profiles/profile_destroyer.cc
-@@ -24,6 +24,12 @@
- #include "chrome/browser/profiles/profile.h"
- #include "content/public/browser/render_process_host.h"
- 
-+#if BUILDFLAG(IS_ANDROID)
-+#include "base/android/jni_android.h"
-+// After headers specializing JNI conversions.
-+#include "chrome/browser/profiles/android/jni_headers/Profile_jni.h"
-+#endif
-+
- namespace {
- 
- #if BUILDFLAG(IS_ANDROID)
-@@ -250,7 +256,16 @@
+@@ -250,7 +250,15 @@ void ProfileDestroyer::DestroyOffTheRecordProfileNow(Profile* profile) {
        });
  
    CHECK(profile->GetOriginalProfile(), base::NotFatalUntil::M162);
 +#if BUILDFLAG(IS_ANDROID)
-+  JNIEnv* env = jni_zero::AttachCurrentThread();
 +  auto java_profile = profile->GetJavaObject();
 +#endif
    profile->GetOriginalProfile()->DestroyOffTheRecordProfile(profile);
 +#if BUILDFLAG(IS_ANDROID)
 +  // ProfileImpl erases its owning unique_ptr and completes incognito preference cleanup.
 +  // The Profile/BrowserContext destructor stack has returned. Never dereference profile.
-+  Java_Profile_onYabOffTheRecordDestructionCompleted(env, java_profile);
++  Profile::NotifyYabOffTheRecordDestructionCompleted(java_profile);
 +#endif
    UMA_HISTOGRAM_ENUMERATION("Profile.Destroyer.OffTheRecord",
                              ProfileDestructionType::kImmediately);
  }
+diff --git a/chrome/browser/tab/BUILD.gn b/chrome/browser/tab/BUILD.gn
+index e41d7adc4e..e98365896a 100644
 --- a/chrome/browser/tab/BUILD.gn
 +++ b/chrome/browser/tab/BUILD.gn
 @@ -5,10 +5,13 @@
@@ -1201,7 +1244,7 @@
      "java/src/org/chromium/chrome/browser/tab/CollectionSaveForwarder.java",
      "java/src/org/chromium/chrome/browser/tab/CollectionStorageObserverFactory.java",
      "java/src/org/chromium/chrome/browser/tab/CurrentTabObserver.java",
-@@ -297,7 +300,11 @@
+@@ -297,7 +300,11 @@ source_set("impl") {
      "tab_storage_util.cc",
      "web_contents_state.cc",
    ]
@@ -1214,9 +1257,11 @@
      ":jni_headers",
      ":tab",
      "//chrome/browser/flags:flags_android",
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
+index a4e1c8c0b9..972d35ac6e 100644
 --- a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
 +++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
-@@ -35,6 +35,10 @@
+@@ -35,6 +35,10 @@ public class TabStateExtractor {
          if (!tab.isInitialized()) return null;
          TabState tabState = new TabState();
          tabState.contentsState = getWebContentsState(tab);
@@ -1227,9 +1272,11 @@
          tabState.openerAppId = TabAssociatedApp.getAppId(tab);
          tabState.parentId = tab.getParentId();
          tabState.timestampMillis = tab.getTimestampMillis();
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
+index 465c57f70a..bec1c9e603 100644
 --- a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
 +++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
-@@ -435,9 +435,67 @@
+@@ -435,9 +435,67 @@ public class WebContentsState implements Destroyable {
          return new WebContentsState(buffer, CONTENTS_STATE_CURRENT_VERSION);
      }
  
@@ -1297,6 +1344,9 @@
          @JniType("content::WebContents*")
          @Nullable WebContents restoreContentsFromByteBuffer(
                  @JniType("Profile*") Profile profile,
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java
+new file mode 100644
+index 0000000000..7537b0af40
 --- /dev/null
 +++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java
 @@ -0,0 +1,134 @@
@@ -1434,6 +1484,9 @@
 +        }
 +    }
 +}
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java
+new file mode 100644
+index 0000000000..f59bb85f37
 --- /dev/null
 +++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java
 @@ -0,0 +1,652 @@
@@ -1465,13 +1518,13 @@
 +@NullMarked
 +public final class YabNamespaceRuntime {
 +    private static boolean sRequired;
-+    private static final Map<Profile, Scope> sScopes = new IdentityHashMap<>();
-+    private static final Map<WebContents, Pending> sPending = new IdentityHashMap<>();
-+    private static final Map<Tab, Binding> sBindings = new IdentityHashMap<>();
-+    private static final Map<Tab, Binding> sDestroyed = new IdentityHashMap<>();
-+    private static final Map<WebContents, Creation> sCreations = new IdentityHashMap<>();
-+    private static final Map<WebContents, Scope> sAllocations = new IdentityHashMap<>();
-+    private static final Map<Tab, Scope> sAllocatedTabs = new IdentityHashMap<>();
++    private static final IdentityHashMap<Profile, Scope> sScopes = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Pending> sPending = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Binding> sBindings = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Binding> sDestroyed = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Creation> sCreations = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Scope> sAllocations = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Scope> sAllocatedTabs = new IdentityHashMap<>();
 +    private static final Set<Tab> sDisposalCompleted = Collections.newSetFromMap(new IdentityHashMap<>());
 +
 +    private static final class PrivateAccess {
@@ -2089,6 +2142,8 @@
 +        }
 +    }
 +}
+diff --git a/chrome/browser/tab/web_contents_state.cc b/chrome/browser/tab/web_contents_state.cc
+index 3cc80ba75b..32ce0609e7 100644
 --- a/chrome/browser/tab/web_contents_state.cc
 +++ b/chrome/browser/tab/web_contents_state.cc
 @@ -18,9 +18,11 @@
@@ -2121,7 +2176,7 @@
  #include "services/network/public/cpp/shared_url_loader_factory.h"
  #include "third_party/jni_zero/common_apis.h"
  #include "third_party/jni_zero/default_conversions.h"
-@@ -547,6 +558,125 @@
+@@ -547,6 +558,125 @@ ScopedJavaLocalRef<jobject> WebContentsState::AppendPendingNavigation(
  
  // Static JNI methods.
  
@@ -2247,9 +2302,11 @@
  static content::WebContents* JNI_WebContentsState_RestoreContentsFromByteBuffer(
      JNIEnv* env,
      Profile* profile,
+diff --git a/extensions/browser/BUILD.gn b/extensions/browser/BUILD.gn
+index 25d977d2fa..30c6d38d8e 100644
 --- a/extensions/browser/BUILD.gn
 +++ b/extensions/browser/BUILD.gn
-@@ -1059,6 +1059,7 @@
+@@ -1059,6 +1059,7 @@ source_set("unit_tests") {
      "api/content_settings/content_settings_unittest.cc",
      "api/cookies/cookies_helpers_unittest.cc",
      "api/cookies/cookies_unittest.cc",
@@ -2257,9 +2314,11 @@
      "api/declarative/declarative_rule_unittest.cc",
      "api/declarative/deduping_factory_unittest.cc",
      "api/declarative/rules_registry_unittest.cc",
+diff --git a/extensions/browser/api/cookies/BUILD.gn b/extensions/browser/api/cookies/BUILD.gn
+index e2d3b0ebee..7834e8df30 100644
 --- a/extensions/browser/api/cookies/BUILD.gn
 +++ b/extensions/browser/api/cookies/BUILD.gn
-@@ -14,6 +14,8 @@
+@@ -14,6 +14,8 @@ source_set("cookies") {
      "cookies_api_delegate.h",
      "cookies_helpers.cc",
      "cookies_helpers.h",
@@ -2268,6 +2327,8 @@
    ]
  
    public_deps = [
+diff --git a/extensions/browser/api/cookies/cookies_api.cc b/extensions/browser/api/cookies/cookies_api.cc
+index c25e90af7d..090c4e8aa1 100644
 --- a/extensions/browser/api/cookies/cookies_api.cc
 +++ b/extensions/browser/api/cookies/cookies_api.cc
 @@ -21,6 +21,7 @@
@@ -2278,7 +2339,7 @@
  #include "extensions/browser/api/extensions_api_client.h"
  #include "extensions/browser/browser_context_lifetime_tracker.h"
  #include "extensions/browser/event_router.h"
-@@ -63,6 +64,7 @@
+@@ -63,6 +64,7 @@ constexpr char kOverwriteChangeCause[] = "overwrite";
  constexpr char kCookieSetFailedError[] =
      "Failed to parse or set cookie named \"*\".";
  constexpr char kInvalidStoreIdError[] = "Invalid cookie store id: \"*\".";
@@ -2286,7 +2347,7 @@
  constexpr char kInvalidUrlError[] = "Invalid url: \"*\".";
  constexpr char kNoHostPermissionsError[] =
      "No host permissions for cookies at url: \"*\".";
-@@ -105,8 +107,23 @@
+@@ -105,8 +107,23 @@ bool ParseUrl(const Extension* extension,
  network::mojom::CookieManager* ParseStoreCookieManager(
      content::BrowserContext* function_context,
      bool include_incognito,
@@ -2310,7 +2371,7 @@
    content::BrowserContext* store_context = nullptr;
    if (!store_id->empty()) {
      store_context = cookies_helpers::ChooseBrowserContextFromStoreId(
-@@ -242,6 +259,7 @@
+@@ -242,6 +259,7 @@ void CookiesEventRouter::OnRelatedOffTheRecordBrowserContextDestroyed(
  }
  
  void CookiesEventRouter::MaybeStartListening() {
@@ -2318,7 +2379,7 @@
    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
    DCHECK(browser_context_);
  
-@@ -263,6 +281,7 @@
+@@ -263,6 +281,7 @@ void CookiesEventRouter::MaybeStartListening() {
  void CookiesEventRouter::BindToCookieManager(
      mojo::Receiver<network::mojom::CookieChangeListener>* receiver,
      content::BrowserContext& context) {
@@ -2326,7 +2387,7 @@
    network::mojom::CookieManager* cookie_manager =
        context.GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
    if (!cookie_manager) {
-@@ -314,7 +333,7 @@
+@@ -314,7 +333,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
  
    std::string store_id = parsed_args_->details.store_id.value_or(std::string());
    network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
@@ -2335,7 +2396,7 @@
    if (!cookie_manager) {
      return RespondNow(Error(std::move(error)));
    }
-@@ -340,7 +359,7 @@
+@@ -340,7 +359,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
      return RespondNow(Error(std::move(partition_key.error())));
    }
  
@@ -2344,7 +2405,7 @@
      parsed_args_->details.store_id = store_id;
    }
  
-@@ -360,6 +379,12 @@
+@@ -360,6 +379,12 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
  void CookiesGetFunction::GetCookieListCallback(
      const net::CookieAccessResultList& cookie_list,
      const net::CookieAccessResultList& excluded_cookies) {
@@ -2357,7 +2418,7 @@
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    for (const net::CookieWithAccessResult& cookie_with_access_result :
         cookie_list) {
-@@ -412,7 +437,7 @@
+@@ -412,7 +437,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
  
    std::string store_id = parsed_args_->details.store_id.value_or(std::string());
    network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
@@ -2366,7 +2427,7 @@
    if (!cookie_manager) {
      return RespondNow(Error(std::move(error)));
    }
-@@ -425,7 +450,7 @@
+@@ -425,7 +450,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
      return RespondNow(Error(std::move(partition_key.error())));
    }
  
@@ -2375,7 +2436,7 @@
      parsed_args_->details.store_id = store_id;
    }
  
-@@ -452,6 +477,12 @@
+@@ -452,6 +477,12 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
  
  void CookiesGetAllFunction::GetAllCookiesCallback(
      const net::CookieList& cookie_list) {
@@ -2388,7 +2449,7 @@
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    if (extension()) {
      net::CookiePartitionKeyCollection cookie_partition_key_collection =
-@@ -472,6 +503,12 @@
+@@ -472,6 +503,12 @@ void CookiesGetAllFunction::GetAllCookiesCallback(
  void CookiesGetAllFunction::GetCookieListCallback(
      const net::CookieAccessResultList& cookie_list,
      const net::CookieAccessResultList& excluded_cookies) {
@@ -2401,7 +2462,7 @@
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    if (extension()) {
      std::vector<api::cookies::Cookie> match_vector;
-@@ -516,7 +553,7 @@
+@@ -516,7 +553,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
  
    std::string store_id = parsed_args_->details.store_id.value_or(std::string());
    network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
@@ -2410,7 +2471,7 @@
    if (!cookie_manager) {
      return RespondNow(Error(std::move(error)));
    }
-@@ -551,7 +588,7 @@
+@@ -551,7 +588,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
      return RespondNow(Error(std::move(net_partition_key.error())));
    }
  
@@ -2419,7 +2480,7 @@
      parsed_args_->details.store_id = store_id;
    }
  
-@@ -644,6 +681,12 @@
+@@ -644,6 +681,12 @@ void CookiesSetFunction::SetCanonicalCookieCallback(
  void CookiesSetFunction::GetCookieListCallback(
      const net::CookieAccessResultList& cookie_list,
      const net::CookieAccessResultList& excluded_cookies) {
@@ -2432,7 +2493,7 @@
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    DCHECK_EQ(SET_COMPLETED, state_);
    state_ = GET_COMPLETED;
-@@ -698,7 +741,7 @@
+@@ -698,7 +741,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
  
    std::string store_id = parsed_args_->details.store_id.value_or(std::string());
    network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
@@ -2441,7 +2502,7 @@
    if (!cookie_manager) {
      return RespondNow(Error(std::move(error)));
    }
-@@ -710,7 +753,7 @@
+@@ -710,7 +753,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
      return RespondNow(Error(std::move(partition_key.error())));
    }
  
@@ -2450,7 +2511,7 @@
      parsed_args_->details.store_id = store_id;
    }
  
-@@ -732,6 +775,12 @@
+@@ -732,6 +775,12 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
  }
  
  void CookiesRemoveFunction::RemoveCookieCallback(uint32_t /* num_deleted */) {
@@ -2463,7 +2524,7 @@
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
  
    // Build the callback result
-@@ -833,6 +882,12 @@
+@@ -833,6 +882,12 @@ ExtensionFunction::ResponseAction CookiesGetPartitionKeyFunction::Run() {
    }
  
    CHECK(render_frame_host);
@@ -2476,7 +2537,7 @@
  
    base::expected<net::CookiePartitionKey::SerializedCookiePartitionKey,
                   std::string>
-@@ -862,6 +917,12 @@
+@@ -862,6 +917,12 @@ ExtensionFunction::ResponseAction CookiesGetPartitionKeyFunction::Run() {
  }
  
  ExtensionFunction::ResponseAction CookiesGetAllCookieStoresFunction::Run() {
@@ -2489,7 +2550,7 @@
    // Return a list of all cookie stores with at least one open tab.
    std::vector<api::cookies::CookieStore> cookie_stores;
    for (auto& store_context :
-@@ -901,6 +962,10 @@
+@@ -901,6 +962,10 @@ BrowserContextKeyedAPIFactory<CookiesAPI>* CookiesAPI::GetFactoryInstance() {
  }
  
  void CookiesAPI::OnListenerAdded(const EventListenerInfo& details) {
@@ -2500,9 +2561,11 @@
    DCHECK(!cookies_event_router_);
    cookies_event_router_ =
        std::make_unique<CookiesEventRouter>(browser_context_);
+diff --git a/extensions/browser/api/cookies/cookies_api.h b/extensions/browser/api/cookies/cookies_api.h
+index 4da8dd56b5..fefc6f8ba5 100644
 --- a/extensions/browser/api/cookies/cookies_api.h
 +++ b/extensions/browser/api/cookies/cookies_api.h
-@@ -108,6 +108,8 @@
+@@ -108,6 +108,8 @@ class CookiesEventRouter : public BrowserContextLifetimeObserver {
  };
  
  // Implements the cookies.get() extension function.
@@ -2511,7 +2574,7 @@
  class CookiesGetFunction : public ExtensionFunction {
   public:
    DECLARE_EXTENSION_FUNCTION("cookies.get", COOKIES_GET)
-@@ -130,6 +132,7 @@
+@@ -130,6 +132,7 @@ class CookiesGetFunction : public ExtensionFunction {
  
    GURL url_;
    mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
@@ -2519,7 +2582,7 @@
    std::optional<api::cookies::Get::Params> parsed_args_;
  };
  
-@@ -159,6 +162,7 @@
+@@ -159,6 +162,7 @@ class CookiesGetAllFunction : public ExtensionFunction {
  
    GURL url_;
    mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
@@ -2527,7 +2590,7 @@
    std::optional<api::cookies::GetAll::Params> parsed_args_;
  };
  
-@@ -183,6 +187,7 @@
+@@ -183,6 +187,7 @@ class CookiesSetFunction : public ExtensionFunction {
    GURL url_;
    bool success_;
    mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
@@ -2535,7 +2598,7 @@
    std::optional<api::cookies::Set::Params> parsed_args_;
  };
  
-@@ -204,6 +209,7 @@
+@@ -204,6 +209,7 @@ class CookiesRemoveFunction : public ExtensionFunction {
  
    GURL url_;
    mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
@@ -2543,9 +2606,12 @@
    std::optional<api::cookies::Remove::Params> parsed_args_;
  };
  
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy.cc b/extensions/browser/api/cookies/yab_cookie_store_policy.cc
+new file mode 100644
+index 0000000000..9790456821
 --- /dev/null
 +++ b/extensions/browser/api/cookies/yab_cookie_store_policy.cc
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,312 @@
 +// Unapplied Yab Android policy for the pinned Chromium source.
 +#include "extensions/browser/api/cookies/yab_cookie_store_policy.h"
 +
@@ -2752,6 +2818,8 @@
 +  router->DispatchEventToExtension(extension_id_, std::move(event));
 +}
 +
++YabCookieStorePolicy::YabCookieStorePolicy() = default;
++
 +bool YabCookieStorePolicy::IsRequired() {
 +  // This is the Yab Android fork patch. It must deny access even before native owner installation.
 +  return BUILDFLAG(IS_ANDROID);
@@ -2856,9 +2924,12 @@
 +  return true;
 +}
 +}  // namespace extensions
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy.h b/extensions/browser/api/cookies/yab_cookie_store_policy.h
+new file mode 100644
+index 0000000000..b700aa7d8c
 --- /dev/null
 +++ b/extensions/browser/api/cookies/yab_cookie_store_policy.h
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,108 @@
 +// Unapplied Yab Android policy for the pinned Chromium source.
 +#ifndef EXTENSIONS_BROWSER_API_COOKIES_YAB_COOKIE_STORE_POLICY_H_
 +#define EXTENSIONS_BROWSER_API_COOKIES_YAB_COOKIE_STORE_POLICY_H_
@@ -2936,6 +3007,8 @@
 +// BrowserContext-owned; grants are process-local native capabilities, never restored from JS.
 +class YabCookieStorePolicy : public base::SupportsUserData::Data {
 + public:
++  // Chromium style requires complex classes to keep constructors out-of-line.
++  YabCookieStorePolicy();
 +  static bool IsRequired();
 +  static YabCookieStorePolicy* Get(content::BrowserContext* context, bool create = false);
 +  ~YabCookieStorePolicy() override;
@@ -2965,6 +3038,9 @@
 +
 +}  // namespace extensions
 +#endif
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc b/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc
+new file mode 100644
+index 0000000000..d8eeba45e3
 --- /dev/null
 +++ b/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc
 @@ -0,0 +1,217 @@
