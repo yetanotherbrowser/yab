@@ -9,6 +9,7 @@ enum class SettingsPage(val title: String, internal val keywords: String) {
     SEARCH("Search", "engine google web address url"),
     APPEARANCE("Appearance", "theme light dark system color colour look websites pages"),
     APP_ICON("App Icon", "icon icons home screen logo"),
+    ENGINE("Engine", "gecko chromium default"),
     AI("AI", "answers ask chat chats model models on-device local agent claude chatgpt codex mac download"),
     TABS("Tabs", "today keep pins folders automatic clear"),
     SPACES("Spaces", "workspaces personal work emoji color colour sign ins cookies"),
@@ -31,6 +32,7 @@ data class SettingsSearchAvailability(
     val reports: Boolean = false,
     val ai: Boolean = false,
     val updates: Boolean = false,
+    val chromium: Boolean = false,
 )
 
 data class SettingsSearchRow(val id: String, val title: String, val value: String? = null, val spaceId: String? = null)
@@ -46,6 +48,7 @@ object SettingsRowId {
     const val SWIPE_ANYWHERE = "general.swipeAnywhere"
     const val LAUNCH_KEYBOARD = "general.openKeyboardAtLaunch"
     const val APP_ICON = "appearance.appIcon"
+    const val ENGINE = "engine.default"
     const val DARKEN_WEBSITES = "appearance.darkenWebsites"
     const val TODAY = "tabs.today"
     const val AUTO_CLEAR = "tabs.autoClear"
@@ -97,6 +100,9 @@ object SettingsSearchIndex {
             add(SettingsSearchPage(SettingsPage.SEARCH, SearchEngine.entries.filter { it != SearchEngine.CUSTOM || BrowserAddress.validTemplate(settings.customSearchTemplate) }.map { row(SettingsRowId.engine(it), it.title) }))
             add(SettingsSearchPage(SettingsPage.APPEARANCE, BrowserAppearance.entries.map { row(SettingsRowId.appearance(it), it.name.lowercase(Locale.ROOT).replaceFirstChar(Char::titlecase)) } + row(SettingsRowId.DARKEN_WEBSITES, "Darken Websites")))
             add(SettingsSearchPage(SettingsPage.APP_ICON, appIcons.map { row(SettingsRowId.icon(it), it) }))
+            // The row exists only while the Chromium fork is linked; a build without it never mentions Chromium.
+            if (availability.chromium) add(SettingsSearchPage(SettingsPage.ENGINE,
+                listOf(row(SettingsRowId.ENGINE, "Default Engine", settings.engineKind.name.lowercase(Locale.ROOT).replaceFirstChar(Char::titlecase)))))
             if (availability.ai) add(SettingsSearchPage(SettingsPage.AI, listOf(row("ai.aboutPage", "About a page"), row("ai.agent", "Agent on your Mac"), row("ai.model", "On-device AI"))))
             add(SettingsSearchPage(SettingsPage.TABS, listOf(row(SettingsRowId.TODAY, "Today", "This device's own"), row(SettingsRowId.AUTO_CLEAR, "Clear after 12 hours"), row(SettingsRowId.MAC_TABS, "Your Mac's Tabs"), row(SettingsRowId.TAB_LOCK, "Private Tabs"))))
             add(SettingsSearchPage(SettingsPage.SPACES, spaceRows))

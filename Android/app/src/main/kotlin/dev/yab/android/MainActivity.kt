@@ -1208,6 +1208,7 @@ class MainActivity : FragmentActivity() {
                     }
                 },
                 reports = browserSession.reports.controller,
+                chromiumForkPresent = (application as YabApplication).chromiumForkPresent,
                 macTodayContent = { space -> if (state.selectedSpaceId == space) dev.yab.sync.MacTodaySection(browserSession.macToday) },
                 aiSettingsContent = { current ->
                     val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->

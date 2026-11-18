@@ -49,6 +49,9 @@ class YabApplication : Application() {
         dev.yab.chromium.ChromeForkPresence.resolve()
     }
 
+    /** True while the Chromium fork's bootstrap class is linked in this build; the Settings engine row shows only then. */
+    val chromiumForkPresent: Boolean get() = chromePresence != null
+
     /**
      * The Chromium seam's first consumer, application-scoped. Null until the
      * fork is present; a build without it never opens the Chrome identity

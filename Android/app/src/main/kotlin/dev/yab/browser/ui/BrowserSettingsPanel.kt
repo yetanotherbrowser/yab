@@ -55,6 +55,7 @@ internal fun BrowserSettingsPanel(
     blocksAdsEnabled: Boolean? = null,
     onBlocksAdsChange: ((Boolean) -> Unit)? = null,
     blockingStatus: String? = null,
+    chromiumForkPresent: Boolean? = null,
     reports: dev.yab.reports.ReportsController? = null,
     aiSettings: (@Composable (actionCurrent: () -> Boolean) -> Unit)? = null,
     host: BrowserSettingsHostState,
@@ -76,7 +77,7 @@ internal fun BrowserSettingsPanel(
     val availability = SettingsSearchAvailability(sync = onSync != null, extensions = onExtensions != null,
         systemSettings = onSystemSettings != null, credentialsSettings = onCredentialsSettings != null,
         feedback = reports != null, reports = reportState?.available == true, ai = aiSettings != null,
-        updates = updater.endpoint != null)
+        updates = updater.endpoint != null, chromium = chromiumForkPresent == true)
     val pages = SettingsSearchIndex.pages(state.settings, state.spaces, availability,
         emptyList(), dev.yab.android.BuildConfig.VERSION_NAME, dev.yab.android.BuildConfig.VERSION_CODE.toString())
     val capturedGeneration = frame.generation
@@ -163,7 +164,7 @@ internal fun BrowserSettingsPanel(
                 Column(Modifier.weight(1f).verticalScroll(rootScroll).padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 40.dp),
                     verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     val matches = if (query.isBlank()) {
-                        val order = listOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON, SettingsPage.TABS, SettingsPage.SYNC,
+                        val order = listOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON, SettingsPage.ENGINE, SettingsPage.TABS, SettingsPage.SYNC,
                             SettingsPage.AI, SettingsPage.SPACES, SettingsPage.HISTORY, SettingsPage.PASSWORDS, SettingsPage.AUTOFILL, SettingsPage.EXTENSIONS, SettingsPage.PRIVACY,
                             SettingsPage.ABOUT, SettingsPage.FEEDBACK)
                         order.filter { page -> pages.any { it.page == page } }.map { SettingsSearchMatch(it) }
@@ -173,7 +174,7 @@ internal fun BrowserSettingsPanel(
                             .testTag("settings.search.empty").semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         val groups = if (query.isNotBlank()) listOf(matches) else listOf(
-                            matches.filter { it.page in setOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON, SettingsPage.TABS, SettingsPage.SYNC) },
+                            matches.filter { it.page in setOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON, SettingsPage.ENGINE, SettingsPage.TABS, SettingsPage.SYNC) },
                             matches.filter { it.page in setOf(SettingsPage.AI, SettingsPage.SPACES, SettingsPage.HISTORY, SettingsPage.PASSWORDS, SettingsPage.AUTOFILL, SettingsPage.EXTENSIONS, SettingsPage.PRIVACY) },
                             matches.filter { it.page in setOf(SettingsPage.ABOUT, SettingsPage.FEEDBACK) })
                         groups.filter { it.isNotEmpty() }.forEach { group -> SettingsGroup {
@@ -181,6 +182,7 @@ internal fun BrowserSettingsPanel(
                                 val subtitle = match.row?.title ?: when (match.page) {
                                     SettingsPage.APPEARANCE -> state.settings.appearance.name.lowercase(Locale.ROOT).replaceFirstChar(Char::titlecase)
                                     SettingsPage.APP_ICON -> iconTitle
+                                    SettingsPage.ENGINE -> state.settings.engineKind.name.lowercase(Locale.ROOT).replaceFirstChar(Char::titlecase)
                                     SettingsPage.SYNC -> null
                                     else -> null
                                 }
@@ -230,6 +232,20 @@ internal fun BrowserSettingsPanel(
                             SearchEngine.entries.filter { it != SearchEngine.CUSTOM || BrowserAddress.validTemplate(state.settings.customSearchTemplate) }.forEach { engine ->
                                 IndexedSetting(SettingsRowId.engine(engine)) { ChoiceRow(engine.title, state.settings.searchEngine == engine) { if (actionCurrent()) controller.updateSettings(lease) { current -> current.copy(searchEngine = engine) } } }
                             }
+                        }
+                    }
+                    "Engine" -> {
+                        SettingsSection("A new choice applies on the next app start.") {
+                            IndexedSetting(SettingsRowId.ENGINE) { Column {
+                                BrowserEngineKind.entries.forEach { kind ->
+                                    ChoiceRow(kind.name.lowercase(Locale.ROOT).replaceFirstChar(Char::titlecase), state.settings.engineKind == kind) {
+                                        if (actionCurrent()) dev.yab.chromium.ChromeEngineSelection(chromiumForkPresent == true)
+                                            .choose(state.settings.engineKind, kind)?.let { chosen ->
+                                                controller.updateSettings(lease) { current -> current.copy(engineKind = chosen) }
+                                            }
+                                    }
+                                }
+                            } }
                         }
                     }
                     "Appearance" -> {

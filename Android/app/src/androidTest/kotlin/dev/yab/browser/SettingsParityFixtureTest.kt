@@ -145,4 +145,77 @@ class SettingsParityFixtureTest {
             compose.onNodeWithTag("settings.search").assertTextContains("appearance")
         } finally { scope.cancel() }
     }
+
+    @Test fun engineRowStaysHiddenWhileTheChromiumForkIsAbsent() {
+        check(InstrumentationRegistry.getArguments().getString("ownedEmulator") == "true")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val engine = object : BrowserEngine {
+            override fun activate(tab: BrowserTab, profile: WebsiteProfile) {}
+            override fun navigate(tab: BrowserTab, url: String, profile: WebsiteProfile) {}
+            override fun goBack(tabId: String) {}
+            override fun goForward(tabId: String) {}
+            override fun reload(tabId: String) {}
+            override fun stop(tabId: String) {}
+            override fun close(tabId: String) {}
+            override suspend fun clearWebsiteData(profileIds: Set<String>) {}
+        }
+        val browser = BrowserController(object : BrowserRepository {
+            override suspend fun load(): BrowserSnapshot? = BrowserSnapshot(spaces = listOf(BrowserSpace("parity", "Personal")), selectedSpaceId = "parity", settings = BrowserSettings(appearance = BrowserAppearance.LIGHT))
+            override suspend fun save(snapshot: BrowserSnapshot) {}
+        }, engine, scope)
+        try {
+            compose.setContent {
+                val state by browser.state.collectAsState()
+                ParitySystemBars(state.settings.appearance)
+                BrowserScreen(browser, onSyncSettings = {}, pageContent = { _, _, modifier -> Box(modifier) }) }
+            compose.waitUntil(10_000) { !browser.state.value.loading }
+            compose.runOnIdle { browser.show(BrowserSurface.SETTINGS) }
+            compose.onNodeWithTag("settings.search").assertExists()
+            compose.onNodeWithText("Engine", substring = false).assertDoesNotExist()
+            compose.onNodeWithTag("settings.search").performTextReplacement("chromium")
+            compose.onNodeWithTag("settings.search.empty").assertExists()
+            shot("settings.engine-absent")
+        } finally { scope.cancel() }
+    }
+
+    @Test fun engineRowAndPickerFollowIssue949WhileTheForkIsPresent() {
+        check(InstrumentationRegistry.getArguments().getString("ownedEmulator") == "true")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val engine = object : BrowserEngine {
+            override fun activate(tab: BrowserTab, profile: WebsiteProfile) {}
+            override fun navigate(tab: BrowserTab, url: String, profile: WebsiteProfile) {}
+            override fun goBack(tabId: String) {}
+            override fun goForward(tabId: String) {}
+            override fun reload(tabId: String) {}
+            override fun stop(tabId: String) {}
+            override fun close(tabId: String) {}
+            override suspend fun clearWebsiteData(profileIds: Set<String>) {}
+        }
+        val browser = BrowserController(object : BrowserRepository {
+            override suspend fun load(): BrowserSnapshot? = BrowserSnapshot(spaces = listOf(BrowserSpace("parity", "Personal")), selectedSpaceId = "parity", settings = BrowserSettings(appearance = BrowserAppearance.LIGHT))
+            override suspend fun save(snapshot: BrowserSnapshot) {}
+        }, engine, scope)
+        try {
+            compose.setContent {
+                val state by browser.state.collectAsState()
+                ParitySystemBars(state.settings.appearance)
+                BrowserScreen(browser, onSyncSettings = {}, chromiumForkPresent = true, pageContent = { _, _, modifier -> Box(modifier) }) }
+            compose.waitUntil(10_000) { !browser.state.value.loading }
+            compose.runOnIdle { browser.show(BrowserSurface.SETTINGS) }
+            compose.onNodeWithTag("settings.search").assertExists()
+            compose.onNodeWithText("Engine", substring = false).assertExists()
+            shot("settings.1-engine")
+            compose.onNodeWithText("Engine", substring = false).performClick()
+            compose.onNodeWithText("A new choice applies on the next app start.").assertExists()
+            shot("settings.page-engine")
+            // The pushed-out root page stays composed with its own engine readout, so the root subtitle and the
+            // picker row can both show the same word; pick the choice the root does not display, like the
+            // Appearance flow does with Dark while the root reads Light.
+            compose.onNodeWithText("Chromium", useUnmergedTree = true).performClick()
+            compose.runOnIdle { assertEquals(BrowserEngineKind.CHROMIUM, browser.state.value.settings.engineKind) }
+            shot("settings.page-engine-chromium")
+            compose.onNodeWithContentDescription("Back").performClick()
+            shot("settings.1-engine-chromium")
+        } finally { scope.cancel() }
+    }
 }

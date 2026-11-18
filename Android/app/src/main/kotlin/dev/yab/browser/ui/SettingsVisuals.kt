@@ -45,6 +45,7 @@ import dev.yab.android.R
         "Search" -> if (dark) R.drawable.settings_art_search_dark else R.drawable.settings_art_search
         "Appearance" -> if (dark) R.drawable.settings_art_appearance_dark else R.drawable.settings_art_appearance
         "App Icon" -> if (dark) R.drawable.settings_art_appicon_dark else R.drawable.settings_art_appicon
+        "Engine" -> if (dark) R.drawable.settings_art_engine_dark else R.drawable.settings_art_engine
         "Tabs", "Today" -> if (dark) R.drawable.settings_art_tabs_dark else R.drawable.settings_art_tabs
         "Sync" -> if (dark) R.drawable.settings_art_sync_dark else R.drawable.settings_art_sync
         "AI", "About a page", "On-device AI" -> if (dark) R.drawable.settings_art_ai_dark else R.drawable.settings_art_ai

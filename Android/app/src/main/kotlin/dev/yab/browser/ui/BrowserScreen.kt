@@ -128,6 +128,7 @@ fun BrowserScreen(
     siteBlocking: Boolean? = null,
     onSiteBlockingChange: ((Boolean) -> Unit)? = null,
     blockingStatus: String? = null,
+    chromiumForkPresent: Boolean? = null,
     conversationContent: (@Composable () -> Unit)? = null,
     parkedChatContent: (@Composable () -> Unit)? = null,
     reports: dev.yab.reports.ReportsController? = null,
@@ -856,7 +857,7 @@ fun BrowserScreen(
                 BrowserSettingsHost(state, controller, onMounted = { settingsMounted = it }) { settingsHost, settingsLease ->
                     BrowserSettingsPanel(state, controller, onSyncSettings, onExtensions, onOpenSystemSettings, onOpenCredentialsSettings,
                         onClearData = { clearData = true }, blocksAdsEnabled = blocksAdsEnabled, onBlocksAdsChange = onBlocksAdsChange,
-                        blockingStatus = blockingStatus, reports = reports, aiSettings = aiSettingsContent, host = settingsHost, lease = settingsLease)
+                        blockingStatus = blockingStatus, chromiumForkPresent = chromiumForkPresent, reports = reports, aiSettings = aiSettingsContent, host = settingsHost, lease = settingsLease)
                 }
                 if (state.persistenceError != null) {
                     Text(state.persistenceError!!, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp).background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(16.dp)).padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)

@@ -75,6 +75,25 @@ class SettingsSearchIndexTest {
         assertEquals(SettingsRowId.VERSION, matches("version").single().row?.id)
     }
 
+    @Test fun engineRowAppearsOnlyWithTheChromiumForkAndCarriesTheStoredChoice() {
+        assertFalse(pages().any { it.page == SettingsPage.ENGINE })
+        assertTrue(matches("chromium").isEmpty())
+        assertTrue(matches("gecko").isEmpty())
+        val withFork = available.copy(chromium = true)
+        val catalog = pages(availability = withFork)
+        assertEquals(listOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON, SettingsPage.ENGINE, SettingsPage.TABS),
+            catalog.take(6).map { it.page })
+        val gecko = matches("default engine", catalog).single()
+        assertEquals(SettingsPage.ENGINE, gecko.page)
+        assertEquals(SettingsRowId.ENGINE, gecko.row?.id)
+        assertEquals("Gecko", gecko.row?.value)
+        assertEquals(SettingsRowId.ENGINE, matches("gecko", catalog).single().row?.id)
+        val chromiumChoice = pages(BrowserSettings(engineKind = BrowserEngineKind.CHROMIUM), withFork)
+        assertEquals("Chromium", matches("default engine", chromiumChoice).single().row?.value)
+        assertEquals(SettingsRowId.ENGINE, matches("chromium", chromiumChoice).single().row?.id)
+        assertEquals(listOf(SettingsPage.ENGINE, SettingsPage.SEARCH), matches("engine", catalog).map { it.page })
+    }
+
     @Test fun unicodeWordPrefixesWorkAndOrderingIsPagesBeforeRowsThenByPageTitle() {
         val unicode = SettingsSearchIndex.pages(BrowserSettings(), listOf(BrowserSpace("greek", "Σχολή")), available)
         assertEquals("greek", matches("ΣΧΟ", unicode).single().row?.spaceId)
