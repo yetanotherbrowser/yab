@@ -65,6 +65,21 @@ struct CalcTests {
         }
     }
 
+    /// "80 + 15%" is 92. With more after it, it is still 92 and then the rest.
+    @Test func aPercentageInALongerSumIsOfTheSumSoFar() {
+        #expect(answer("80 + 15%")?.result == "92")
+        #expect(answer("80 + 15% + 5")?.result == "97")
+        #expect(answer("100 - 10% - 10%")?.result == "81")
+        #expect(answer("(100+10%)*2")?.result == "220")
+        #expect(answer("1000 - 20% + 50")?.result == "850")
+        // A percentage that is not added or taken away is the fraction it was.
+        #expect(Sum.answer("50%*80")?.shown == "40")
+        #expect(answer("200*10%")?.result == "20")
+        #expect(answer("100 + 10%*2")?.result == "100.2")
+        #expect(answer("10% + 5")?.result == "5.1")
+        #expect(Sum.answer("50%+50%")?.shown == "1")
+    }
+
     @Test func sumsAndPercentages() {
         #expect(answer("2400*12")?.result == "28,800")
         #expect(answer("2400*12")?.copy == "28800")

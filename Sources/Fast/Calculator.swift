@@ -871,12 +871,46 @@ enum Sum {
             return next
         }
         mutating func expression() -> Double? {
-            guard var value = term() else { return nil }
+            // 80 + 15% + 5: a percentage added or taken away is of the sum
+            // so far, as "80 + 15%" alone is (Calc.percent). Read as 0.15
+            // whenever more followed, the same words meant 92 and then
+            // 85.15. Percentages alone still add up: 50% + 50% is 1.
+            var ofSum = true
+            var value: Double
+            if let share = percentage() {
+                value = share
+                ofSum = false
+            } else {
+                guard let first = term() else { return nil }
+                value = first
+            }
             while let op = eat("+-") {
+                if let share = percentage() {
+                    let change = ofSum ? value * share : share
+                    value = op == "+" ? value + change : value - change
+                    continue
+                }
                 guard let right = term() else { return nil }
                 value = op == "+" ? value + right : value - right
+                ofSum = true
             }
             return value
+        }
+        /// A percentage standing as a whole term, "15%" before the end, a
+        /// closing bracket or the next plus or minus. Nil, with nothing
+        /// eaten, for anything else: 50%*80 is still half of eighty.
+        mutating func percentage() -> Double? {
+            let start = at
+            var digits = ""
+            while let next = peek(), next.isNumber || next == "." || next == "," {
+                if next != "," { digits.append(next) }
+                at += 1
+            }
+            guard let value = Double(digits), eat("%") != nil, peek().map({ "+-)".contains($0) }) ?? true else {
+                at = start
+                return nil
+            }
+            return value / 100
         }
         mutating func term() -> Double? {
             guard var value = power() else { return nil }
