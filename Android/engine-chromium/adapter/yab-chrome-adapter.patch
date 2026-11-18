@@ -1034,6 +1034,21 @@ index 0000000000..2d5f9d4cd7
 +        }
 +    }
 +}
+diff --git a/chrome/android/proguard/main.flags b/chrome/android/proguard/main.flags
+index 3b26152adb..1793f0d117 100644
+--- a/chrome/android/proguard/main.flags
++++ b/chrome/android/proguard/main.flags
+@@ -39,4 +39,8 @@
+ 
+ # Test APK targets do not include the XR bundle code, but do include XrModule.java,
+ # which references XrModuleProvider via an @IdentifierNameString.
+--dontwarn org.chromium.chrome.browser.xr.scenecore.XrModuleProviderImpl
+\ No newline at end of file
++-dontwarn org.chromium.chrome.browser.xr.scenecore.XrModuleProviderImpl
++# Yab: the host app resolves the fork bootstrap by Class.forName on the
++# original name (ChromeForkPresence), so the entry class must not be
++# renamed or removed.
++-keep public class org.chromium.chrome.browser.yab.YabChromeBootstrap { *; }
 diff --git a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java b/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
 index f6fd8117d5..a9738c0d10 100644
 --- a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
