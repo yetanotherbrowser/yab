@@ -65,6 +65,18 @@ struct CalcTests {
         }
     }
 
+    /// A number in another base is a whole number to the last digit, and
+    /// Return copies it without the commas it is shown with.
+    @Test func numberBasesAreExactAndCopyWithoutCommas() {
+        #expect(answer("0x3e8 in decimal")?.result == "1,000")
+        #expect(answer("0x3e8 in decimal")?.copy == "1000")
+        #expect(answer("0x3e8")?.copy == "1000")
+        #expect(answer("0xffffffffffffff in decimal")?.result == "72,057,594,037,927,935")
+        #expect(answer("0xffffffffffffff")?.copy == "72057594037927935")
+        #expect(answer("9007199254740993 in hex")?.question == "9,007,199,254,740,993")
+        #expect(answer("9007199254740993 in hex")?.result == "0x20000000000001")
+    }
+
     @Test func sumsAndPercentages() {
         #expect(answer("2400*12")?.result == "28,800")
         #expect(answer("2400*12")?.copy == "28800")

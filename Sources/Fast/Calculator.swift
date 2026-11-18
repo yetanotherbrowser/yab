@@ -232,14 +232,22 @@ enum Calc {
             case 16: return "0x" + String(value, radix: 16).uppercased()
             case 2: return "0b" + String(value, radix: 2)
             case 8: return "0o" + String(value, radix: 8)
-            default: return shown(Double(value), places: 0)
+            // Grouped digit by digit, not through a Double or a formatter:
+            // past 2^53 those keep only every other whole number, and
+            // 0xFFFFFFFFFFFFFF came out ending in 940, not 935.
+            default:
+                let digits = String(value)
+                return String(digits.enumerated().flatMap { at, digit in
+                    at > 0 && (digits.count - at) % 3 == 0 ? [",", digit] : [digit]
+                })
             }
         }
         let title = [16: "Hexadecimal", 2: "Binary", 8: "Octal", 10: "Decimal"]
         for (left, right) in split(lower) {
             guard let (value, from) = read(left), let (to, name) = names[right], to != from else { continue }
             let result = said(value, to)
-            return Answer(question: said(value, from), questionNote: title[from] ?? "", result: result, resultNote: name, copy: result, kind: .numberBase)
+            return Answer(question: said(value, from), questionNote: title[from] ?? "", result: result, resultNote: name,
+                          copy: result.replacingOccurrences(of: ",", with: ""), kind: .numberBase)
         }
         // A number written in another base, on its own: in decimal.
         if lower.hasPrefix("0x") || lower.hasPrefix("0b"), let (value, from) = read(lower), from != 10 {
