@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Yab Chromium</string>
+    <!-- :app defines these as resValue entries from the environment; this
+         module has no resValue block, so shared FirebasePush resolves them
+         here. Empty values keep push unconfigured, same as :app without env. -->
+    <string name="firebase_app_id"></string>
+    <string name="firebase_api_key"></string>
+    <string name="firebase_project_id"></string>
+    <string name="firebase_sender_id"></string>
+</resources>

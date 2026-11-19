@@ -8,7 +8,10 @@ plugins {
 }
 android {
     namespace = "dev.yab.android"
+    // geckoview 158 AAR metadata demands compileSdk 37.2 (minCompileSdk=37,
+    // minCompileMinorSdk=2); AGP 9.4 enforces the minor where 9.1 did not.
     compileSdk = 37
+    compileSdkMinor = 2
     defaultConfig {
         applicationId = "dev.yab.android"
         minSdk = 29
@@ -28,6 +31,9 @@ android {
         resValue("string", "firebase_project_id", System.getenv("YAB_FIREBASE_PROJECT_ID") ?: "")
         resValue("string", "firebase_sender_id", System.getenv("YAB_FIREBASE_SENDER_ID") ?: "")
         manifestPlaceholders["yabReportsSite"] = System.getenv("YAB_REPORTS_SITE") ?: ""
+        // The About engine row and the settings search index read this; the
+        // Chromium edition overrides it with its own name.
+        buildConfigField("String", "ENGINE_NAME", "\"Gecko\"")
     }
     buildFeatures { compose = true; buildConfig = true; resValues = true }
     compileOptions {
@@ -74,6 +80,16 @@ android {
     }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            // The two editions differ only inside the APK; the filename says which engine this is.
+            output.outputFileName = "yab-gecko-${variant.name}.apk"
+        }
+    }
+}
+
 dependencies {
     implementation(project(":core"))
     // UI 1.12.1 preserves hosted GeckoView's real framework Autofill structure.
@@ -107,6 +123,9 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // Compose UI testing pulls Espresso 3.5.0, whose InputManager reflection breaks on API 37 devices;
+    // 3.7.0 is the documented fix (android/android-test#2507) and must stay explicit until the BOM moves.
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
@@ -121,3 +140,17 @@ tasks.withType<Test>().configureEach {
     if (oracle.isPresent) inputs.file(oracle.get()).withPathSensitivity(PathSensitivity.NONE)
 }
 
+
+// Some checkouts do not carry the private chat-work fixture file
+// (Android/parity/chat-work/fixtures.json), so its suite cannot run there.
+// yabExcludeSuites lists suites to skip on such a checkout; an owner
+// machine with the fixtures keeps running everything.
+val excludedSuites = providers.gradleProperty("yabExcludeSuites").orElse("").get()
+    .split(',').map(String::trim).filter(String::isNotEmpty)
+if (excludedSuites.isNotEmpty()) {
+    tasks.withType<Test>().configureEach {
+        filter {
+            excludedSuites.forEach { excludeTestsMatching("$it.*") }
+        }
+    }
+}

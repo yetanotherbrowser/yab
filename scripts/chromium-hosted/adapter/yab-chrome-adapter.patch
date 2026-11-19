@@ -1,0 +1,3278 @@
+diff --git a/chrome/android/chrome_java_sources.gni b/chrome/android/chrome_java_sources.gni
+index ccfc8ad25a..4770c29b72 100644
+--- a/chrome/android/chrome_java_sources.gni
++++ b/chrome/android/chrome_java_sources.gni
+@@ -5,6 +5,8 @@
+ import("//content/public/common/features.gni")
+ 
+ chrome_java_sources = [
++  "java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java",
++  "java/src/org/chromium/chrome/browser/yab/YabChromeSession.java",
+   "java/src/com/google/android/apps/chrome/appwidget/bookmarks/BookmarkThumbnailWidgetProvider.java",
+   "java/src/org/chromium/chrome/browser/ActivityTabProvider.java",
+   "java/src/org/chromium/chrome/browser/ActivityUtils.java",
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
+index 1ee4c2d520..9c0b4c3a21 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeApplicationImpl.java
+@@ -27,6 +27,7 @@ import org.chromium.chrome.browser.fonts.FontPreloader;
+ import org.chromium.chrome.browser.night_mode.SystemNightModeMonitor;
+ import org.chromium.chrome.browser.notifications.chime.ChimeDelegate;
+ import org.chromium.chrome.browser.profiles.ProfileResolver;
++import org.chromium.chrome.browser.yab.YabChromeBootstrap;
+ import org.chromium.components.browser_ui.util.BrowserUiUtilsCachedFlags;
+ import org.chromium.components.browser_ui.util.GlobalDiscardableReferencePool;
+ import org.chromium.components.embedder_support.browser_context.PartitionResolverSupplier;
+@@ -51,6 +52,7 @@ public class ChromeApplicationImpl extends SplitCompatApplication.Impl {
+         // This Impl is only instantiated in the browser process; SplitChromeApplication uses the
+         // base Impl for all other processes so that the chrome split is never loaded there.
+         assert SplitCompatApplication.isBrowserProcess();
++        YabChromeBootstrap.onApplicationCreate(getApplication());
+ 
+         // Popup creation can be requested before the first ChromeActivity starts.
+         PopupCreatorFactory.setInstance(new PopupCreatorImpl());
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
+index 92df6e96a9..a8be512fd7 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabBuilder.java
+@@ -197,6 +197,7 @@ public class TabBuilder {
+         }
+ 
+         TabImpl tab = new TabImpl(mId, mProfile, mLaunchType);
++        YabNamespaceRuntime.onTabAllocated(tab, mWebContents);
+         Tab parent = null;
+         if (mParent != null) {
+             parent = mParent;
+@@ -211,6 +212,7 @@ public class TabBuilder {
+             mDelegateFactory = ((TabImpl) parent).getDelegateFactory();
+         }
+ 
++        YabNamespaceRuntime.beforeInitialize(tab, mWebContents, mTabState);
+         if (mPreInitializeAction != null) mPreInitializeAction.onResult(tab);
+ 
+         tab.setContentViewDeferred(mIsContentViewDeferred);
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
+index 8f9a561242..de37561fde 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/tab/TabImpl.java
+@@ -1243,14 +1243,14 @@ class TabImpl implements Tab, TabInternal {
+     @CalledByNative
+     @Override
+     public boolean loadIfNeeded(boolean forceBackingSize) {
+-        if (!canLoadIfNeeded()) {
++        if (!canLoadIfNeeded() || !YabNamespaceRuntime.mayExpose(this)) {
+             return false;
+         }
+ 
+         if (mPendingLoadParams != null) {
+             if (mWebContents == null) {
+                 WebContents webContents =
+-                        WebContentsFactory.createWebContents(
++                        createWebContentsForCurrentYabOwner(
+                                 mProfile, isHidden(), /* initializeRenderer= */ false);
+                 initWebContents(webContents);
+             }
+@@ -1700,6 +1700,7 @@ class TabImpl implements Tab, TabInternal {
+             TabImplJni.get().destroy(mNativeTabAndroid);
+             assert mNativeTabAndroid == 0;
+         }
++        YabNamespaceRuntime.onNativeDisposalCompleted(this, deleteNativeWebContents);
+         return status;
+     }
+ 
+@@ -1846,10 +1847,22 @@ class TabImpl implements Tab, TabInternal {
+         TraceEvent.end("Tab.initialize");
+     }
+ 
++    private WebContents createWebContentsForCurrentYabOwner(
++            Profile profile, boolean hidden, boolean initializeRenderer) {
++        if (!YabNamespaceRuntime.isRequired()) {
++            return WebContentsFactory.createWebContents(profile, hidden, initializeRenderer);
++        }
++        if (profile != mProfile) throw new IllegalStateException("Profile replacement is forbidden");
++        YabNamespaceIdentity identity = YabNamespaceRuntime.require(this);
++        return WebContentsFactory.createWebContentsForYabNamespace(profile,
++                identity.namespaceId, identity.inMemory, hidden, initializeRenderer);
++    }
++
+     private void initializeWebContents(
+             @Nullable WebContents webContents,
+             boolean initiallyHidden,
+             boolean initializeRenderer) {
++        if (!YabNamespaceRuntime.mayExpose(this)) return;
+         if (isDormant()) {
+             assert webContents == null : "Dormant tabs must never have WebContents initialized.";
+             return;
+@@ -1865,7 +1878,7 @@ class TabImpl implements Tab, TabInternal {
+             if (!mIsContentViewDeferred) {
+                 return;
+             }
+-            unfreezeContents(/* noRenderer= */ true);
++            if (!unfreezeContents(/* noRenderer= */ true)) return;
+             webContents = getWebContents();
+             // unfreezeContents() already called initWebContents().
+             needsToCallInitWebContents = false;
+@@ -1877,11 +1890,11 @@ class TabImpl implements Tab, TabInternal {
+                 return;
+             }
+             webContents =
+-                    WebContentsFactory.createWebContents(mProfile, isHidden(), initializeRenderer);
++                    createWebContentsForCurrentYabOwner(mProfile, isHidden(), initializeRenderer);
+         } else if (webContents == null) {
+             // Eager live tab creation without a caller-supplied WebContents.
+             webContents =
+-                    WebContentsFactory.createWebContents(
++                    createWebContentsForCurrentYabOwner(
+                             mProfile, initiallyHidden, initializeRenderer);
+         }
+ 
+@@ -2841,6 +2854,7 @@ class TabImpl implements Tab, TabInternal {
+      * history load are used.
+      */
+     private void restoreIfNeeded() {
++        if (!YabNamespaceRuntime.mayExpose(this)) return;
+         // Attempts to display the Paint Preview representation of this Tab.
+         if (isFrozen() && getWindowAndroid() != null) {
+             StartupPaintPreviewHelper.showPaintPreviewOnRestore(this);
+@@ -2892,15 +2906,27 @@ class TabImpl implements Tab, TabInternal {
+             TraceEvent.begin("Tab.unfreezeContents");
+             assert mWebContentsState != null;
+ 
+-            WebContents webContents =
+-                    mWebContentsState.restoreWebContents(getProfile(), isHidden(), noRenderer);
++            WebContents webContents;
++            if (YabNamespaceRuntime.isRequired()) {
++                if (!YabNamespaceRuntime.mayExpose(this)) return false;
++                YabNamespaceIdentity identity = YabNamespaceRuntime.require(this);
++                webContents = mWebContentsState.restoreWebContentsForYabNamespace(
++                        getProfile(), identity.namespaceId, identity.inMemory, isHidden(), noRenderer);
++                if (webContents == null) {
++                    for (TabObserver observer : mObservers) observer.onRestoreFailed(this);
++                    // Keep the tab frozen. No default-jar WebContents or URL-only fallback.
++                    return false;
++                }
++            } else {
++                webContents = mWebContentsState.restoreWebContents(getProfile(), isHidden(), noRenderer);
++            }
+ 
+             String failedRestoreUrl = null;
+             if (webContents == null) {
+                 // State restore failed, just create a new empty web contents as that is the best
+                 // that can be done at this point.
+                 webContents =
+-                        WebContentsFactory.createWebContents(
++                        createWebContentsForCurrentYabOwner(
+                                 mProfile, isHidden(), /* initializeRenderer= */ false);
+                 for (TabObserver observer : mObservers) observer.onRestoreFailed(this);
+                 restored = false;
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
+index 322ff2a7b5..fa28219e01 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java
+@@ -42,6 +42,8 @@ import org.chromium.chrome.browser.tab.TabLaunchTypeUtils;
+ import org.chromium.chrome.browser.tab.TabParentIntent;
+ import org.chromium.chrome.browser.tab.TabResolver;
+ import org.chromium.chrome.browser.tab.TabState;
++import org.chromium.chrome.browser.tab.YabNamespaceRuntime;
++import org.chromium.chrome.browser.yab.YabChromeBootstrap;
+ import org.chromium.chrome.browser.tabmodel.TabCreator.NeedsTabModel;
+ import org.chromium.chrome.browser.tabmodel.TabCreator.NeedsTabModelOrderController;
+ import org.chromium.components.embedder_support.util.UrlConstants;
+@@ -669,6 +671,8 @@ public class ChromeTabCreator implements TabCreator, NeedsTabModel, NeedsTabMode
+ 
+     @Override
+     public @Nullable Tab createFrozenTab(TabState state, int id, int index) {
++        if (!YabChromeBootstrap.ensureProfile(getProfile())
++                || !YabNamespaceRuntime.canRestore(getProfile(), id, state)) return null;
+         if (mTabModel == null || mOrderController == null) return null;
+         TabModelSelector selector = mTabModelSelectorSupplier.get();
+         TabResolver resolver =
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java
+new file mode 100644
+index 0000000000..9ff15dd6b2
+--- /dev/null
++++ b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeBootstrap.java
+@@ -0,0 +1,506 @@
++// Unapplied browser-process Application integration for the pinned Chromium source.
++package org.chromium.chrome.browser.yab;
++
++import android.app.Application;
++import android.util.AtomicFile;
++
++import org.chromium.base.ThreadUtils;
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.profiles.ProfileManager;
++import org.chromium.chrome.browser.tab.Tab;
++import org.chromium.chrome.browser.tab.YabNamespaceIdentity;
++import org.chromium.chrome.browser.tab.YabNamespaceRuntime;
++
++import org.json.JSONArray;
++import org.json.JSONException;
++import org.json.JSONObject;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.IdentityHashMap;
++import java.util.Iterator;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import java.util.function.BooleanSupplier;
++
++/**
++ * Hooks the real Chrome Application before popup/activity startup. Disk metadata is not an
++ * authentication grant: Yab's native account owner must activate it before starting ChromeActivity.
++ */
++@NullMarked
++public final class YabChromeBootstrap {
++    private static @Nullable Application sApplication;
++    private static @Nullable Snapshot sSnapshot;
++    private static @Nullable Activation sActivation;
++    private static final IdentityHashMap<Profile, Activation> sInstalled = new IdentityHashMap<>();
++    private static @Nullable PrivateActivation sPrivateActivation;
++    private static final IdentityHashMap<Profile, PrivateActivation> sPrivateInstalled = new IdentityHashMap<>();
++    private static final IdentityHashMap<Profile, PrivateDestruction> sPrivateDestruction = new IdentityHashMap<>();
++
++    private static final class PrivateActivation {
++        final Activation accountOwner;
++        final String epoch;
++        final BooleanSupplier nativeSessionLease;
++        @Nullable PrivateAccess access;
++        final Set<String> usedAccessEpochs = new HashSet<>();
++        boolean revoked;
++        PrivateActivation(Activation owner, String epoch, BooleanSupplier lease) {
++            accountOwner = owner;
++            this.epoch = canonical(epoch);
++            nativeSessionLease = lease;
++        }
++        boolean isCurrent() {
++            if (revoked) return false;
++            try {
++                if (!accountOwner.isCurrent() || !nativeSessionLease.getAsBoolean()) revoked = true;
++            } catch (RuntimeException error) {
++                revoked = true;
++            }
++            return !revoked && sPrivateActivation == this;
++        }
++        boolean mayAccess() {
++            return isCurrent() && access != null && access.isCurrent();
++        }
++    }
++
++    private static final class PrivateAccess {
++        final PrivateActivation session;
++        final String epoch;
++        final BooleanSupplier nativeUnlockLease;
++        boolean revoked;
++        PrivateAccess(PrivateActivation session, String epoch, BooleanSupplier lease) {
++            this.session = session;
++            this.epoch = canonical(epoch);
++            nativeUnlockLease = lease;
++        }
++        boolean isCurrent() {
++            if (revoked) return false;
++            try {
++                if (!session.isCurrent() || session.access != this
++                        || !nativeUnlockLease.getAsBoolean()) revoked = true;
++            } catch (RuntimeException error) {
++                revoked = true;
++            }
++            return !revoked;
++        }
++    }
++
++    private static final class PrivateDestruction {
++        final PrivateActivation owner;
++        PrivateDestruction(PrivateActivation owner) { this.owner = owner; }
++    }
++
++    private static final class Snapshot {
++        final String account;
++        final String epoch;
++        final Map<Integer, YabNamespaceIdentity> tabs;
++        Snapshot(String account, String epoch, Map<Integer, YabNamespaceIdentity> tabs) {
++            this.account = canonical(account);
++            this.epoch = canonical(epoch);
++            this.tabs = new HashMap<>(tabs);
++        }
++    }
++
++    private static final class Activation {
++        final Snapshot snapshot;
++        final BooleanSupplier nativeAccountLease;
++        boolean revoked;
++        Activation(Snapshot snapshot, BooleanSupplier lease) {
++            this.snapshot = snapshot;
++            nativeAccountLease = lease;
++        }
++        boolean isCurrent() {
++            if (revoked) return false;
++            try {
++                if (!nativeAccountLease.getAsBoolean()) revoked = true;
++            } catch (RuntimeException error) {
++                revoked = true;
++            }
++            return !revoked && sActivation == this && sSnapshot == snapshot;
++        }
++    }
++
++    private static String canonical(String id) {
++        if (!UUID.fromString(id).toString().equals(id)) {
++            throw new IllegalArgumentException("Owner identity must be a canonical UUID");
++        }
++        return id;
++    }
++
++    /** Called from ChromeApplicationImpl.onCreate, browser process only, before popup factory. */
++    public static void onApplicationCreate(Application application) {
++        ThreadUtils.assertOnUiThread();
++        YabNamespaceRuntime.enableRequiredMode();
++        if (sApplication != null) throw new IllegalStateException("Application bootstrap already ran");
++        sApplication = application;
++        try {
++            sSnapshot = read();
++        } catch (IOException | JSONException | IllegalArgumentException error) {
++            // Preserve corrupt/missing bytes. No account, default jar, or transient owner fallback.
++            sSnapshot = null;
++        }
++    }
++
++    /** Called only after native Yab authentication/current-account ownership was established. */
++    public static boolean activateSavedOwner(String account, String expectedOwnerEpoch,
++            BooleanSupplier nativeAccountLease) {
++        ThreadUtils.assertOnUiThread();
++        // False means this call left no native activation/resources to tear down. An existing
++        // owner must remain on the producer's retained-port exception path, never be forgotten.
++        if (sActivation != null || !sInstalled.isEmpty() || sPrivateActivation != null
++                || !sPrivateInstalled.isEmpty() || !sPrivateDestruction.isEmpty()) {
++            throw new IllegalStateException("Previous native owner has not completed teardown");
++        }
++        Snapshot snapshot = sSnapshot;
++        if (sApplication == null || snapshot == null || !snapshot.account.equals(canonical(account))
++                || !snapshot.epoch.equals(canonical(expectedOwnerEpoch))
++                || !nativeAccountLease.getAsBoolean()) return false;
++        sActivation = new Activation(snapshot, nativeAccountLease);
++        return true;
++    }
++
++    /** Explicit native new-owner operation, never used as an automatic failed-restore fallback. */
++    public static void startNewOwner(String account, String ownerEpoch, BooleanSupplier lease)
++            throws IOException {
++        ThreadUtils.assertOnUiThread();
++        if (sApplication == null || sActivation != null || !sInstalled.isEmpty()
++                || sPrivateActivation != null || !sPrivateInstalled.isEmpty()
++                || !sPrivateDestruction.isEmpty()
++                || !lease.getAsBoolean()) throw new IllegalStateException("Previous owner is not released");
++        Snapshot snapshot = new Snapshot(account, ownerEpoch, new HashMap<>());
++        write(snapshot);
++        sSnapshot = snapshot;
++        sActivation = new Activation(snapshot, lease);
++    }
++
++    /** Called before frozen creation or fresh facade creation, not after finishNativeInitialization. */
++    public static boolean ensureProfile(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        Application application = sApplication;
++        Activation owner = sActivation;
++        if (application == null || owner == null || !owner.isCurrent()
++                || profile.getNativeBrowserContextPointer() == 0 || profile.shutdownStarted()) return false;
++        PrivateActivation privateOwner = profile.isOffTheRecord() ? sPrivateActivation : null;
++        if (profile.isOffTheRecord() && (privateOwner == null
++                || privateOwner.accountOwner != owner || !privateOwner.mayAccess())) return false;
++        if (sInstalled.containsKey(profile)) {
++            return sInstalled.get(profile) == owner && YabNamespaceRuntime.isProfileCurrent(profile)
++                    && (!profile.isOffTheRecord() || sPrivateInstalled.get(profile) == privateOwner);
++        }
++        if (profile.isOffTheRecord() && sPrivateInstalled.size() >= 32) return false;
++        for (Profile installed : sInstalled.keySet()) {
++            if (!profile.isOffTheRecord() && !installed.isOffTheRecord()) return false;
++        }
++        try {
++            Map<Integer, YabNamespaceIdentity> expected = profile.isOffTheRecord()
++                    ? new HashMap<>() : owner.snapshot.tabs;
++            if (privateOwner == null) {
++                YabNamespaceRuntime.install(profile, owner.snapshot.account, application.getFilesDir(),
++                        owner::isCurrent, expected);
++            } else {
++                PrivateAccess access = privateOwner.access;
++                if (access == null || !access.isCurrent()) return false;
++                YabNamespaceRuntime.installPrivate(profile, owner.snapshot.account, application.getFilesDir(),
++                        privateOwner::isCurrent, access.epoch, access::isCurrent, expected);
++            }
++            sInstalled.put(profile, owner);
++            if (privateOwner != null) sPrivateInstalled.put(profile, privateOwner);
++            return true;
++        } catch (IOException | IllegalArgumentException | IllegalStateException error) {
++            return false;
++        }
++    }
++
++    /** Explicit RAM session start, not unlock. The lease covers the complete Private session lifetime. */
++    public static boolean beginPrivateSession(String privateEpoch, BooleanSupplier nativeSessionLease) {
++        ThreadUtils.assertOnUiThread();
++        Activation owner = sActivation;
++        if (sPrivateActivation != null || !sPrivateInstalled.isEmpty() || !sPrivateDestruction.isEmpty()) {
++            throw new IllegalStateException("Previous Private epoch has not completed native teardown");
++        }
++        String epoch = canonical(privateEpoch);
++        if (owner == null || !owner.isCurrent() || !nativeSessionLease.getAsBoolean()) return false;
++        sPrivateActivation = new PrivateActivation(owner, epoch, nativeSessionLease);
++        return true;
++    }
++
++    private static PrivateActivation requirePrivateEpoch(String expectedEpoch) {
++        PrivateActivation captured = sPrivateActivation;
++        if (captured == null || captured.accountOwner != sActivation
++                || !captured.epoch.equals(canonical(expectedEpoch))) {
++            throw new IllegalStateException("Private epoch is missing or stale");
++        }
++        return captured;
++    }
++
++    /** Native unlock of this retained RAM session; an old access epoch can never be revived. */
++    public static boolean authorizePrivateAccess(String sessionEpoch, String accessEpoch,
++            BooleanSupplier nativeUnlockLease) {
++        ThreadUtils.assertOnUiThread();
++        PrivateActivation captured = requirePrivateEpoch(sessionEpoch);
++        String nextEpoch = canonical(accessEpoch);
++        if (!captured.isCurrent() || !nativeUnlockLease.getAsBoolean()) return false;
++        PrivateAccess previous = captured.access;
++        if ((previous != null && previous.isCurrent()) || captured.usedAccessEpochs.contains(nextEpoch)
++                || captured.usedAccessEpochs.size() >= 4096) {
++            throw new IllegalStateException("Private access is active or the epoch was reused");
++        }
++        PrivateAccess next = new PrivateAccess(captured, nextEpoch, nativeUnlockLease);
++        captured.usedAccessEpochs.add(nextEpoch);
++        captured.access = next;
++        try {
++            for (Map.Entry<Profile, PrivateActivation> entry : sPrivateInstalled.entrySet()) {
++                if (entry.getValue() != captured) throw new IllegalStateException("Mixed Private sessions");
++                YabNamespaceRuntime.authorizePrivateAccess(entry.getKey(), nextEpoch, next::isCurrent);
++            }
++            return next.isCurrent();
++        } catch (RuntimeException error) {
++            // Partial authorization never makes an earlier Profile accessible after this failure.
++            next.revoked = true;
++            throw error;
++        }
++    }
++
++    /** Ordinary lock revocation only: no Tab/Profile destruction or cookie/storage clearing. */
++    public static void revokePrivateAccess(String sessionEpoch, String accessEpoch) {
++        ThreadUtils.assertOnUiThread();
++        PrivateActivation captured = requirePrivateEpoch(sessionEpoch);
++        PrivateAccess access = captured.access;
++        if (access == null || !access.epoch.equals(canonical(accessEpoch))) {
++            throw new IllegalStateException("Private access epoch is missing or stale");
++        }
++        access.revoked = true;
++        for (Map.Entry<Profile, PrivateActivation> entry : sPrivateInstalled.entrySet()) {
++            if (entry.getValue() == captured) YabNamespaceRuntime.revokePrivateAccess(entry.getKey());
++        }
++    }
++
++    /** Explicit session end/reset only. Ordinary Private lock must retain its RAM Profile/jar. */
++    public static void endPrivateSession(String expectedEpoch) {
++        ThreadUtils.assertOnUiThread();
++        PrivateActivation captured = requirePrivateEpoch(expectedEpoch);
++        captured.revoked = true;
++        if (captured.access != null) captured.access.revoked = true;
++        for (Map.Entry<Profile, PrivateActivation> entry : sPrivateInstalled.entrySet()) {
++            if (entry.getValue() == captured) YabNamespaceRuntime.revokeProfile(entry.getKey());
++        }
++    }
++
++    /** Request only after completed native Tab/WebContents teardown, never on request-to-close. */
++    public static void requestPrivateProfileDestruction(Profile profile, String expectedEpoch) {
++        ThreadUtils.assertOnUiThread();
++        PrivateActivation captured = requirePrivateEpoch(expectedEpoch);
++        if (!captured.revoked || !profile.isOffTheRecord()
++                || sPrivateInstalled.get(profile) != captured
++                || sInstalled.get(profile) != captured.accountOwner) {
++            throw new IllegalStateException("Private Profile is not owned by the revoked captured epoch");
++        }
++        YabNamespaceRuntime.assertProfileResourcesDisposed(profile);
++        if (sPrivateDestruction.containsKey(profile)) return; // Never schedule a duplicate native destroy.
++        sPrivateDestruction.put(profile, new PrivateDestruction(captured));
++        if (profile.getNativeBrowserContextPointer() != 0 && !profile.shutdownStarted()) {
++            ProfileManager.destroyWhenAppropriate(profile); // A request, not a completion receipt.
++        }
++    }
++
++    /** The native completion callback is after the complete OTR destructor has returned. */
++    public static boolean isPrivateProfileDestructionComplete(Profile profile, String expectedEpoch) {
++        ThreadUtils.assertOnUiThread();
++        PrivateActivation captured = requirePrivateEpoch(expectedEpoch);
++        PrivateDestruction destruction = sPrivateDestruction.get(profile);
++        if (!captured.revoked || sPrivateInstalled.get(profile) != captured
++                || destruction == null || destruction.owner != captured) return false;
++        YabNamespaceRuntime.assertProfileResourcesDisposed(profile);
++        return profile.getNativeBrowserContextPointer() == 0
++                && profile.isYabOffTheRecordDestructionComplete();
++    }
++
++    /** False keeps outstanding exact Profiles owned. A new epoch needs a new native Profile. */
++    public static boolean releasePrivateAfterTeardown(String expectedEpoch) {
++        ThreadUtils.assertOnUiThread();
++        canonical(expectedEpoch);
++        if (sPrivateActivation == null) {
++            if (!sPrivateInstalled.isEmpty() || !sPrivateDestruction.isEmpty()) {
++                throw new IllegalStateException("Private resources have no captured activation");
++            }
++            return true;
++        }
++        PrivateActivation captured = requirePrivateEpoch(expectedEpoch);
++        if (!captured.revoked) throw new IllegalStateException("Private owner must be revoked first");
++        boolean complete = true;
++        Iterator<Map.Entry<Profile, PrivateActivation>> profiles = sPrivateInstalled.entrySet().iterator();
++        while (profiles.hasNext()) {
++            Map.Entry<Profile, PrivateActivation> entry = profiles.next();
++            Profile profile = entry.getKey();
++            if (entry.getValue() != captured) throw new IllegalStateException("Mixed Private generations");
++            if (!isPrivateProfileDestructionComplete(profile, expectedEpoch)) {
++                complete = false;
++                continue;
++            }
++            YabNamespaceRuntime.releaseRevokedProfile(profile);
++            sInstalled.remove(profile);
++            sPrivateDestruction.remove(profile);
++            profiles.remove();
++        }
++        if (complete) sPrivateActivation = null;
++        return complete;
++    }
++
++    /** Persist native-created tab mapping only after verified Chrome TabModel adoption. */
++    public static void recordCreatedTab(Tab tab, YabNamespaceIdentity identity) throws IOException {
++        ThreadUtils.assertOnUiThread();
++        Activation owner = sActivation;
++        if (owner == null || !owner.isCurrent() || sInstalled.get(tab.getProfile()) != owner
++                || !identity.equals(YabNamespaceRuntime.require(tab))) {
++            throw new IllegalStateException("Tab does not belong to the current native account");
++        }
++        if (identity.privateMode) return;
++        if (!identity.accountId.equals(owner.snapshot.account)) throw new IllegalStateException("Account mismatch");
++        YabNamespaceIdentity previous = owner.snapshot.tabs.get(tab.getId());
++        if (previous != null && !previous.equals(identity)) throw new IllegalStateException("Chrome ID conflict");
++        for (Map.Entry<Integer, YabNamespaceIdentity> entry : owner.snapshot.tabs.entrySet()) {
++            if (entry.getKey() != tab.getId() && entry.getValue().tabId.equals(identity.tabId)) {
++                throw new IllegalStateException("Yab UUID is already bound to another Chrome ID");
++            }
++        }
++        owner.snapshot.tabs.put(tab.getId(), identity);
++        try {
++            write(owner.snapshot);
++        } catch (IOException error) {
++            if (previous == null) owner.snapshot.tabs.remove(tab.getId());
++            else owner.snapshot.tabs.put(tab.getId(), previous);
++            throw error;
++        }
++    }
++
++    /** Called after confirmed TabModel close and completed native destruction, never on request. */
++    public static void forgetConfirmedClosedTab(Tab destroyed, String nativeYabTabId) throws IOException {
++        ThreadUtils.assertOnUiThread();
++        Activation owner = sActivation;
++        if (owner == null || !owner.isCurrent() || sInstalled.get(destroyed.getProfile()) != owner) {
++            throw new IllegalStateException("Closed tab account owner is no longer current");
++        }
++        YabNamespaceIdentity identity = owner.snapshot.tabs.get(destroyed.getId());
++        if (!destroyed.getProfile().isOffTheRecord()
++                && (identity == null || !identity.tabId.equals(nativeYabTabId))) {
++            throw new IllegalStateException("Closed tab does not match persisted native identity");
++        }
++        YabNamespaceRuntime.forgetAfterConfirmedClose(destroyed, nativeYabTabId);
++        if (identity == null) return; // Private identity was never serialized.
++        owner.snapshot.tabs.remove(destroyed.getId());
++        try {
++            write(owner.snapshot);
++        } catch (IOException error) {
++            owner.snapshot.tabs.put(destroyed.getId(), identity);
++            // The per-tab record is already gone: restart rejects this stale mapping.
++            throw error;
++        }
++    }
++
++    /** Revoke all owners before UI hiding and teardown on logout/account replacement. */
++    public static void revokeOwner() {
++        ThreadUtils.assertOnUiThread();
++        if (sActivation != null) sActivation.revoked = true;
++        if (sPrivateActivation != null) sPrivateActivation.revoked = true;
++        for (Profile profile : sInstalled.keySet()) YabNamespaceRuntime.revokeProfile(profile);
++    }
++
++    /** After all native resources are disposed. It does not clear website data. */
++    public static void releaseAfterTeardown() {
++        ThreadUtils.assertOnUiThread();
++        if (sActivation == null) {
++            if (!sInstalled.isEmpty() || sPrivateActivation != null
++                    || !sPrivateInstalled.isEmpty() || !sPrivateDestruction.isEmpty()) {
++                throw new IllegalStateException("Installed Profile has no activation");
++            }
++            return; // A throwing activation may have failed before installing any native owner.
++        }
++        if (sActivation.isCurrent()) throw new IllegalStateException("Owner is not revoked");
++        PrivateActivation privateOwner = sPrivateActivation;
++        if (privateOwner != null && !releasePrivateAfterTeardown(privateOwner.epoch)) {
++            throw new IllegalStateException("Private native Profile destruction is not complete");
++        }
++        Iterator<Profile> profiles = sInstalled.keySet().iterator();
++        while (profiles.hasNext()) {
++            YabNamespaceRuntime.releaseRevokedProfile(profiles.next());
++            profiles.remove();
++        }
++        sActivation = null;
++    }
++
++    private static AtomicFile file() {
++        Application application = sApplication;
++        if (application == null) throw new IllegalStateException("Application is unavailable");
++        return new AtomicFile(new File(application.getFilesDir(), "yab-chrome-owner.json"));
++    }
++
++    private static Snapshot read() throws IOException, JSONException {
++        try (FileInputStream stream = file().openRead()) {
++            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++            byte[] chunk = new byte[4096];
++            int count;
++            while ((count = stream.read(chunk)) != -1) {
++                if (bytes.size() + count > 4 * 1024 * 1024) throw new IOException("Owner metadata is too large");
++                bytes.write(chunk, 0, count);
++            }
++            JSONObject root = new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
++            if (root.getInt("format") != 1) throw new IOException("Unsupported owner metadata");
++            String account = canonical(root.getString("account"));
++            JSONArray rows = root.getJSONArray("tabs");
++            Map<Integer, YabNamespaceIdentity> tabs = new HashMap<>();
++            Map<String, Integer> ids = new HashMap<>();
++            for (int i = 0; i < rows.length(); ++i) {
++                JSONObject row = rows.getJSONObject(i);
++                int chromeId = row.getInt("chromeId");
++                YabNamespaceIdentity identity = new YabNamespaceIdentity(account,
++                        row.getString("tab"), row.getString("namespace"), row.getBoolean("inMemory"), false);
++                if (chromeId < 0 || tabs.put(chromeId, identity) != null
++                        || ids.put(identity.tabId, chromeId) != null) throw new IOException("Duplicate tab identity");
++            }
++            return new Snapshot(account, root.getString("epoch"), tabs);
++        }
++    }
++
++    private static void write(Snapshot snapshot) throws IOException {
++        AtomicFile destination = file();
++        FileOutputStream stream = null;
++        try {
++            JSONObject root = new JSONObject();
++            root.put("format", 1);
++            root.put("account", snapshot.account);
++            root.put("epoch", snapshot.epoch);
++            JSONArray tabs = new JSONArray();
++            for (Map.Entry<Integer, YabNamespaceIdentity> entry : snapshot.tabs.entrySet()) {
++                YabNamespaceIdentity identity = entry.getValue();
++                if (identity.privateMode || !identity.accountId.equals(snapshot.account)) {
++                    throw new IOException("Refused private or foreign-account identity");
++                }
++                JSONObject row = new JSONObject();
++                row.put("chromeId", entry.getKey());
++                row.put("tab", identity.tabId);
++                row.put("namespace", identity.namespaceId);
++                row.put("inMemory", identity.inMemory);
++                tabs.put(row);
++            }
++            root.put("tabs", tabs);
++            stream = destination.startWrite();
++            stream.write(root.toString().getBytes(StandardCharsets.UTF_8));
++            destination.finishWrite(stream);
++        } catch (JSONException error) {
++            if (stream != null) destination.failWrite(stream);
++            throw new IOException("Cannot encode owner metadata", error);
++        } catch (IOException error) {
++            if (stream != null) destination.failWrite(stream);
++            throw error;
++        }
++    }
++}
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java
+new file mode 100644
+index 0000000000..2d5f9d4cd7
+--- /dev/null
++++ b/chrome/android/java/src/org/chromium/chrome/browser/yab/YabChromeSession.java
+@@ -0,0 +1,329 @@
++// Source scaffold for Chromium ac19329a1d32108fd05ead15568cb6e188f8615a.
++// Not compiled, applied, or used by the active upstream baseline build.
++package org.chromium.chrome.browser.yab;
++
++import android.view.View;
++
++import org.chromium.base.ThreadUtils;
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++import org.chromium.chrome.browser.app.ChromeActivity;
++import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
++import org.chromium.chrome.browser.compositor.CompositorViewHolder;
++import org.chromium.chrome.browser.content.WebContentsFactory;
++import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
++import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.tab.Tab;
++import org.chromium.chrome.browser.tab.TabLaunchType;
++import org.chromium.chrome.browser.tab.TabSelectionType;
++import org.chromium.chrome.browser.tab.TabObserver;
++import org.chromium.chrome.browser.tab.TabUtils;
++import org.chromium.chrome.browser.tab.YabNamespaceIdentity;
++import org.chromium.chrome.browser.tab.YabNamespaceRuntime;
++import org.chromium.chrome.browser.tabmodel.TabClosureParams;
++import org.chromium.chrome.browser.tabmodel.TabModel;
++import org.chromium.chrome.browser.tabmodel.TabModelActionListener;
++import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
++import org.chromium.content_public.browser.LoadUrlParams;
++import org.chromium.content_public.browser.WebContents;
++import org.chromium.ui.base.WindowAndroid;
++
++import java.util.Objects;
++import java.util.concurrent.CompletableFuture;
++import java.util.function.BooleanSupplier;
++
++/**
++ * A native-owner facade over a real Chrome Tab, not a WebView or content shell.
++ *
++ * The host must retain the normal ChromeActivity initialization, TabModel,
++ * delegates and compositor hierarchy. The lease must be owned by native app
++ * state and revoked on host/account/namespace replacement or Private lock.
++ * No method of this class is a page JavaScript interface.
++ */
++@NullMarked
++public final class YabChromeSession {
++    private final ChromeActivity mActivity;
++    private final WindowAndroid mWindow;
++    private final CompositorViewHolder mSurface;
++    private final Profile mProfile;
++    private final TabModel mModel;
++    private final Tab mTab;
++    private final WebContents mContents;
++    private final BooleanSupplier mOwnerLease;
++    private final String mAccessEpoch;
++    private boolean mClosePending;
++    private boolean mTornDown;
++
++    private YabChromeSession(ChromeActivity activity, WindowAndroid window,
++            CompositorViewHolder surface, Profile profile, TabModel model,
++            Tab tab, WebContents contents, BooleanSupplier ownerLease) {
++        mActivity = activity;
++        mWindow = window;
++        mSurface = surface;
++        mProfile = profile;
++        mModel = model;
++        mTab = tab;
++        mContents = contents;
++        mOwnerLease = ownerLease;
++        mAccessEpoch = YabNamespaceRuntime.captureAccessEpoch(tab);
++        tab.addObserver(new TabObserver() {
++            @Override
++            public void onClosingStateChanged(Tab observed, boolean closing) {
++                if (!closing) mClosePending = false;
++            }
++
++            @Override
++            public void onDestroyed(Tab observed) {
++                mTornDown = true;
++                mClosePending = false;
++            }
++        });
++    }
++
++    /** Call after the host's native initialization and selected TabModel are ready. */
++    public static YabChromeSession create(ChromeActivity activity, Profile profile,
++            YabNamespaceIdentity identity, BooleanSupplier ownerLease) {
++        ThreadUtils.assertOnUiThread();
++        Objects.requireNonNull(ownerLease);
++        if (!ownerLease.getAsBoolean() || activity.isFinishing() || activity.isDestroyed()
++                || !ChromeBrowserInitializer.getInstance().isFullBrowserInitialized()
++                || !YabChromeBootstrap.ensureProfile(profile)) {
++            throw new IllegalStateException("Chrome host or native owner is not ready");
++        }
++        WindowAndroid window = Objects.requireNonNull(activity.getWindowAndroid());
++        CompositorViewHolder surface = Objects.requireNonNull(
++                activity.getCompositorViewHolderSupplier().get());
++        TabModel model = activity.getTabModelSelector().getModel(profile.isOffTheRecord());
++        if (model.getProfile() != profile) {
++            throw new IllegalStateException("Chrome model does not own the captured Profile");
++        }
++        WebContents contents = WebContentsFactory.createWebContentsForYabNamespace(
++                profile, identity.namespaceId, identity.inMemory);
++        try {
++            YabNamespaceRuntime.reserveFactoryAllocation(profile, contents);
++            YabNamespaceRuntime.stage(profile, contents, identity);
++            Tab tab = activity.getTabCreator(profile.isOffTheRecord()).createTabWithWebContents(
++                    null, false, contents, TabLaunchType.FROM_CHROME_UI,
++                    CompletableFuture.completedFuture(true));
++            if (tab == null || tab.getWebContents() != contents || model.indexOf(tab) < 0) {
++                throw new IllegalStateException("Chrome did not adopt the factory contents into its TabModel");
++            }
++            YabNamespaceRuntime.confirmFactoryAdopted(contents, tab);
++            try {
++                YabChromeBootstrap.recordCreatedTab(tab, identity);
++            } catch (java.io.IOException error) {
++                throw new IllegalStateException("Cannot persist the native owner tab mapping", error);
++            }
++            return new YabChromeSession(activity, window, surface, profile, model,
++                    tab, contents, ownerLease);
++        } catch (RuntimeException | Error error) {
++            try {
++                disposeFailedCreation(model, contents);
++            } catch (RuntimeException | Error cleanupError) {
++                error.addSuppressed(cleanupError);
++            }
++            throw error;
++        } finally {
++            YabNamespaceRuntime.discardStaged(contents);
++        }
++    }
++
++    /** Rebind only an already-live restored/replaced Tab with the exact native producer identity. */
++    public static YabChromeSession bindExisting(ChromeActivity activity, Tab tab,
++            YabNamespaceIdentity expected, BooleanSupplier ownerLease) {
++        ThreadUtils.assertOnUiThread();
++        Objects.requireNonNull(expected);
++        Objects.requireNonNull(ownerLease);
++        Profile profile = tab.getProfile();
++        if (!ownerLease.getAsBoolean() || activity.isFinishing() || activity.isDestroyed()
++                || !ChromeBrowserInitializer.getInstance().isFullBrowserInitialized()
++                || !YabChromeBootstrap.ensureProfile(profile)
++                || !expected.equals(YabNamespaceRuntime.require(tab))) {
++            throw new IllegalStateException("Restored Tab does not match the captured native owner");
++        }
++        WindowAndroid window = Objects.requireNonNull(activity.getWindowAndroid());
++        CompositorViewHolder surface = Objects.requireNonNull(
++                activity.getCompositorViewHolderSupplier().get());
++        TabModel model = activity.getTabModelSelector().getModel(profile.isOffTheRecord());
++        WebContents contents = Objects.requireNonNull(tab.getWebContents(),
++                "Chrome restore/unfreeze must finish before binding its live session");
++        if (tab.isDestroyed() || contents.isDestroyed() || model.getProfile() != profile
++                || model.indexOf(tab) < 0 || tab.getWindowAndroid() != window
++                || TabUtils.fromWebContents(contents) != tab) {
++            throw new IllegalStateException("Restored Tab is not owned by the captured Chrome host");
++        }
++        return new YabChromeSession(activity, window, surface, profile, model, tab, contents, ownerLease);
++    }
++
++    private static void disposeFailedCreation(TabModel model, WebContents contents) {
++        @Nullable Tab owner = YabNamespaceRuntime.creationOwner(contents);
++        @Nullable Tab nativeOwner = contents.isDestroyed() ? null : TabUtils.fromWebContents(contents);
++        if (owner != null && nativeOwner != null && owner != nativeOwner) {
++            YabNamespaceRuntime.retainUncertainFactoryOwner(contents);
++            throw new IllegalStateException("Ambiguous native ownership; preserve Tab-owned contents");
++        }
++        @Nullable Tab registered = owner != null ? owner : nativeOwner;
++        if (registered != null && (model.indexOf(registered) >= 0
++                || TabWindowManagerSingleton.getInstance().getTabModelForTab(registered) != null)) {
++            // A callback threw after model adoption. The model retains the resource;
++            // its normal TabRemover owns any subsequent close. Never delete its WebContents.
++            try {
++                YabNamespaceRuntime.confirmFactoryAdopted(contents, registered);
++            } catch (RuntimeException | Error error) {
++                YabNamespaceRuntime.retainUncertainFactoryOwner(contents);
++                throw error;
++            }
++            return;
++        }
++        if (owner == null && nativeOwner != null) {
++            YabNamespaceRuntime.retainUncertainFactoryOwner(contents);
++            throw new IllegalStateException("Untracked native Tab owns the allocation; preserve its contents");
++        }
++        if (owner != null && owner.isDestroyed() && !YabNamespaceRuntime.isDisposalComplete(owner)) {
++            throw new IllegalStateException("Partial Tab destruction is not safely retryable; retain native owner");
++        }
++        // This is our temporary, unregistered Tab, including a partial initialize() failure.
++        @Nullable Throwable tabDestroyFailure = null;
++        try {
++            if (owner != null && !owner.isDestroyed()) owner.destroy();
++        } catch (RuntimeException | Error error) {
++            tabDestroyFailure = error;
++        }
++        // Cleanup must run even when Tab.destroy() failed. The ownership guard and
++        // the rethrow sit outside any finally so neither can swallow the other.
++        if (!contents.isDestroyed()) {
++            if ((owner != null && owner.getWebContents() == contents)
++                    || TabUtils.fromWebContents(contents) != null) {
++                throw new IllegalStateException("Contents is still Tab-owned after failed creation");
++            }
++            contents.destroy();
++        }
++        if (tabDestroyFailure != null) {
++            // Same propagation as the old throw-in-finally: surface the destroy
++            // failure once the WebContents is released.
++            if (tabDestroyFailure instanceof RuntimeException) {
++                throw (RuntimeException) tabDestroyFailure;
++            }
++            throw (Error) tabDestroyFailure;
++        }
++        YabNamespaceRuntime.abandonDisposedCreation(contents);
++    }
++
++    /** Retry unstarted cleanup only. Partial Tab destruction is retained for explicit host recovery. */
++    public static void retryFailedCreationDisposal(ChromeActivity activity, Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        TabModel model = activity.getTabModelSelector().getModel(profile.isOffTheRecord());
++        if (model.getProfile() != profile) throw new IllegalStateException("Cleanup Profile mismatch");
++        for (WebContents contents : YabNamespaceRuntime.pendingFactoryDisposal(profile)) {
++            try {
++                disposeFailedCreation(model, contents);
++            } finally {
++                YabNamespaceRuntime.discardStaged(contents);
++            }
++        }
++    }
++
++    /** Dispose failed restored builders. Registered Tabs remain owned by their native TabModels. */
++    public static void disposeUnregisteredTabs(ChromeActivity activity, Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        TabModel model = activity.getTabModelSelector().getModel(profile.isOffTheRecord());
++        if (model.getProfile() != profile) throw new IllegalStateException("Cleanup Profile mismatch");
++        for (Tab tab : YabNamespaceRuntime.allocatedTabResources(profile)) {
++            if (model.indexOf(tab) >= 0
++                    || TabWindowManagerSingleton.getInstance().getTabModelForTab(tab) != null
++                    || YabNamespaceRuntime.isDisposalComplete(tab)) continue;
++            if (tab.isDestroyed()) {
++                throw new IllegalStateException("Partial restored Tab destruction requires explicit recovery");
++            }
++            tab.destroy();
++            if (!YabNamespaceRuntime.isDisposalComplete(tab)) {
++                throw new IllegalStateException("Unregistered Tab disposal did not complete");
++            }
++        }
++        // This keeps saved restore identities and buffers on disk; it is not confirmed user Close.
++    }
++
++    private void requireCurrent() {
++        ThreadUtils.assertOnUiThread();
++        if (mTornDown || !mOwnerLease.getAsBoolean() || mActivity.isFinishing()
++                || mActivity.isDestroyed() || mActivity.getWindowAndroid() != mWindow
++                || mActivity.getCompositorViewHolderSupplier().get() != mSurface
++                || mModel.getProfile() != mProfile || mModel.indexOf(mTab) < 0
++                || mTab.isDestroyed() || mTab.getProfile() != mProfile || mTab.getWindowAndroid() != mWindow
++                || !YabNamespaceRuntime.isAccessEpochCurrent(mTab, mAccessEpoch)
++                || mTab.getWebContents() != mContents || mContents.isDestroyed()) {
++            throw new IllegalStateException("The captured Chrome session is no longer current");
++        }
++    }
++
++    /**
++     * This is the existing Chrome compositor host. Keep it in its ChromeActivity
++     * hierarchy and lay out Yab UI around it; do not reparent it into a second
++     * compositor or assume that Tab.getView() alone contains GPU output.
++     */
++    public View nativeSurface() {
++        requireCurrent();
++        if (mActivity.getTabModelSelector().getCurrentModel() != mModel
++                || mActivity.getTabModelSelector().getCurrentTab() != mTab) {
++            throw new IllegalStateException("The shared compositor belongs to another selected Tab");
++        }
++        return mSurface;
++    }
++
++    public void select() {
++        requireCurrent();
++        mActivity.getTabModelSelector().selectModel(mProfile.isOffTheRecord());
++        mModel.setIndex(mModel.indexOf(mTab), TabSelectionType.FROM_USER);
++    }
++
++    /** Navigation policy must already have approved these native-owned parameters. */
++    public void navigate(LoadUrlParams params) {
++        requireCurrent();
++        mTab.loadUrl(params);
++    }
++
++    public void goBack() {
++        requireCurrent();
++        if (mContents.getNavigationController().canGoBack()) {
++            mTab.goBack(); // Preserve Chrome's native beforeunload handling.
++        }
++    }
++
++    public void goForward() {
++        requireCurrent();
++        if (mContents.getNavigationController().canGoForward()) mTab.goForward();
++    }
++
++    public void reload() {
++        requireCurrent();
++        mTab.reload();
++    }
++
++    public void stop() {
++        requireCurrent();
++        mTab.stopLoading();
++    }
++
++    /** A request through Chrome's remover; the host observes actual destruction. */
++    public void requestClose() {
++        requireCurrent();
++        if (mClosePending) return;
++        mClosePending = true;
++        try {
++            mModel.getTabRemover().closeTabs(
++                    TabClosureParams.closeTab(mTab).allowUndo(false).build(), true,
++                    new TabModelActionListener() {
++                        @Override
++                        public void onConfirmationDialogResult(@TabModelActionListener.DialogType int dialogType,
++                                @ActionConfirmationResult int result) {
++                            // TabRemover reports a negative result for a cancelled beforeunload.
++                            // A request is never the session's teardown, regardless of result.
++                            mClosePending = false;
++                        }
++                    });
++        } catch (RuntimeException | Error error) {
++            mClosePending = false;
++            throw error;
++        }
++    }
++}
+diff --git a/chrome/android/proguard/main.flags b/chrome/android/proguard/main.flags
+index 3b26152adb..1793f0d117 100644
+--- a/chrome/android/proguard/main.flags
++++ b/chrome/android/proguard/main.flags
+@@ -39,4 +39,8 @@
+ 
+ # Test APK targets do not include the XR bundle code, but do include XrModule.java,
+ # which references XrModuleProvider via an @IdentifierNameString.
+--dontwarn org.chromium.chrome.browser.xr.scenecore.XrModuleProviderImpl
+\ No newline at end of file
++-dontwarn org.chromium.chrome.browser.xr.scenecore.XrModuleProviderImpl
++# Yab: the host app resolves the fork bootstrap by Class.forName on the
++# original name (ChromeForkPresence), so the entry class must not be
++# renamed or removed.
++-keep public class org.chromium.chrome.browser.yab.YabChromeBootstrap { *; }
+diff --git a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java b/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
+index f6fd8117d5..a9738c0d10 100644
+--- a/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
++++ b/chrome/browser/android/content/java/src/org/chromium/chrome/browser/content/WebContentsFactory.java
+@@ -8,6 +8,7 @@ import org.jni_zero.JniType;
+ import org.jni_zero.NativeMethods;
+ 
+ import org.chromium.base.ResettersForTesting;
++import org.chromium.base.ThreadUtils;
+ import org.chromium.build.BuildConfig;
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.build.annotations.Nullable;
+@@ -15,6 +16,8 @@ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.content_public.browser.WebContents;
+ import org.chromium.net.NetId;
+ 
++import java.util.UUID;
++
+ /**
+  * This factory creates WebContents objects and the associated native counterpart. TODO(dtrainor):
+  * Move this to the content/ layer if BrowserContext is ever supported in Java.
+@@ -136,8 +139,34 @@ public class WebContentsFactory {
+                 profile, initiallyHidden, true, usesPlatformAutofill, targetNetwork);
+     }
+ 
++    /** Native-owned, non-default namespace; lifetime belongs to the host's namespace lease. */
++    public static WebContents createWebContentsForYabNamespace(
++            Profile profile, String namespaceId, boolean inMemory) {
++        return createWebContentsForYabNamespace(profile, namespaceId, inMemory, true, true);
++    }
++
++    public static WebContents createWebContentsForYabNamespace(Profile profile,
++            String namespaceId, boolean inMemory, boolean initiallyHidden, boolean initializeRenderer) {
++        ThreadUtils.assertOnUiThread();
++        if (!UUID.fromString(namespaceId).toString().equals(namespaceId)) {
++            throw new IllegalArgumentException("Namespace ID must be a canonical lowercase UUID");
++        }
++        if (profile.isOffTheRecord() && !inMemory) {
++            throw new IllegalArgumentException("Off-the-record namespaces must stay in memory");
++        }
++        @Nullable WebContents contents = WebContentsFactoryJni.get().createWebContentsForYabNamespace(
++                profile, namespaceId, inMemory, initiallyHidden, initializeRenderer);
++        if (contents == null) throw new IllegalStateException("Native namespace factory refused the input");
++        return contents;
++    }
++
+     @NativeMethods
+     public interface Natives {
++        @Nullable WebContents createWebContentsForYabNamespace(
++                @JniType("Profile*") Profile profile,
++                @JniType("std::string") String namespaceId, boolean inMemory,
++                boolean initiallyHidden, boolean initializeRenderer);
++
+         WebContents createWebContents(
+                 @JniType("Profile*") Profile profile,
+                 boolean initiallyHidden,
+diff --git a/chrome/browser/android/content/web_contents_factory.cc b/chrome/browser/android/content/web_contents_factory.cc
+index ad2344b37a..a227afdcfe 100644
+--- a/chrome/browser/android/content/web_contents_factory.cc
++++ b/chrome/browser/android/content/web_contents_factory.cc
+@@ -2,7 +2,11 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include <string>
++
+ #include "base/android/jni_android.h"
++#include "base/android/jni_string.h"
++#include "base/uuid.h"
+ #include "chrome/browser/android/content/web_contents_factory_data_deleter.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -17,6 +21,36 @@
+ using base::android::JavaRef;
+ using base::android::ScopedJavaLocalRef;
+ 
++static ScopedJavaLocalRef<jobject>
++JNI_WebContentsFactory_CreateWebContentsForYabNamespace(
++    JNIEnv* env,
++    Profile* profile,
++    const std::string& namespace_id,
++    bool in_memory,
++    bool initially_hidden,
++    bool initialize_renderer) {
++  const base::Uuid id = base::Uuid::ParseLowercase(namespace_id);
++  if (!profile || !id.is_valid() || (profile->IsOffTheRecord() && !in_memory)) {
++    return {};
++  }
++  const auto partition = content::StoragePartitionConfig::Create(
++      profile, "YabWebsiteNamespace", id.AsLowercaseString(), in_memory);
++  auto site_instance = content::SiteInstance::CreateForFixedStoragePartition(
++      profile, GURL(), partition);
++  content::WebContents::CreateParams params(profile, std::move(site_instance));
++  params.initially_hidden = initially_hidden;
++  params.desired_renderer_state = initialize_renderer
++      ? content::WebContents::CreateParams::kInitializeAndWarmupRendererProcess
++      : content::WebContents::CreateParams::kNoRendererProcess;
++  // A partition can be shared by multiple tabs. Do not attach the experiment's
++  // per-WebContents data deleter; namespace disposal needs a separate lease.
++  auto contents = content::WebContents::Create(params);
++  auto java_contents = contents->GetJavaWebContents();
++  if (java_contents.is_null()) return {};
++  contents.release();
++  return java_contents;
++}
++
+ static ScopedJavaLocalRef<jobject> JNI_WebContentsFactory_CreateWebContents(
+     JNIEnv* env,
+     Profile* profile,
+diff --git a/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java b/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
+index a026765d84..ba23fa2453 100644
+--- a/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
++++ b/chrome/browser/profiles/android/java/src/org/chromium/chrome/browser/profiles/Profile.java
+@@ -28,6 +28,7 @@ public class Profile implements BrowserContextHandle {
+     private long mNativeProfile;
+ 
+     private boolean mDestroyNotified;
++    private boolean mYabOffTheRecordDestructionComplete;
+ 
+     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+     @CalledByNative
+@@ -259,6 +260,19 @@ public class Profile implements BrowserContextHandle {
+         }
+     }
+ 
++    /** Only the explicit post-destruction native hook can complete Private teardown. */
++    public boolean isYabOffTheRecordDestructionComplete() {
++        return isOffTheRecord() && mNativeProfile == 0 && mYabOffTheRecordDestructionComplete;
++    }
++
++    @CalledByNative
++    private void onYabOffTheRecordDestructionCompleted() {
++        if (!isOffTheRecord() || mNativeProfile != 0) {
++            throw new IllegalStateException("OTR completion preceded native Profile destruction");
++        }
++        mYabOffTheRecordDestructionComplete = true;
++    }
++
+     @CalledByNative
+     private long getNativePointer() {
+         return mNativeProfile;
+diff --git a/chrome/browser/profiles/profile.h b/chrome/browser/profiles/profile.h
+index d0ee935199..4b956005a4 100644
+--- a/chrome/browser/profiles/profile.h
++++ b/chrome/browser/profiles/profile.h
+@@ -512,6 +512,10 @@ class Profile : public content::BrowserContext {
+ #if BUILDFLAG(IS_ANDROID)
+   static Profile* FromJavaObject(const jni_zero::JavaRef<jobject>& obj);
+   jni_zero::ScopedJavaLocalRef<jobject> GetJavaObject() const;
++  // Yab: completes Java-side OTR teardown after DestroyOffTheRecordProfile
++  // returns. The implementation attaches its own JNIEnv in the owning TU.
++  static void NotifyYabOffTheRecordDestructionCompleted(
++      const jni_zero::JavaRef<jobject>& java_profile);
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
+ #if BUILDFLAG(IS_WIN)
+diff --git a/chrome/browser/profiles/profile_android.cc b/chrome/browser/profiles/profile_android.cc
+index 399a7ef5ba..c25e9aa248 100644
+--- a/chrome/browser/profiles/profile_android.cc
++++ b/chrome/browser/profiles/profile_android.cc
+@@ -155,3 +155,11 @@ static ScopedJavaLocalRef<jobject> JNI_Profile_FromWebContents(
+ }
+ 
+ DEFINE_JNI(Profile)
++
++// Yab: sole caller lives in profile_destroyer.cc, which must not include the
++// generated JNI header (its DEFINE_JNI trap fires in non-owner TUs).
++void Profile::NotifyYabOffTheRecordDestructionCompleted(
++    const jni_zero::JavaRef<jobject>& java_profile) {
++  Java_Profile_onYabOffTheRecordDestructionCompleted(
++      jni_zero::AttachCurrentThread(), java_profile);
++}
+diff --git a/chrome/browser/profiles/profile_destroyer.cc b/chrome/browser/profiles/profile_destroyer.cc
+index b21c05ff43..f8fe1f71d7 100644
+--- a/chrome/browser/profiles/profile_destroyer.cc
++++ b/chrome/browser/profiles/profile_destroyer.cc
+@@ -250,7 +250,15 @@ void ProfileDestroyer::DestroyOffTheRecordProfileNow(Profile* profile) {
+       });
+ 
+   CHECK(profile->GetOriginalProfile(), base::NotFatalUntil::M162);
++#if BUILDFLAG(IS_ANDROID)
++  auto java_profile = profile->GetJavaObject();
++#endif
+   profile->GetOriginalProfile()->DestroyOffTheRecordProfile(profile);
++#if BUILDFLAG(IS_ANDROID)
++  // ProfileImpl erases its owning unique_ptr and completes incognito preference cleanup.
++  // The Profile/BrowserContext destructor stack has returned. Never dereference profile.
++  Profile::NotifyYabOffTheRecordDestructionCompleted(java_profile);
++#endif
+   UMA_HISTOGRAM_ENUMERATION("Profile.Destroyer.OffTheRecord",
+                             ProfileDestructionType::kImmediately);
+ }
+diff --git a/chrome/browser/tab/BUILD.gn b/chrome/browser/tab/BUILD.gn
+index e41d7adc4e..e98365896a 100644
+--- a/chrome/browser/tab/BUILD.gn
++++ b/chrome/browser/tab/BUILD.gn
+@@ -5,10 +5,13 @@
+ import("//build/config/android/config.gni")
+ import("//build/config/android/rules.gni")
+ import("//chrome/browser/buildflags.gni")
++import("//extensions/buildflags/buildflags.gni")
+ import("//third_party/jni_zero/jni_zero.gni")
+ 
+ android_library("java") {
+   sources = [
++    "java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java",
++    "java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java",
+     "java/src/org/chromium/chrome/browser/tab/CollectionSaveForwarder.java",
+     "java/src/org/chromium/chrome/browser/tab/CollectionStorageObserverFactory.java",
+     "java/src/org/chromium/chrome/browser/tab/CurrentTabObserver.java",
+@@ -297,7 +300,11 @@ source_set("impl") {
+     "tab_storage_util.cc",
+     "web_contents_state.cc",
+   ]
+-  deps = [
++  deps = [ "//extensions/buildflags" ]
++  if (enable_extensions_core) {
++    deps += [ "//extensions/browser/api/cookies" ]
++  }
++  deps += [
+     ":jni_headers",
+     ":tab",
+     "//chrome/browser/flags:flags_android",
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
+index a4e1c8c0b9..972d35ac6e 100644
+--- a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
++++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabStateExtractor.java
+@@ -35,6 +35,10 @@ public class TabStateExtractor {
+         if (!tab.isInitialized()) return null;
+         TabState tabState = new TabState();
+         tabState.contentsState = getWebContentsState(tab);
++        if (!YabNamespaceRuntime.seal(tab, tabState.contentsState)) {
++            if (tabState.contentsState != null) tabState.contentsState.destroy();
++            return null;
++        }
+         tabState.openerAppId = TabAssociatedApp.getAppId(tab);
+         tabState.parentId = tab.getParentId();
+         tabState.timestampMillis = tab.getTimestampMillis();
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
+index 465c57f70a..bec1c9e603 100644
+--- a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
++++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/WebContentsState.java
+@@ -435,9 +435,67 @@ public class WebContentsState implements Destroyable {
+         return new WebContentsState(buffer, CONTENTS_STATE_CURRENT_VERSION);
+     }
+ 
++    /** Restore only into the native owner's non-default fixed partition. No default fallback. */
++    public @Nullable WebContents restoreWebContentsForYabNamespace(Profile profile,
++            String namespaceId, boolean inMemory, boolean isHidden, boolean noRenderer) {
++        return WebContentsStateJni.get().restoreContentsForYabNamespace(
++                profile, buffer(), version(), namespaceId, inMemory, isHidden, noRenderer);
++    }
++
++    public static boolean matchesYabNamespace(Profile profile, WebContents contents,
++            String namespaceId, boolean inMemory) {
++        return !contents.isDestroyed() && WebContentsStateJni.get().matchesYabNamespace(
++                profile, contents, namespaceId, inMemory);
++    }
++
++    /** Native-only capability creation. All identities are captured from YabNamespaceRuntime. */
++    static String grantYabCookieStore(Profile caller, Profile target, WebContents proof,
++            String extensionId, String account, String callerEpoch, String targetEpoch,
++            String namespaceId, boolean inMemory, boolean implicitDefault) {
++        return WebContentsStateJni.get().grantYabCookieStore(caller, target, proof,
++                extensionId, account, callerEpoch, targetEpoch, namespaceId, inMemory, implicitDefault);
++    }
++
++    static void revokeYabCookieStores(Profile caller) {
++        WebContentsStateJni.get().revokeYabCookieStores(caller);
++    }
++
++    static boolean revokeYabCookieStore(Profile caller, String extensionId, String storeId) {
++        return WebContentsStateJni.get().revokeYabCookieStore(caller, extensionId, storeId);
++    }
++
++    @CalledByNative
++    private static boolean isYabCookieGrantCurrent(@JniType("Profile*") Profile caller,
++            @JniType("Profile*") Profile target, @JniType("std::string") String account,
++            @JniType("std::string") String callerEpoch, @JniType("std::string") String targetEpoch,
++            @JniType("std::string") String namespaceId, boolean inMemory) {
++        return YabNamespaceRuntime.isCookieGrantCurrent(caller, target, account,
++                callerEpoch, targetEpoch, namespaceId, inMemory);
++    }
++
+     @NativeMethods
+     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+     public interface Natives {
++        @JniType("std::string") String grantYabCookieStore(
++                @JniType("Profile*") Profile caller, @JniType("Profile*") Profile target,
++                @JniType("content::WebContents*") WebContents proof,
++                @JniType("std::string") String extensionId, @JniType("std::string") String account,
++                @JniType("std::string") String callerEpoch, @JniType("std::string") String targetEpoch,
++                @JniType("std::string") String namespaceId, boolean inMemory, boolean implicitDefault);
++        void revokeYabCookieStores(@JniType("Profile*") Profile caller);
++        boolean revokeYabCookieStore(@JniType("Profile*") Profile caller,
++                @JniType("std::string") String extensionId, @JniType("std::string") String storeId);
++
++        @JniType("content::WebContents*")
++        @Nullable WebContents restoreContentsForYabNamespace(
++                @JniType("Profile*") Profile profile, ByteBuffer buffer, int savedStateVersion,
++                @JniType("std::string") String namespaceId, boolean inMemory,
++                boolean initiallyHidden, boolean noRenderer);
++
++        boolean matchesYabNamespace(@JniType("Profile*") Profile profile,
++                @JniType("content::WebContents*") WebContents contents,
++                @JniType("std::string") String namespaceId, boolean inMemory);
++
+         @JniType("content::WebContents*")
+         @Nullable WebContents restoreContentsFromByteBuffer(
+                 @JniType("Profile*") Profile profile,
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java
+new file mode 100644
+index 0000000000..7537b0af40
+--- /dev/null
++++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceIdentity.java
+@@ -0,0 +1,134 @@
++// Unapplied source scaffold for Chromium ac19329a1d32108fd05ead15568cb6e188f8615a.
++package org.chromium.chrome.browser.tab;
++
++import android.util.AtomicFile;
++
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++
++import org.json.JSONException;
++import org.json.JSONObject;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.Objects;
++import java.util.UUID;
++
++/** Native app identity. Never populated from a URL, page message, or JavaScript bridge. */
++@NullMarked
++public final class YabNamespaceIdentity {
++    public final String accountId;
++    public final String tabId;
++    public final String namespaceId;
++    public final boolean inMemory;
++    public final boolean privateMode;
++
++    public YabNamespaceIdentity(String accountId, String tabId, String namespaceId,
++            boolean inMemory, boolean privateMode) {
++        this.accountId = canonical(accountId);
++        this.tabId = canonical(tabId);
++        this.namespaceId = canonical(namespaceId);
++        if (privateMode && !inMemory) throw new IllegalArgumentException("Private data must be transient");
++        this.inMemory = inMemory;
++        this.privateMode = privateMode;
++    }
++
++    private static String canonical(String value) {
++        if (!UUID.fromString(value).toString().equals(value)) {
++            throw new IllegalArgumentException("Identity must be a canonical lowercase UUID");
++        }
++        return value;
++    }
++
++    @Override
++    public boolean equals(@Nullable Object other) {
++        if (!(other instanceof YabNamespaceIdentity)) return false;
++        YabNamespaceIdentity that = (YabNamespaceIdentity) other;
++        return accountId.equals(that.accountId) && tabId.equals(that.tabId)
++                && namespaceId.equals(that.namespaceId) && inMemory == that.inMemory
++                && privateMode == that.privateMode;
++    }
++
++    @Override
++    public int hashCode() {
++        return Objects.hash(accountId, tabId, namespaceId, inMemory, privateMode);
++    }
++
++    /** One app-private AtomicFile per Chrome tab ID; no private-mode record is written. */
++    static final class Store {
++        private final File mDirectory;
++        private final String mAccount;
++
++        Store(File appFilesDirectory, String account) throws IOException {
++            mAccount = canonical(account);
++            mDirectory = new File(appFilesDirectory, "yab_namespace_identity/" + mAccount);
++            if (!mDirectory.isDirectory() && !mDirectory.mkdirs()) {
++                throw new IOException("Cannot create namespace identity directory");
++            }
++        }
++
++        private AtomicFile file(int chromeId) {
++            if (chromeId < 0) throw new IllegalArgumentException("Invalid Chrome tab ID");
++            return new AtomicFile(new File(mDirectory, chromeId + ".json"));
++        }
++
++        void write(int chromeId, YabNamespaceIdentity identity, String digest) throws IOException {
++            if (identity.privateMode || !mAccount.equals(identity.accountId)) {
++                throw new IOException("Refused identity for another account or private mode");
++            }
++            AtomicFile destination = file(chromeId);
++            FileOutputStream stream = null;
++            try {
++                JSONObject row = new JSONObject();
++                row.put("format", 1);
++                row.put("chromeId", chromeId);
++                row.put("account", identity.accountId);
++                row.put("tab", identity.tabId);
++                row.put("namespace", identity.namespaceId);
++                row.put("inMemory", identity.inMemory);
++                row.put("private", false);
++                row.put("stateSha256", digest);
++                stream = destination.startWrite();
++                stream.write(row.toString().getBytes(StandardCharsets.UTF_8));
++                destination.finishWrite(stream);
++            } catch (JSONException error) {
++                if (stream != null) destination.failWrite(stream);
++                throw new IOException("Cannot encode namespace identity", error);
++            } catch (IOException error) {
++                if (stream != null) destination.failWrite(stream);
++                throw error;
++            }
++        }
++
++        boolean matches(int chromeId, YabNamespaceIdentity expected, String digest) {
++            if (expected.privateMode || !mAccount.equals(expected.accountId)) return false;
++            try (FileInputStream stream = file(chromeId).openRead()) {
++                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++                byte[] chunk = new byte[1024];
++                int count;
++                while ((count = stream.read(chunk)) != -1) {
++                    if (bytes.size() + count > 4096) return false;
++                    bytes.write(chunk, 0, count);
++                }
++                JSONObject row = new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
++                return row.getInt("format") == 1 && row.getInt("chromeId") == chromeId
++                        && row.getString("account").equals(expected.accountId)
++                        && row.getString("tab").equals(expected.tabId)
++                        && row.getString("namespace").equals(expected.namespaceId)
++                        && row.getBoolean("inMemory") == expected.inMemory
++                        && !row.getBoolean("private")
++                        && row.getString("stateSha256").equals(digest);
++            } catch (IOException | JSONException | IllegalArgumentException error) {
++                return false;
++            }
++        }
++
++        void remove(int chromeId) {
++            file(chromeId).delete();
++        }
++    }
++}
+diff --git a/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java
+new file mode 100644
+index 0000000000..f59bb85f37
+--- /dev/null
++++ b/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/YabNamespaceRuntime.java
+@@ -0,0 +1,652 @@
++// Unapplied source scaffold for Chromium ac19329a1d32108fd05ead15568cb6e188f8615a.
++package org.chromium.chrome.browser.tab;
++
++import org.chromium.base.ThreadUtils;
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.content_public.browser.WebContents;
++
++import java.io.File;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.IdentityHashMap;
++import java.util.Map;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++import java.util.Collections;
++import java.util.function.BooleanSupplier;
++
++/** Required-mode restore gate. Every entry point is native app code on the UI thread. */
++@NullMarked
++public final class YabNamespaceRuntime {
++    private static boolean sRequired;
++    private static final IdentityHashMap<Profile, Scope> sScopes = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Pending> sPending = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Binding> sBindings = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Binding> sDestroyed = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Creation> sCreations = new IdentityHashMap<>();
++    private static final IdentityHashMap<WebContents, Scope> sAllocations = new IdentityHashMap<>();
++    private static final IdentityHashMap<Tab, Scope> sAllocatedTabs = new IdentityHashMap<>();
++    private static final Set<Tab> sDisposalCompleted = Collections.newSetFromMap(new IdentityHashMap<>());
++
++    private static final class PrivateAccess {
++        final String epoch;
++        final BooleanSupplier lease;
++        boolean revoked;
++        PrivateAccess(String epoch, BooleanSupplier lease) {
++            if (!java.util.UUID.fromString(epoch).toString().equals(epoch)) {
++                throw new IllegalArgumentException("Private access epoch must be a canonical UUID");
++            }
++            this.epoch = epoch;
++            this.lease = lease;
++        }
++        boolean isCurrent() {
++            if (revoked) return false;
++            try {
++                if (!lease.getAsBoolean()) revoked = true;
++            } catch (RuntimeException error) {
++                revoked = true;
++            }
++            return !revoked;
++        }
++    }
++
++    private static final class Creation {
++        final Pending pending;
++        final Tab tab;
++        Creation(Pending pending, Tab tab) {
++            this.pending = pending;
++            this.tab = tab;
++        }
++    }
++
++    private static final class Scope {
++        final Profile profile;
++        final String account;
++        final BooleanSupplier ownerLease;
++        final YabNamespaceIdentity.Store store;
++        final Map<Integer, YabNamespaceIdentity> expected;
++        boolean revoked;
++        boolean uncertainTeardown;
++        String cookieEpoch = java.util.UUID.randomUUID().toString();
++        @Nullable PrivateAccess privateAccess;
++        final Set<String> usedPrivateAccessEpochs = new HashSet<>();
++
++        Scope(Profile profile, String account, File files, BooleanSupplier ownerLease,
++                Map<Integer, YabNamespaceIdentity> expected) throws IOException {
++            this.profile = profile;
++            this.account = account;
++            this.ownerLease = ownerLease;
++            this.store = new YabNamespaceIdentity.Store(files, account);
++            this.expected = new HashMap<>(expected);
++            for (YabNamespaceIdentity identity : this.expected.values()) validate(identity);
++        }
++
++        void validate(YabNamespaceIdentity identity) {
++            if (!account.equals(identity.accountId)
++                    || profile.isOffTheRecord() != identity.privateMode) {
++                throw new IllegalArgumentException("Namespace owner does not match captured Profile");
++            }
++        }
++
++        boolean isCurrent() {
++            if (revoked) return false;
++            try {
++                if (profile.getNativeBrowserContextPointer() == 0 || profile.shutdownStarted()
++                        || !ownerLease.getAsBoolean()) revoked = true;
++            } catch (RuntimeException error) {
++                revoked = true;
++            }
++            return !revoked;
++        }
++
++        boolean mayAccess() {
++            return isCurrent() && (!profile.isOffTheRecord()
++                    || (privateAccess != null && privateAccess.isCurrent()));
++        }
++    }
++
++    private static final class Pending {
++        final Scope scope;
++        final YabNamespaceIdentity identity;
++        Pending(Scope scope, YabNamespaceIdentity identity) {
++            this.scope = scope;
++            this.identity = identity;
++        }
++    }
++
++    private static final class Binding {
++        final Scope scope;
++        final YabNamespaceIdentity identity;
++        Binding(Scope scope, YabNamespaceIdentity identity) {
++            this.scope = scope;
++            this.identity = identity;
++        }
++    }
++
++    /** Called by Yab's Application before any ChromeActivity startup or restore. No disable path. */
++    public static void enableRequiredMode() {
++        ThreadUtils.assertOnUiThread();
++        sRequired = true;
++    }
++
++    public static boolean isRequired() {
++        return sRequired;
++    }
++
++    public static boolean isProfileCurrent(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        return scope(profile) != null;
++    }
++
++    /** Load native Yab account/tab metadata before Chrome is allowed to restore that Profile. */
++    public static void install(Profile profile, String account, File appFilesDirectory,
++            BooleanSupplier ownerLease, Map<Integer, YabNamespaceIdentity> expected) throws IOException {
++        ThreadUtils.assertOnUiThread();
++        if (profile.isOffTheRecord()) {
++            throw new IllegalArgumentException("Private needs separate session and access leases");
++        }
++        installInternal(profile, account, appFilesDirectory, ownerLease, expected, null);
++    }
++
++    public static void installPrivate(Profile profile, String account, File appFilesDirectory,
++            BooleanSupplier sessionLease, String accessEpoch, BooleanSupplier accessLease,
++            Map<Integer, YabNamespaceIdentity> expected) throws IOException {
++        ThreadUtils.assertOnUiThread();
++        if (!profile.isOffTheRecord()) throw new IllegalArgumentException("Not a Private Profile");
++        PrivateAccess access = new PrivateAccess(accessEpoch, accessLease);
++        if (!access.isCurrent()) throw new IllegalStateException("Private access is not authorized");
++        installInternal(profile, account, appFilesDirectory, sessionLease, expected, access);
++    }
++
++    private static void installInternal(Profile profile, String account, File appFilesDirectory,
++            BooleanSupplier ownerLease, Map<Integer, YabNamespaceIdentity> expected,
++            @Nullable PrivateAccess access) throws IOException {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired || !ownerLease.getAsBoolean() || sScopes.containsKey(profile)) {
++            throw new IllegalStateException("Required mode or a fresh owner is missing");
++        }
++        Scope scope = new Scope(profile, account, appFilesDirectory, ownerLease, expected);
++        scope.privateAccess = access;
++        if (access != null) scope.usedPrivateAccessEpochs.add(access.epoch);
++        sScopes.put(profile, scope);
++    }
++
++    private static @Nullable Scope scope(Profile profile) {
++        Scope scope = sScopes.get(profile);
++        return scope != null && scope.mayAccess() ? scope : null;
++    }
++
++    /** Revoke access only; keep the exact native Profile, Tabs and RAM partition owned. */
++    public static void revokePrivateAccess(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sScopes.get(profile);
++        if (!profile.isOffTheRecord() || captured == null) {
++            throw new IllegalStateException("Private Profile has no captured session");
++        }
++        if (captured.privateAccess != null) captured.privateAccess.revoked = true;
++        if (profile.getNativeBrowserContextPointer() != 0) WebContentsState.revokeYabCookieStores(profile);
++    }
++
++    /** Explicit native unlock only. Old facades and grants retain the old revoked epoch. */
++    public static void authorizePrivateAccess(Profile profile, String accessEpoch, BooleanSupplier lease) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sScopes.get(profile);
++        if (!profile.isOffTheRecord() || captured == null || !captured.isCurrent()
++                || (captured.privateAccess != null && captured.privateAccess.isCurrent())) {
++            throw new IllegalStateException("Private session is absent or access is already active");
++        }
++        PrivateAccess access = new PrivateAccess(accessEpoch, lease);
++        if (captured.usedPrivateAccessEpochs.contains(accessEpoch)
++                || captured.usedPrivateAccessEpochs.size() >= 4096 || !access.isCurrent()) {
++            throw new IllegalStateException("Private access epoch is stale or its session bound was reached");
++        }
++        captured.usedPrivateAccessEpochs.add(accessEpoch);
++        captured.privateAccess = access;
++        captured.cookieEpoch = java.util.UUID.randomUUID().toString();
++    }
++
++    /** Lifetime revoke on account replacement or Private session end; ordinary lock uses access revoke. */
++    public static void revokeProfile(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sScopes.get(profile);
++        if (captured != null) captured.revoked = true;
++        if (profile.getNativeBrowserContextPointer() != 0) WebContentsState.revokeYabCookieStores(profile);
++    }
++
++    /** Native extension-settings grant, never called from page URLs, messages or selected-tab inference. */
++    public static String grantCookieStore(Profile callerProfile, Tab namespaceProof,
++            String extensionId, boolean implicitDefault) {
++        ThreadUtils.assertOnUiThread();
++        Scope caller = scope(callerProfile);
++        Scope target = scope(namespaceProof.getProfile());
++        Binding binding = sBindings.get(namespaceProof);
++        WebContents contents = namespaceProof.getWebContents();
++        if (!sRequired || caller == null || target == null || binding == null
++                || binding.scope != target || !caller.account.equals(target.account)
++                || contents == null || !mayExpose(namespaceProof)) {
++            throw new IllegalStateException("Cookie grant requires a current captured native namespace");
++        }
++        String granted = WebContentsState.grantYabCookieStore(callerProfile,
++                namespaceProof.getProfile(), contents, extensionId, caller.account,
++                caller.cookieEpoch, target.cookieEpoch, binding.identity.namespaceId,
++                binding.identity.inMemory, implicitDefault);
++        if (granted.isEmpty()) throw new IllegalStateException("Chrome refused the native cookie grant");
++        return granted;
++    }
++
++    static boolean isCookieGrantCurrent(Profile callerProfile, Profile targetProfile,
++            String account, String callerEpoch, String targetEpoch,
++            String namespaceId, boolean inMemory) {
++        ThreadUtils.assertOnUiThread();
++        Scope caller = scope(callerProfile);
++        Scope target = scope(targetProfile);
++        if (!sRequired || caller == null || target == null || !caller.account.equals(account)
++                || !target.account.equals(account) || !caller.cookieEpoch.equals(callerEpoch)
++                || !target.cookieEpoch.equals(targetEpoch)) return false;
++        for (Map.Entry<Tab, Binding> entry : sBindings.entrySet()) {
++            Binding binding = entry.getValue();
++            if (binding.scope == target && binding.identity.namespaceId.equals(namespaceId)
++                    && binding.identity.inMemory == inMemory && mayExpose(entry.getKey())) return true;
++        }
++        return false;
++    }
++
++    public static boolean revokeCookieStore(Profile callerProfile, String extensionId, String storeId) {
++        ThreadUtils.assertOnUiThread();
++        if (scope(callerProfile) == null) return false;
++        return WebContentsState.revokeYabCookieStore(callerProfile, extensionId, storeId);
++    }
++
++    /** Ownership ledger only. A revoked scope still owns allocations made before its revocation. */
++    public static void reserveFactoryAllocation(Profile profile, WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sScopes.get(profile);
++        if (!sRequired || captured == null || contents.isDestroyed()
++                || sAllocations.putIfAbsent(contents, captured) != null) {
++            throw new IllegalStateException("Factory allocation has no unique captured owner");
++        }
++    }
++
++    /** Stage only a factory-created WebContents whose native fixed partition matches identity. */
++    public static void stage(Profile profile, WebContents contents, YabNamespaceIdentity identity) {
++        ThreadUtils.assertOnUiThread();
++        Scope scope = scope(profile);
++        if (!sRequired || scope == null || contents.isDestroyed() || sAllocations.get(contents) != scope) {
++            throw new IllegalStateException("Native namespace owner is unavailable");
++        }
++        scope.validate(identity);
++        for (YabNamespaceIdentity existing : scope.expected.values()) {
++            if (existing.tabId.equals(identity.tabId)) {
++                throw new IllegalStateException("Yab tab identity already belongs to a Chrome tab");
++            }
++        }
++        if (!WebContentsState.matchesYabNamespace(
++                profile, contents, identity.namespaceId, identity.inMemory)) {
++            throw new IllegalStateException("Factory WebContents belongs to another partition");
++        }
++        if (sPending.putIfAbsent(contents, new Pending(scope, identity)) != null) {
++            throw new IllegalStateException("WebContents is already staged");
++        }
++    }
++
++    public static void discardStaged(WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sAllocations.get(contents);
++        if (captured != null && captured.uncertainTeardown) return;
++        Creation creation = sCreations.get(contents);
++        if (!contents.isDestroyed() || (creation != null && !isDisposalComplete(creation.tab))) {
++            return; // A failed cleanup remains in the ledger and blocks Profile reuse.
++        }
++        sPending.remove(contents);
++        sCreations.remove(contents);
++        sAllocations.remove(contents);
++    }
++
++    /** Contradictory native ownership requires explicit process/host recovery, never guessed disposal. */
++    public static void retainUncertainFactoryOwner(WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sAllocations.get(contents);
++        if (captured != null) {
++            captured.uncertainTeardown = true;
++            revokeProfile(captured.profile);
++        }
++    }
++
++    /** TabBuilder calls immediately after allocation, before window attachment or lease evaluation. */
++    static void onTabAllocated(Tab tab, @Nullable WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return;
++        Scope captured = sScopes.get(tab.getProfile());
++        if (captured == null) throw new IllegalStateException("Allocated Tab has no captured native owner");
++        sAllocatedTabs.put(tab, captured); // A revoked scope still owns its uninitialized native helpers.
++        Pending pending = contents == null ? null : sPending.get(contents);
++        if (contents != null && pending != null && sAllocations.get(contents) == pending.scope) {
++            Creation previous = sCreations.putIfAbsent(contents, new Creation(pending, tab));
++            if (previous != null && previous.tab != tab) {
++                retainUncertainFactoryOwner(contents);
++                throw new IllegalStateException("Factory contents has multiple temporary Tab owners");
++            }
++        }
++    }
++
++    /** Only the successful tail of pinned TabImpl.destroyInternal may issue this completion marker. */
++    static void onNativeDisposalCompleted(Tab tab, boolean deleteNativeWebContents) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return;
++        Scope captured = sAllocatedTabs.get(tab);
++        if (captured == null) return;
++        if (!deleteNativeWebContents) {
++            // Native TakeWebContentsAndDestroyTab transfers a still-live WebContents elsewhere.
++            // A transfer requires its own owner handoff proof; null Tab fields are not disposal.
++            captured.uncertainTeardown = true;
++            revokeProfile(captured.profile);
++            return;
++        }
++        if (!tab.isDestroyed() || tab.isInitialized() || tab.getWebContents() != null
++                || tab.getWebContentsState() != null) {
++            throw new IllegalStateException("Tab destruction returned before native disposal");
++        }
++        Binding retired = sBindings.remove(tab);
++        if (retired != null) sDestroyed.put(tab, retired);
++        sDisposalCompleted.add(tab);
++    }
++
++    public static boolean isDisposalComplete(Tab tab) {
++        ThreadUtils.assertOnUiThread();
++        return sDisposalCompleted.contains(tab) && tab.isDestroyed() && !tab.isInitialized()
++                && tab.getWebContents() == null && tab.getWebContentsState() == null;
++    }
++
++    /** Only after the facade has verified actual TabModel adoption, including another window. */
++    public static void confirmFactoryAdopted(WebContents contents, Tab tab) {
++        ThreadUtils.assertOnUiThread();
++        if (!sAllocations.containsKey(contents)) return;
++        Creation creation = sCreations.get(contents);
++        Binding binding = sBindings.get(tab);
++        if (creation == null || creation.tab != tab || binding == null
++                || binding.scope != creation.pending.scope || tab.getWebContents() != contents) {
++            throw new IllegalStateException("Factory allocation was not adopted by its captured Tab");
++        }
++        sPending.remove(contents);
++        sCreations.remove(contents);
++        sAllocations.remove(contents); // Its verified TabModel/binding now owns disposal.
++    }
++
++    /** Native teardown can retry a failed allocation cleanup after the creation call has returned. */
++    public static List<WebContents> pendingFactoryDisposal(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        List<WebContents> pending = new ArrayList<>();
++        Scope captured = sScopes.get(profile);
++        if (captured == null) return pending;
++        for (Map.Entry<WebContents, Scope> entry : sAllocations.entrySet()) {
++            if (entry.getValue() == captured) pending.add(entry.getKey());
++        }
++        return pending;
++    }
++
++    /** Includes a failed restored builder with no returned Tab or factory WebContents. */
++    public static List<Tab> allocatedTabResources(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        List<Tab> allocated = new ArrayList<>();
++        Scope captured = sScopes.get(profile);
++        if (captured == null) return allocated;
++        for (Map.Entry<Tab, Scope> entry : sAllocatedTabs.entrySet()) {
++            if (entry.getValue() == captured) allocated.add(entry.getKey());
++        }
++        return allocated;
++    }
++
++    /** Includes a Tab whose initialize() threw before createTabWithWebContents returned. */
++    public static @Nullable Tab creationOwner(WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        Creation creation = sCreations.get(contents);
++        return creation == null ? null : creation.tab;
++    }
++
++    /** Only for an unsuccessful creation whose factory contents and temporary Tab are disposed. */
++    public static void abandonDisposedCreation(WebContents contents) {
++        ThreadUtils.assertOnUiThread();
++        Creation creation = sCreations.get(contents);
++        if (!contents.isDestroyed() || (creation != null && !isDisposalComplete(creation.tab))) {
++            throw new IllegalStateException("Creation still has a native owner");
++        }
++        if (creation == null) {
++            discardStaged(contents);
++            return;
++        }
++        Scope captured = creation.pending.scope;
++        if (creation.pending.identity.equals(captured.expected.get(creation.tab.getId()))) {
++            if (!creation.pending.identity.privateMode) captured.store.remove(creation.tab.getId());
++            captured.expected.remove(creation.tab.getId());
++        }
++        sBindings.remove(creation.tab);
++        sDestroyed.remove(creation.tab);
++        discardStaged(contents);
++        sAllocatedTabs.remove(creation.tab);
++        sDisposalCompleted.remove(creation.tab);
++    }
++
++    /** Hook in TabBuilder immediately before Tab.initialize, never after first navigation. */
++    public static void beforeInitialize(Tab tab, @Nullable WebContents contents, @Nullable TabState state) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return;
++        Scope scope = scope(tab.getProfile());
++        if (scope == null) throw new IllegalStateException("No native namespace owner");
++        YabNamespaceIdentity identity;
++        if (contents != null) {
++            Pending pending = sPending.remove(contents);
++            if (pending == null || pending.scope != scope) {
++                throw new IllegalStateException("Unowned WebContents cannot become a Yab tab");
++            }
++            Creation creation = sCreations.get(contents);
++            if (creation == null || creation.tab != tab || creation.pending != pending) {
++                throw new IllegalStateException("Temporary Tab allocation was not reserved before initialization");
++            }
++            identity = pending.identity;
++            if (scope.expected.containsKey(tab.getId())) {
++                throw new IllegalStateException("Chrome tab ID still has a durable owner");
++            }
++            if (!identity.privateMode) {
++                try {
++                    scope.store.write(tab.getId(), identity, "UNSEALED");
++                } catch (IOException error) {
++                    throw new IllegalStateException("Identity must be durable before Tab initialization", error);
++                }
++            }
++            scope.expected.put(tab.getId(), identity);
++        } else {
++            if (state == null || !canRestore(tab.getProfile(), tab.getId(), state)) {
++                throw new IllegalStateException("Missing or mismatched durable namespace identity");
++            }
++            identity = scope.expected.get(tab.getId());
++            if (identity == null) throw new IllegalStateException("Expected tab identity is absent");
++        }
++        sBindings.put(tab, new Binding(scope, identity));
++        tab.addObserver(new TabObserver() {
++            @Override
++            public void onDestroyed(Tab destroyed) {
++                // Destruction during host teardown is not proof of an intentional user close.
++                // Keep durable identity until the host confirms closure, not beforeunload request.
++                Binding binding = sBindings.remove(destroyed);
++                if (binding != null) sDestroyed.put(destroyed, binding);
++            }
++        });
++    }
++
++    public static boolean canRestore(Profile profile, int chromeId, TabState state) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return true;
++        Scope scope = scope(profile);
++        YabNamespaceIdentity identity = scope == null ? null : scope.expected.get(chromeId);
++        return scope != null && identity != null && !identity.privateMode
++                && state.contentsState != null
++                && scope.store.matches(chromeId, identity, digest(state.contentsState));
++    }
++
++    /** Use before paint preview, lazy load and every adapter operation, including after account switch. */
++    public static boolean mayExpose(Tab tab) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return true;
++        Binding binding = sBindings.get(tab);
++        if (tab.isDestroyed() || binding == null || scope(tab.getProfile()) != binding.scope) return false;
++        WebContents contents = tab.getWebContents();
++        if (contents != null && !WebContentsState.matchesYabNamespace(tab.getProfile(), contents,
++                binding.identity.namespaceId, binding.identity.inMemory)) return false;
++        WebContentsState frozen = tab.getWebContentsState();
++        return frozen == null || (!binding.identity.privateMode && binding.scope.store.matches(
++                tab.getId(), binding.identity, digest(frozen)));
++    }
++
++    public static YabNamespaceIdentity require(Tab tab) {
++        if (!sRequired || !mayExpose(tab)) throw new IllegalStateException("Namespace lease is stale");
++        Binding binding = sBindings.get(tab);
++        if (binding == null) throw new IllegalStateException("Namespace binding is absent");
++        return binding.identity;
++    }
++
++    /** Capture on native facade/bridge creation; a later unlock never revives an old handle. */
++    public static String captureAccessEpoch(Tab tab) {
++        ThreadUtils.assertOnUiThread();
++        require(tab);
++        Scope current = scope(tab.getProfile());
++        if (current == null) throw new IllegalStateException("No current native access epoch");
++        return current.cookieEpoch;
++    }
++
++    public static boolean isAccessEpochCurrent(Tab tab, String capturedEpoch) {
++        ThreadUtils.assertOnUiThread();
++        Scope current = scope(tab.getProfile());
++        return current != null && current.cookieEpoch.equals(capturedEpoch) && mayExpose(tab);
++    }
++
++    /** TabStateExtractor calls this on its owned ref-counted snapshot before it can be persisted. */
++    public static boolean seal(Tab tab, @Nullable WebContentsState state) {
++        ThreadUtils.assertOnUiThread();
++        if (!sRequired) return true;
++        if (state == null || !mayExpose(tab)) return false;
++        Binding binding = sBindings.get(tab);
++        if (binding == null || binding.identity.privateMode) return false;
++        // Never bless a substituted frozen buffer by hashing it as if freshly extracted.
++        if (tab.getWebContents() == null) {
++            return binding.scope.store.matches(tab.getId(), binding.identity, digest(state));
++        }
++        try {
++            binding.scope.store.write(tab.getId(), binding.identity, digest(state));
++            return true;
++        } catch (IOException error) {
++            return false;
++        }
++    }
++
++    /** The caller must have observed confirmed TabModel closure and actual Tab destruction. */
++    public static void forgetAfterConfirmedClose(Tab destroyed, String yabTabId) {
++        ThreadUtils.assertOnUiThread();
++        if (!isDisposalComplete(destroyed)) {
++            throw new IllegalStateException("Native Tab destruction has not completed");
++        }
++        int chromeId = destroyed.getId();
++        Scope scope = scope(destroyed.getProfile());
++        if (scope == null) throw new IllegalStateException("No current account owner");
++        Binding retired = sDestroyed.get(destroyed);
++        YabNamespaceIdentity identity = scope.expected.get(chromeId);
++        if (retired == null || retired.scope != scope || identity == null
++                || !identity.equals(retired.identity) || !identity.tabId.equals(yabTabId)) {
++            throw new IllegalStateException("Closed tab identity does not match");
++        }
++        for (Map.Entry<Tab, Binding> entry : sBindings.entrySet()) {
++            if (entry.getValue().scope == scope && entry.getKey().getId() == chromeId) {
++                throw new IllegalStateException("A live tab still owns this identity");
++            }
++        }
++        if (!identity.privateMode) scope.store.remove(chromeId);
++        scope.expected.remove(chromeId);
++        sDestroyed.remove(destroyed);
++        sAllocatedTabs.remove(destroyed);
++        sDisposalCompleted.remove(destroyed);
++        // This removes only tab metadata, never a shared namespace's cookies or storage.
++    }
++
++    private static Scope requireDisposedRevokedProfile(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = sScopes.get(profile);
++        if (captured == null || captured.isCurrent()) {
++            throw new IllegalStateException("Profile owner must be revoked first");
++        }
++        if (captured.uncertainTeardown) throw new IllegalStateException("Native ownership requires process recovery");
++        for (Map.Entry<Tab, Scope> entry : sAllocatedTabs.entrySet()) {
++            if (entry.getValue() == captured && !isDisposalComplete(entry.getKey())) {
++                throw new IllegalStateException("Profile still owns an incompletely destroyed allocated Tab");
++            }
++        }
++        for (Binding binding : sBindings.values()) {
++            if (binding.scope == captured) throw new IllegalStateException("Profile still owns a live tab");
++        }
++        for (Map.Entry<Tab, Binding> entry : sDestroyed.entrySet()) {
++            if (entry.getValue().scope == captured && !isDisposalComplete(entry.getKey())) {
++                throw new IllegalStateException("Profile native destruction is not complete");
++            }
++        }
++        for (Map.Entry<WebContents, Pending> entry : sPending.entrySet()) {
++            if (entry.getValue().scope == captured && !entry.getKey().isDestroyed()) {
++                throw new IllegalStateException("Profile still owns pending WebContents");
++            }
++        }
++        for (Map.Entry<WebContents, Scope> entry : sAllocations.entrySet()) {
++            if (entry.getValue() != captured) continue;
++            Creation creation = sCreations.get(entry.getKey());
++            if (!entry.getKey().isDestroyed() || (creation != null && !isDisposalComplete(creation.tab))) {
++                throw new IllegalStateException("Profile still owns a failed factory allocation");
++            }
++        }
++        return captured;
++    }
++
++    /** Check before requesting native OTR Profile destruction; no scope is removed by this call. */
++    public static void assertProfileResourcesDisposed(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        requireDisposedRevokedProfile(profile);
++    }
++
++    /** Revoke the owner first, close every tab, then release this captured Profile for a new epoch. */
++    public static void releaseRevokedProfile(Profile profile) {
++        ThreadUtils.assertOnUiThread();
++        Scope captured = requireDisposedRevokedProfile(profile);
++        sDestroyed.entrySet().removeIf(entry -> entry.getValue().scope == captured);
++        sPending.entrySet().removeIf(entry -> entry.getValue().scope == captured);
++        sCreations.entrySet().removeIf(entry -> entry.getValue().pending.scope == captured);
++        sAllocations.entrySet().removeIf(entry -> entry.getValue() == captured);
++        sAllocatedTabs.entrySet().removeIf(entry -> {
++            if (entry.getValue() != captured) return false;
++            sDisposalCompleted.remove(entry.getKey());
++            return true;
++        });
++        sScopes.remove(profile);
++        // Durable namespace identities survive owner release; this is not a data-clear operation.
++    }
++
++    private static String digest(WebContentsState state) {
++        try {
++            MessageDigest digest = MessageDigest.getInstance("SHA-256");
++            // Include serialized format; do not mutate buffer position or ref-count ownership.
++            digest.update(ByteBuffer.allocate(4).putInt(state.version()).array());
++            ByteBuffer buffer = state.buffer().asReadOnlyBuffer();
++            buffer.clear();
++            digest.update(buffer);
++            StringBuilder text = new StringBuilder(64);
++            for (byte value : digest.digest()) {
++                text.append(Character.forDigit((value >>> 4) & 15, 16));
++                text.append(Character.forDigit(value & 15, 16));
++            }
++            return text.toString();
++        } catch (NoSuchAlgorithmException error) {
++            throw new IllegalStateException("SHA-256 is required", error);
++        }
++    }
++}
+diff --git a/chrome/browser/tab/web_contents_state.cc b/chrome/browser/tab/web_contents_state.cc
+index 3cc80ba75b..32ce0609e7 100644
+--- a/chrome/browser/tab/web_contents_state.cc
++++ b/chrome/browser/tab/web_contents_state.cc
+@@ -18,9 +18,11 @@
+ #include "base/android/jni_bytebuffer.h"
+ #include "base/android/jni_string.h"
+ #include "base/containers/span.h"
++#include "base/functional/bind.h"
+ #include "base/logging.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/pickle.h"
++#include "base/uuid.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "components/sessions/content/content_serialized_navigation_builder.h"
+@@ -30,8 +32,17 @@
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/restore_type.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/site_instance.h"
++#include "content/public/browser/storage_partition.h"
++#include "content/public/browser/storage_partition_config.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/common/referrer.h"
++#include "extensions/buildflags/buildflags.h"
++#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
++#include "extensions/browser/api/cookies/yab_cookie_store_policy.h"
++#include "extensions/browser/extensions_browser_client.h"
++#endif
+ #include "services/network/public/cpp/shared_url_loader_factory.h"
+ #include "third_party/jni_zero/common_apis.h"
+ #include "third_party/jni_zero/default_conversions.h"
+@@ -547,6 +558,125 @@ ScopedJavaLocalRef<jobject> WebContentsState::AppendPendingNavigation(
+ 
+ // Static JNI methods.
+ 
++static bool JNI_WebContentsState_MatchesYabNamespace(
++    JNIEnv* env,
++    Profile* profile,
++    WebContents* contents,
++    const std::string& namespace_id,
++    bool in_memory) {
++  const base::Uuid id = base::Uuid::ParseLowercase(namespace_id);
++  if (!profile || !contents || !id.is_valid() ||
++      contents->GetBrowserContext() != profile ||
++      (profile->IsOffTheRecord() && !in_memory)) {
++    return false;
++  }
++  auto* frame = contents->GetPrimaryMainFrame();
++  if (!frame) {
++    return false;
++  }
++  const auto expected = content::StoragePartitionConfig::Create(
++      profile, "YabWebsiteNamespace", id.AsLowercaseString(), in_memory);
++  return frame->GetStoragePartition()->GetConfig() == expected;
++}
++
++static std::string JNI_WebContentsState_GrantYabCookieStore(
++    JNIEnv* env, Profile* caller, Profile* target, WebContents* proof,
++    const std::string& extension_id, const std::string& account,
++    const std::string& caller_epoch, const std::string& target_epoch,
++    const std::string& namespace_id, bool in_memory, bool implicit_default) {
++#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
++  if (!caller || !target || !proof ||
++      caller->GetOriginalProfile() != target->GetOriginalProfile() ||
++      (caller->IsOffTheRecord() && caller != target) ||
++      !base::Uuid::ParseLowercase(account).is_valid() ||
++      !base::Uuid::ParseLowercase(caller_epoch).is_valid() ||
++      !base::Uuid::ParseLowercase(target_epoch).is_valid() ||
++      !JNI_WebContentsState_MatchesYabNamespace(env, target, proof, namespace_id, in_memory)) {
++    return {};
++  }
++  auto validator = base::BindRepeating(
++      [](base::WeakPtr<BrowserContext> caller, base::WeakPtr<BrowserContext> target,
++         std::string account, std::string caller_epoch, std::string target_epoch,
++         std::string namespace_id, bool in_memory) {
++        if (!caller || !target) return false;
++        return Java_WebContentsState_isYabCookieGrantCurrent(
++            base::android::AttachCurrentThread(), Profile::FromBrowserContext(caller.get()),
++            Profile::FromBrowserContext(target.get()), account, caller_epoch, target_epoch,
++            namespace_id, in_memory);
++      }, caller->GetWeakPtr(), target->GetWeakPtr(), account, caller_epoch, target_epoch,
++      namespace_id, in_memory);
++  if (!validator.Run()) return {};
++  int tab_id = -1;
++  int window_id = -1;
++  extensions::ExtensionsBrowserClient::Get()->GetTabAndWindowIdForWebContents(proof, &tab_id, &window_id);
++  const auto partition = content::StoragePartitionConfig::Create(
++      target, "YabWebsiteNamespace", namespace_id, in_memory);
++  return extensions::YabCookieStorePolicy::Get(caller, /*create=*/true)->Grant(
++      caller, target, proof, extension_id, partition, tab_id, implicit_default, std::move(validator));
++#else
++  return {};
++#endif
++}
++
++static void JNI_WebContentsState_RevokeYabCookieStores(JNIEnv* env, Profile* caller) {
++#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
++  if (auto* policy = extensions::YabCookieStorePolicy::Get(caller)) policy->RevokeAll();
++#endif
++}
++
++static bool JNI_WebContentsState_RevokeYabCookieStore(
++    JNIEnv* env, Profile* caller, const std::string& extension_id, const std::string& store_id) {
++#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
++  auto* policy = extensions::YabCookieStorePolicy::Get(caller);
++  return policy && policy->Revoke(extension_id, store_id);
++#else
++  return false;
++#endif
++}
++
++static content::WebContents* JNI_WebContentsState_RestoreContentsForYabNamespace(
++    JNIEnv* env,
++    Profile* profile,
++    const JavaRef<jobject>& state,
++    int32_t saved_state_version,
++    const std::string& namespace_id,
++    bool in_memory,
++    bool initially_hidden,
++    bool no_renderer) {
++  const base::Uuid id = base::Uuid::ParseLowercase(namespace_id);
++  if (!profile || !id.is_valid() || (profile->IsOffTheRecord() && !in_memory)) {
++    return nullptr;
++  }
++  bool saved_private = false;
++  int selected = -1;
++  std::vector<sessions::SerializedNavigationEntry> navigations;
++  if (!WebContentsState::ExtractNavigationEntries(
++          base::android::JavaByteBufferToSpan(env, state), saved_state_version,
++          &saved_private, &selected, &navigations) ||
++      saved_private != profile->IsOffTheRecord() || selected < 0 ||
++      static_cast<size_t>(selected) >= navigations.size()) {
++    return nullptr;
++  }
++  auto entries = sessions::ContentSerializedNavigationBuilder::ToNavigationEntries(
++      navigations, profile);
++  const auto partition = content::StoragePartitionConfig::Create(
++      profile, "YabWebsiteNamespace", id.AsLowercaseString(), in_memory);
++  auto site_instance = content::SiteInstance::CreateForFixedStoragePartition(
++      profile, GURL(), partition);
++  WebContents::CreateParams params(profile, std::move(site_instance));
++  params.initially_hidden = initially_hidden;
++  if (no_renderer) {
++    params.desired_renderer_state = WebContents::CreateParams::kNoRendererProcess;
++  }
++  auto contents = WebContents::Create(params);
++  contents->GetController().Restore(selected, content::RestoreType::kRestored, &entries);
++  if (!JNI_WebContentsState_MatchesYabNamespace(
++          env, profile, contents.get(), namespace_id, in_memory)) {
++    return nullptr;
++  }
++  return contents.release();
++}
++
+ static content::WebContents* JNI_WebContentsState_RestoreContentsFromByteBuffer(
+     JNIEnv* env,
+     Profile* profile,
+diff --git a/extensions/browser/BUILD.gn b/extensions/browser/BUILD.gn
+index 25d977d2fa..30c6d38d8e 100644
+--- a/extensions/browser/BUILD.gn
++++ b/extensions/browser/BUILD.gn
+@@ -1059,6 +1059,7 @@ source_set("unit_tests") {
+     "api/content_settings/content_settings_unittest.cc",
+     "api/cookies/cookies_helpers_unittest.cc",
+     "api/cookies/cookies_unittest.cc",
++    "api/cookies/yab_cookie_store_policy_unittest.cc",
+     "api/declarative/declarative_rule_unittest.cc",
+     "api/declarative/deduping_factory_unittest.cc",
+     "api/declarative/rules_registry_unittest.cc",
+diff --git a/extensions/browser/api/cookies/BUILD.gn b/extensions/browser/api/cookies/BUILD.gn
+index e2d3b0ebee..7834e8df30 100644
+--- a/extensions/browser/api/cookies/BUILD.gn
++++ b/extensions/browser/api/cookies/BUILD.gn
+@@ -14,6 +14,8 @@ source_set("cookies") {
+     "cookies_api_delegate.h",
+     "cookies_helpers.cc",
+     "cookies_helpers.h",
++    "yab_cookie_store_policy.cc",
++    "yab_cookie_store_policy.h",
+   ]
+ 
+   public_deps = [
+diff --git a/extensions/browser/api/cookies/cookies_api.cc b/extensions/browser/api/cookies/cookies_api.cc
+index c25e90af7d..090c4e8aa1 100644
+--- a/extensions/browser/api/cookies/cookies_api.cc
++++ b/extensions/browser/api/cookies/cookies_api.cc
+@@ -21,6 +21,7 @@
+ #include "content/public/browser/storage_partition.h"
+ #include "content/public/browser/web_contents.h"
+ #include "extensions/browser/api/cookies/cookies_helpers.h"
++#include "extensions/browser/api/cookies/yab_cookie_store_policy.h"
+ #include "extensions/browser/api/extensions_api_client.h"
+ #include "extensions/browser/browser_context_lifetime_tracker.h"
+ #include "extensions/browser/event_router.h"
+@@ -63,6 +64,7 @@ constexpr char kOverwriteChangeCause[] = "overwrite";
+ constexpr char kCookieSetFailedError[] =
+     "Failed to parse or set cookie named \"*\".";
+ constexpr char kInvalidStoreIdError[] = "Invalid cookie store id: \"*\".";
++constexpr char kYabCookieLeaseError[] = "The native cookie namespace grant is unavailable.";
+ constexpr char kInvalidUrlError[] = "Invalid url: \"*\".";
+ constexpr char kNoHostPermissionsError[] =
+     "No host permissions for cookies at url: \"*\".";
+@@ -105,8 +107,23 @@ bool ParseUrl(const Extension* extension,
+ network::mojom::CookieManager* ParseStoreCookieManager(
+     content::BrowserContext* function_context,
+     bool include_incognito,
++    const Extension* extension,
++    scoped_refptr<YabCookieStoreLease>* native_lease,
+     std::string* store_id,
+     std::string* error) {
++  if (YabCookieStorePolicy::IsRequired()) {
++    auto* policy = YabCookieStorePolicy::Get(function_context);
++    *native_lease = policy && extension
++        ? policy->Resolve(extension->id(), *store_id, include_incognito) : nullptr;
++    if (!*native_lease || (*native_lease)->approved_extension() != extension) {
++      *error = kYabCookieLeaseError;
++      return nullptr;
++    }
++    *store_id = (*native_lease)->store_id();
++    auto* manager = (*native_lease)->GetCookieManager();
++    if (!manager) *error = kYabCookieLeaseError;
++    return manager;
++  }
+   content::BrowserContext* store_context = nullptr;
+   if (!store_id->empty()) {
+     store_context = cookies_helpers::ChooseBrowserContextFromStoreId(
+@@ -242,6 +259,7 @@ void CookiesEventRouter::OnRelatedOffTheRecordBrowserContextDestroyed(
+ }
+ 
+ void CookiesEventRouter::MaybeStartListening() {
++  if (YabCookieStorePolicy::IsRequired()) return;
+   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+   DCHECK(browser_context_);
+ 
+@@ -263,6 +281,7 @@ void CookiesEventRouter::MaybeStartListening() {
+ void CookiesEventRouter::BindToCookieManager(
+     mojo::Receiver<network::mojom::CookieChangeListener>* receiver,
+     content::BrowserContext& context) {
++  if (YabCookieStorePolicy::IsRequired()) return;
+   network::mojom::CookieManager* cookie_manager =
+       context.GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
+   if (!cookie_manager) {
+@@ -314,7 +333,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
+ 
+   std::string store_id = parsed_args_->details.store_id.value_or(std::string());
+   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
+-      browser_context(), include_incognito_information(), &store_id, &error);
++      browser_context(), include_incognito_information(), extension(), &yab_cookie_lease_, &store_id, &error);
+   if (!cookie_manager) {
+     return RespondNow(Error(std::move(error)));
+   }
+@@ -340,7 +359,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
+     return RespondNow(Error(std::move(partition_key.error())));
+   }
+ 
+-  if (!parsed_args_->details.store_id) {
++  if (YabCookieStorePolicy::IsRequired() || !parsed_args_->details.store_id) {
+     parsed_args_->details.store_id = store_id;
+   }
+ 
+@@ -360,6 +379,12 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
+ void CookiesGetFunction::GetCookieListCallback(
+     const net::CookieAccessResultList& cookie_list,
+     const net::CookieAccessResultList& excluded_cookies) {
++  if (YabCookieStorePolicy::IsRequired() &&
++      (!yab_cookie_lease_ || !yab_cookie_lease_->IsCurrent(include_incognito_information()) ||
++       (!url_.is_empty() && (!extension() || !CheckHostPermissions(extension(), url_, nullptr))))) {
++    Respond(Error(kYabCookieLeaseError));
++    return;
++  }
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   for (const net::CookieWithAccessResult& cookie_with_access_result :
+        cookie_list) {
+@@ -412,7 +437,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
+ 
+   std::string store_id = parsed_args_->details.store_id.value_or(std::string());
+   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
+-      browser_context(), include_incognito_information(), &store_id, &error);
++      browser_context(), include_incognito_information(), extension(), &yab_cookie_lease_, &store_id, &error);
+   if (!cookie_manager) {
+     return RespondNow(Error(std::move(error)));
+   }
+@@ -425,7 +450,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
+     return RespondNow(Error(std::move(partition_key.error())));
+   }
+ 
+-  if (!parsed_args_->details.store_id) {
++  if (YabCookieStorePolicy::IsRequired() || !parsed_args_->details.store_id) {
+     parsed_args_->details.store_id = store_id;
+   }
+ 
+@@ -452,6 +477,12 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
+ 
+ void CookiesGetAllFunction::GetAllCookiesCallback(
+     const net::CookieList& cookie_list) {
++  if (YabCookieStorePolicy::IsRequired() &&
++      (!yab_cookie_lease_ || !yab_cookie_lease_->IsCurrent(include_incognito_information()) ||
++       (!url_.is_empty() && (!extension() || !CheckHostPermissions(extension(), url_, nullptr))))) {
++    Respond(Error(kYabCookieLeaseError));
++    return;
++  }
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   if (extension()) {
+     net::CookiePartitionKeyCollection cookie_partition_key_collection =
+@@ -472,6 +503,12 @@ void CookiesGetAllFunction::GetAllCookiesCallback(
+ void CookiesGetAllFunction::GetCookieListCallback(
+     const net::CookieAccessResultList& cookie_list,
+     const net::CookieAccessResultList& excluded_cookies) {
++  if (YabCookieStorePolicy::IsRequired() &&
++      (!yab_cookie_lease_ || !yab_cookie_lease_->IsCurrent(include_incognito_information()) ||
++       (!url_.is_empty() && (!extension() || !CheckHostPermissions(extension(), url_, nullptr))))) {
++    Respond(Error(kYabCookieLeaseError));
++    return;
++  }
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   if (extension()) {
+     std::vector<api::cookies::Cookie> match_vector;
+@@ -516,7 +553,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
+ 
+   std::string store_id = parsed_args_->details.store_id.value_or(std::string());
+   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
+-      browser_context(), include_incognito_information(), &store_id, &error);
++      browser_context(), include_incognito_information(), extension(), &yab_cookie_lease_, &store_id, &error);
+   if (!cookie_manager) {
+     return RespondNow(Error(std::move(error)));
+   }
+@@ -551,7 +588,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
+     return RespondNow(Error(std::move(net_partition_key.error())));
+   }
+ 
+-  if (!parsed_args_->details.store_id) {
++  if (YabCookieStorePolicy::IsRequired() || !parsed_args_->details.store_id) {
+     parsed_args_->details.store_id = store_id;
+   }
+ 
+@@ -644,6 +681,12 @@ void CookiesSetFunction::SetCanonicalCookieCallback(
+ void CookiesSetFunction::GetCookieListCallback(
+     const net::CookieAccessResultList& cookie_list,
+     const net::CookieAccessResultList& excluded_cookies) {
++  if (YabCookieStorePolicy::IsRequired() &&
++      (!yab_cookie_lease_ || !yab_cookie_lease_->IsCurrent(include_incognito_information()) ||
++       (!url_.is_empty() && (!extension() || !CheckHostPermissions(extension(), url_, nullptr))))) {
++    Respond(Error(kYabCookieLeaseError));
++    return;
++  }
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   DCHECK_EQ(SET_COMPLETED, state_);
+   state_ = GET_COMPLETED;
+@@ -698,7 +741,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
+ 
+   std::string store_id = parsed_args_->details.store_id.value_or(std::string());
+   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
+-      browser_context(), include_incognito_information(), &store_id, &error);
++      browser_context(), include_incognito_information(), extension(), &yab_cookie_lease_, &store_id, &error);
+   if (!cookie_manager) {
+     return RespondNow(Error(std::move(error)));
+   }
+@@ -710,7 +753,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
+     return RespondNow(Error(std::move(partition_key.error())));
+   }
+ 
+-  if (!parsed_args_->details.store_id) {
++  if (YabCookieStorePolicy::IsRequired() || !parsed_args_->details.store_id) {
+     parsed_args_->details.store_id = store_id;
+   }
+ 
+@@ -732,6 +775,12 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
+ }
+ 
+ void CookiesRemoveFunction::RemoveCookieCallback(uint32_t /* num_deleted */) {
++  if (YabCookieStorePolicy::IsRequired() &&
++      (!yab_cookie_lease_ || !yab_cookie_lease_->IsCurrent(include_incognito_information()) ||
++       (!url_.is_empty() && (!extension() || !CheckHostPermissions(extension(), url_, nullptr))))) {
++    Respond(Error(kYabCookieLeaseError));
++    return;
++  }
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+ 
+   // Build the callback result
+@@ -833,6 +882,12 @@ ExtensionFunction::ResponseAction CookiesGetPartitionKeyFunction::Run() {
+   }
+ 
+   CHECK(render_frame_host);
++  if (YabCookieStorePolicy::IsRequired()) {
++    auto* policy = YabCookieStorePolicy::Get(browser_context());
++    if (!policy || !policy->AllowsWebContents(extension(), web_contents, include_incognito_information())) {
++      return RespondNow(Error(kYabCookieLeaseError));
++    }
++  }
+ 
+   base::expected<net::CookiePartitionKey::SerializedCookiePartitionKey,
+                  std::string>
+@@ -862,6 +917,12 @@ ExtensionFunction::ResponseAction CookiesGetPartitionKeyFunction::Run() {
+ }
+ 
+ ExtensionFunction::ResponseAction CookiesGetAllCookieStoresFunction::Run() {
++  if (YabCookieStorePolicy::IsRequired()) {
++    auto* policy = YabCookieStorePolicy::Get(browser_context());
++    auto stores = policy ? policy->Stores(extension(), include_incognito_information())
++                         : std::vector<api::cookies::CookieStore>();
++    return RespondNow(ArgumentList(api::cookies::GetAllCookieStores::Results::Create(stores)));
++  }
+   // Return a list of all cookie stores with at least one open tab.
+   std::vector<api::cookies::CookieStore> cookie_stores;
+   for (auto& store_context :
+@@ -901,6 +962,10 @@ BrowserContextKeyedAPIFactory<CookiesAPI>* CookiesAPI::GetFactoryInstance() {
+ }
+ 
+ void CookiesAPI::OnListenerAdded(const EventListenerInfo& details) {
++  if (YabCookieStorePolicy::IsRequired()) {
++    EventRouter::Get(browser_context_)->UnregisterObserver(this);
++    return; // Namespace grants own targeted listeners; never bind default-jar broadcast.
++  }
+   DCHECK(!cookies_event_router_);
+   cookies_event_router_ =
+       std::make_unique<CookiesEventRouter>(browser_context_);
+diff --git a/extensions/browser/api/cookies/cookies_api.h b/extensions/browser/api/cookies/cookies_api.h
+index 4da8dd56b5..fefc6f8ba5 100644
+--- a/extensions/browser/api/cookies/cookies_api.h
++++ b/extensions/browser/api/cookies/cookies_api.h
+@@ -108,6 +108,8 @@ class CookiesEventRouter : public BrowserContextLifetimeObserver {
+ };
+ 
+ // Implements the cookies.get() extension function.
++class YabCookieStoreLease;
++
+ class CookiesGetFunction : public ExtensionFunction {
+  public:
+   DECLARE_EXTENSION_FUNCTION("cookies.get", COOKIES_GET)
+@@ -130,6 +132,7 @@ class CookiesGetFunction : public ExtensionFunction {
+ 
+   GURL url_;
+   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
++  scoped_refptr<YabCookieStoreLease> yab_cookie_lease_;
+   std::optional<api::cookies::Get::Params> parsed_args_;
+ };
+ 
+@@ -159,6 +162,7 @@ class CookiesGetAllFunction : public ExtensionFunction {
+ 
+   GURL url_;
+   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
++  scoped_refptr<YabCookieStoreLease> yab_cookie_lease_;
+   std::optional<api::cookies::GetAll::Params> parsed_args_;
+ };
+ 
+@@ -183,6 +187,7 @@ class CookiesSetFunction : public ExtensionFunction {
+   GURL url_;
+   bool success_;
+   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
++  scoped_refptr<YabCookieStoreLease> yab_cookie_lease_;
+   std::optional<api::cookies::Set::Params> parsed_args_;
+ };
+ 
+@@ -204,6 +209,7 @@ class CookiesRemoveFunction : public ExtensionFunction {
+ 
+   GURL url_;
+   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
++  scoped_refptr<YabCookieStoreLease> yab_cookie_lease_;
+   std::optional<api::cookies::Remove::Params> parsed_args_;
+ };
+ 
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy.cc b/extensions/browser/api/cookies/yab_cookie_store_policy.cc
+new file mode 100644
+index 0000000000..9790456821
+--- /dev/null
++++ b/extensions/browser/api/cookies/yab_cookie_store_policy.cc
+@@ -0,0 +1,312 @@
++// Unapplied Yab Android policy for the pinned Chromium source.
++#include "extensions/browser/api/cookies/yab_cookie_store_policy.h"
++
++#include <memory>
++#include <optional>
++#include <utility>
++
++#include "base/check.h"
++#include "base/functional/bind.h"
++#include "base/unguessable_token.h"
++#include "base/values.h"
++#include "build/build_config.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/browser_thread.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/storage_partition.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/browser/api/cookies/cookies_helpers.h"
++#include "extensions/browser/event_router.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extensions_browser_client.h"
++#include "extensions/common/constants.h"
++#include "extensions/common/event_args.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/permissions/permissions_data.h"
++#include "net/cookies/cookie_constants.h"
++
++namespace extensions {
++namespace {
++const char kPolicyKey[] = "YabNativeCookieStorePolicy";
++constexpr size_t kMaximumCookieStoreGrants = 4096;
++
++std::optional<std::string> ChangeCause(net::CookieChangeCause cause) {
++  switch (cause) {
++    case net::CookieChangeCause::INSERTED:
++    case net::CookieChangeCause::EXPLICIT:
++    case net::CookieChangeCause::INSERTED_NO_CHANGE_OVERWRITE:
++    case net::CookieChangeCause::INSERTED_NO_VALUE_CHANGE_OVERWRITE:
++      return "explicit";
++    case net::CookieChangeCause::OVERWRITE:
++      return "overwrite";
++    case net::CookieChangeCause::EXPIRED:
++      return "expired";
++    case net::CookieChangeCause::EVICTED:
++      return "evicted";
++    case net::CookieChangeCause::EXPIRED_OVERWRITE:
++      return "expired_overwrite";
++    case net::CookieChangeCause::UNKNOWN_DELETION:
++      return std::nullopt;
++  }
++  return std::nullopt;
++}
++}  // namespace
++
++YabCookieStoreLease::YabCookieStoreLease(
++    content::BrowserContext* caller,
++    content::BrowserContext* target,
++    content::WebContents* proof,
++    std::string extension_id,
++    content::StoragePartitionConfig partition,
++    int extension_tab_id,
++    bool implicit_default,
++    base::RepeatingCallback<bool()> native_owner_current)
++    : caller_(caller->GetWeakPtr()),
++      target_(target->GetWeakPtr()),
++      proofs_({{proof->GetWeakPtr(), extension_tab_id}}),
++      extension_id_(std::move(extension_id)),
++      approved_extension_(ExtensionRegistry::Get(caller)
++          ? ExtensionRegistry::Get(caller)->enabled_extensions().GetByID(extension_id_) : nullptr),
++      store_id_("yab-" + base::UnguessableToken::Create().ToString()),
++      partition_(std::move(partition)),
++      implicit_default_(implicit_default),
++      native_owner_current_(std::move(native_owner_current)) {}
++
++YabCookieStoreLease::~YabCookieStoreLease() = default;
++
++bool YabCookieStoreLease::IsCurrent(bool include_incognito) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  if (revoked_) {
++    return false;
++  }
++  if (!caller_ || !target_) {
++    Revoke();
++    return false;
++  }
++  if (caller_->IsOffTheRecord() && caller_.get() != target_.get()) return false;
++  if (target_->IsOffTheRecord() &&
++      ((target_.get() != caller_.get() && !include_incognito) ||
++       !ExtensionsBrowserClient::Get()->IsExtensionIncognitoEnabled(
++           extension_id_, caller_.get()))) {
++    // A request without include_incognito does not revoke an otherwise valid native grant.
++    if (target_.get() == caller_.get() || include_incognito) Revoke();
++    return false;
++  }
++  auto* registry = ExtensionRegistry::Get(caller_.get());
++  const Extension* extension =
++      registry ? registry->enabled_extensions().GetByID(extension_id_) : nullptr;
++  if (!extension || extension != approved_extension_.get() ||
++      !extension->permissions_data()->HasAPIPermission("cookies")) {
++    Revoke(); // Observed disable, reload or permission loss cannot revive this capability.
++    return false;
++  }
++  if (native_owner_current_.is_null() || !native_owner_current_.Run()) {
++    Revoke(); // A captured owner scope cannot revive after an observed rejection.
++    return false;
++  }
++  bool has_proof = false;
++  for (const auto& proof : proofs_) {
++    if (Allows(proof.contents.get())) has_proof = true;
++  }
++  if (!has_proof) {
++    return false;
++  }
++  return true;
++}
++
++bool YabCookieStoreLease::MatchesPartition(content::BrowserContext* target,
++    const content::StoragePartitionConfig& partition) const {
++  return target_.get() == target && partition_ == partition;
++}
++
++bool YabCookieStoreLease::Allows(content::WebContents* contents) const {
++  if (!target_ || !contents || contents->GetBrowserContext() != target_.get()) return false;
++  auto* frame = contents->GetPrimaryMainFrame();
++  return frame && frame->GetStoragePartition()->GetConfig() == partition_;
++}
++
++void YabCookieStoreLease::AddProof(content::WebContents* proof, int extension_tab_id) {
++  if (!Allows(proof) || extension_tab_id < 0) return;
++  for (const auto& existing : proofs_) {
++    if (existing.contents.get() == proof) return;
++  }
++  proofs_.push_back({proof->GetWeakPtr(), extension_tab_id});
++}
++
++std::vector<int> YabCookieStoreLease::TabIds() const {
++  std::vector<int> ids;
++  for (const auto& proof : proofs_) {
++    if (Allows(proof.contents.get())) ids.push_back(proof.tab_id);
++  }
++  return ids;
++}
++
++network::mojom::CookieManager* YabCookieStoreLease::GetCookieManager() {
++  if (!target_) return nullptr;
++  auto* partition = target_->GetStoragePartition(partition_, /*can_create=*/false);
++  return partition ? partition->GetCookieManagerForBrowserProcess() : nullptr;
++}
++
++void YabCookieStoreLease::StartListening() {
++  if (!IsCurrent(/*include_incognito=*/true)) return;
++  auto* manager = GetCookieManager();
++  if (!manager) return;
++  manager->AddGlobalChangeListener(receiver_.BindNewPipeAndPassRemote());
++  receiver_.set_disconnect_handler(base::BindOnce(
++      [](YabCookieStoreLease* lease) {
++        lease->receiver_.reset();
++        lease->StartListening();
++      }, base::Unretained(this)));
++}
++
++void YabCookieStoreLease::Revoke() {
++  revoked_ = true;
++  receiver_.reset();
++}
++
++void YabCookieStoreLease::OnCookieChange(const net::CookieChangeInfo& change) {
++  if (!IsCurrent(/*include_incognito=*/true) ||
++      (change.cookie.IsPartitioned() && !change.cookie.PartitionKey()->IsSerializeable())) {
++    return;
++  }
++  auto cause = ChangeCause(change.cause);
++  if (!cause) return;
++  auto* registry = ExtensionRegistry::Get(caller_.get());
++  const Extension* extension = registry->enabled_extensions().GetByID(extension_id_);
++  const GURL domain = cookies_helpers::GetURLFromCanonicalCookie(change.cookie);
++  if (!extension || extension->permissions_data()->GetPageAccess(
++          domain, extension_misc::kUnknownTabId, nullptr) != PermissionsData::PageAccess::kAllowed) {
++    return;
++  }
++  auto* router = EventRouter::Get(target_.get());
++  if (!router) return;
++  base::DictValue row;
++  row.Set("removed", change.cause != net::CookieChangeCause::INSERTED &&
++      change.cause != net::CookieChangeCause::INSERTED_NO_CHANGE_OVERWRITE &&
++      change.cause != net::CookieChangeCause::INSERTED_NO_VALUE_CHANGE_OVERWRITE);
++  row.Set("cookie", cookies_helpers::CreateCookie(change.cookie, store_id_).ToValue());
++  row.Set("cause", *cause);
++  auto args = base::MakeRefCounted<EventArgs>();
++  args->data.Append(std::move(row));
++  auto event = std::make_unique<Event>(events::COOKIES_ON_CHANGED,
++      api::cookies::OnChanged::kEventName, std::move(args), target_.get());
++  event->event_url = domain;
++  event->will_dispatch_callback = base::BindRepeating(
++      [](scoped_refptr<YabCookieStoreLease> lease, GURL domain,
++         content::BrowserContext*, mojom::ContextType, const Extension* recipient,
++         const base::DictValue*, std::optional<base::ListValue>&,
++         mojom::EventFilteringInfoPtr&, bool*) {
++        return lease->IsCurrent(/*include_incognito=*/true) && recipient &&
++            recipient == lease->approved_extension() &&
++            recipient->permissions_data()->GetPageAccess(
++                domain, extension_misc::kUnknownTabId, nullptr) == PermissionsData::PageAccess::kAllowed;
++      }, base::WrapRefCounted(this), domain);
++  router->DispatchEventToExtension(extension_id_, std::move(event));
++}
++
++YabCookieStorePolicy::YabCookieStorePolicy() = default;
++
++bool YabCookieStorePolicy::IsRequired() {
++  // This is the Yab Android fork patch. It must deny access even before native owner installation.
++  return BUILDFLAG(IS_ANDROID);
++}
++
++YabCookieStorePolicy* YabCookieStorePolicy::Get(content::BrowserContext* context, bool create) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  if (!context) return nullptr;
++  auto* existing = static_cast<YabCookieStorePolicy*>(context->GetUserData(kPolicyKey));
++  if (existing || !create) return existing;
++  auto policy = std::make_unique<YabCookieStorePolicy>();
++  auto* result = policy.get();
++  context->SetUserData(kPolicyKey, std::move(policy));
++  return result;
++}
++
++YabCookieStorePolicy::~YabCookieStorePolicy() { RevokeAll(); }
++
++std::string YabCookieStorePolicy::Grant(
++    content::BrowserContext* caller, content::BrowserContext* target,
++    content::WebContents* proof, const std::string& extension_id,
++    const content::StoragePartitionConfig& partition, int extension_tab_id,
++    bool implicit_default, base::RepeatingCallback<bool()> native_owner_current) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  if (!caller || !target || !proof || extension_tab_id < 0 ||
++      (caller->IsOffTheRecord() && caller != target) ||
++      ExtensionsBrowserClient::Get()->GetOriginalContext(caller) !=
++          ExtensionsBrowserClient::Get()->GetOriginalContext(target)) return {};
++  for (auto entry = grants_.begin(); entry != grants_.end();) {
++    entry->second->IsCurrent(/*include_incognito=*/true);
++    if (entry->second->revoked()) entry = grants_.erase(entry);
++    else ++entry;
++  }
++  for (auto& [id, existing] : grants_) {
++    if (existing->extension_id() == extension_id && existing->IsCurrent(true)) {
++      if (existing->MatchesPartition(target, partition)) {
++        if (existing->implicit_default() != implicit_default) return {};
++        existing->AddProof(proof, extension_tab_id);
++        return id;
++      }
++      if (implicit_default && existing->implicit_default()) return {};
++    }
++  }
++  if (grants_.size() >= kMaximumCookieStoreGrants) return {};
++  auto lease = base::MakeRefCounted<YabCookieStoreLease>(caller, target, proof,
++      extension_id, partition, extension_tab_id, implicit_default, std::move(native_owner_current));
++  if (!lease->IsCurrent(/*include_incognito=*/true)) return {};
++  const std::string id = lease->store_id();
++  grants_[id] = lease;
++  lease->StartListening();
++  return id;
++}
++
++scoped_refptr<YabCookieStoreLease> YabCookieStorePolicy::Resolve(
++    const std::string& extension_id, const std::string& store_id, bool include_incognito) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  for (auto& [id, lease] : grants_) {
++    if (lease->extension_id() == extension_id &&
++        ((store_id.empty() && lease->implicit_default()) || id == store_id) &&
++        lease->IsCurrent(include_incognito)) return lease;
++  }
++  return nullptr; // No "0"/"1", selected-tab, URL or default-partition inference.
++}
++
++std::vector<api::cookies::CookieStore> YabCookieStorePolicy::Stores(
++    const Extension* extension, bool include_incognito) {
++  std::vector<api::cookies::CookieStore> stores;
++  if (!extension) return stores;
++  for (auto& [id, lease] : grants_) {
++    if (lease->approved_extension() != extension || !lease->IsCurrent(include_incognito)) continue;
++    base::ListValue tabs;
++    for (int tab_id : lease->TabIds()) tabs.Append(tab_id);
++    base::DictValue row;
++    row.Set("id", id);
++    row.Set("tabIds", std::move(tabs));
++    auto store = api::cookies::CookieStore::FromValue(row);
++    if (store) stores.push_back(std::move(store).value());
++  }
++  return stores;
++}
++
++bool YabCookieStorePolicy::AllowsWebContents(const Extension* extension,
++    content::WebContents* contents, bool include_incognito) {
++  if (!extension) return false;
++  for (auto& [id, lease] : grants_) {
++    if (lease->approved_extension() == extension && lease->Allows(contents) &&
++        lease->IsCurrent(include_incognito)) return true;
++  }
++  return false;
++}
++
++void YabCookieStorePolicy::RevokeAll() {
++  for (auto& [id, lease] : grants_) lease->Revoke();
++  grants_.clear();
++}
++
++bool YabCookieStorePolicy::Revoke(const std::string& extension_id, const std::string& store_id) {
++  auto found = grants_.find(store_id);
++  if (found == grants_.end() || found->second->extension_id() != extension_id) return false;
++  found->second->Revoke();
++  grants_.erase(found);
++  return true;
++}
++}  // namespace extensions
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy.h b/extensions/browser/api/cookies/yab_cookie_store_policy.h
+new file mode 100644
+index 0000000000..b700aa7d8c
+--- /dev/null
++++ b/extensions/browser/api/cookies/yab_cookie_store_policy.h
+@@ -0,0 +1,108 @@
++// Unapplied Yab Android policy for the pinned Chromium source.
++#ifndef EXTENSIONS_BROWSER_API_COOKIES_YAB_COOKIE_STORE_POLICY_H_
++#define EXTENSIONS_BROWSER_API_COOKIES_YAB_COOKIE_STORE_POLICY_H_
++
++#include <map>
++#include <string>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/ref_counted.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/supports_user_data.h"
++#include "content/public/browser/storage_partition_config.h"
++#include "extensions/common/api/cookies.h"
++#include "mojo/public/cpp/bindings/receiver.h"
++#include "services/network/public/mojom/cookie_manager.mojom.h"
++
++namespace content {
++class BrowserContext;
++class WebContents;
++}  // namespace content
++
++namespace extensions {
++class Extension;
++
++class YabCookieStoreLease : public base::RefCounted<YabCookieStoreLease>,
++                            public network::mojom::CookieChangeListener {
++ public:
++  YabCookieStoreLease(content::BrowserContext* caller,
++                      content::BrowserContext* target,
++                      content::WebContents* proof,
++                      std::string extension_id,
++                      content::StoragePartitionConfig partition,
++                      int extension_tab_id,
++                      bool implicit_default,
++                      base::RepeatingCallback<bool()> native_owner_current);
++  bool IsCurrent(bool include_incognito);
++  network::mojom::CookieManager* GetCookieManager();
++  void StartListening();
++  void Revoke();
++  void OnCookieChange(const net::CookieChangeInfo& change) override;
++
++  const std::string& store_id() const { return store_id_; }
++  const std::string& extension_id() const { return extension_id_; }
++  const Extension* approved_extension() const { return approved_extension_.get(); }
++  bool implicit_default() const { return implicit_default_; }
++  bool revoked() const { return revoked_; }
++  bool MatchesPartition(content::BrowserContext* target,
++                        const content::StoragePartitionConfig& partition) const;
++  bool Allows(content::WebContents* contents) const;
++  void AddProof(content::WebContents* proof, int extension_tab_id);
++  std::vector<int> TabIds() const;
++
++ private:
++  friend class base::RefCounted<YabCookieStoreLease>;
++  ~YabCookieStoreLease() override;
++  base::WeakPtr<content::BrowserContext> caller_;
++  base::WeakPtr<content::BrowserContext> target_;
++  struct Proof {
++    base::WeakPtr<content::WebContents> contents;
++    int tab_id;
++  };
++  std::vector<Proof> proofs_;
++  const std::string extension_id_;
++  const scoped_refptr<const Extension> approved_extension_;
++  const std::string store_id_;
++  const content::StoragePartitionConfig partition_;
++  const bool implicit_default_;
++  base::RepeatingCallback<bool()> native_owner_current_;
++  bool revoked_ = false;
++  mojo::Receiver<network::mojom::CookieChangeListener> receiver_{this};
++};
++
++// BrowserContext-owned; grants are process-local native capabilities, never restored from JS.
++class YabCookieStorePolicy : public base::SupportsUserData::Data {
++ public:
++  // Chromium style requires complex classes to keep constructors out-of-line.
++  YabCookieStorePolicy();
++  static bool IsRequired();
++  static YabCookieStorePolicy* Get(content::BrowserContext* context, bool create = false);
++  ~YabCookieStorePolicy() override;
++
++  std::string Grant(content::BrowserContext* caller,
++                    content::BrowserContext* target,
++                    content::WebContents* proof,
++                    const std::string& extension_id,
++                    const content::StoragePartitionConfig& partition,
++                    int extension_tab_id,
++                    bool implicit_default,
++                    base::RepeatingCallback<bool()> native_owner_current);
++  scoped_refptr<YabCookieStoreLease> Resolve(const std::string& extension_id,
++                                           const std::string& store_id,
++                                           bool include_incognito);
++  std::vector<api::cookies::CookieStore> Stores(const Extension* extension,
++                                               bool include_incognito);
++  bool AllowsWebContents(const Extension* extension,
++                         content::WebContents* contents,
++                         bool include_incognito);
++  bool Revoke(const std::string& extension_id, const std::string& store_id);
++  void RevokeAll();
++
++ private:
++  std::map<std::string, scoped_refptr<YabCookieStoreLease>> grants_;
++};
++
++}  // namespace extensions
++#endif
+diff --git a/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc b/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc
+new file mode 100644
+index 0000000000..d8eeba45e3
+--- /dev/null
++++ b/extensions/browser/api/cookies/yab_cookie_store_policy_unittest.cc
+@@ -0,0 +1,217 @@
++// Unapplied regression tests for the pinned upstream extensions_unittests target.
++#include "extensions/browser/api/cookies/yab_cookie_store_policy.h"
++
++#include <memory>
++#include <string>
++
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/site_instance.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extensions_test.h"
++#include "extensions/browser/test_extensions_browser_client.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/extension_builder.h"
++#include "testing/gtest/include/gtest/gtest.h"
++#include "url/gurl.h"
++
++namespace extensions {
++namespace {
++constexpr char kExtensionId[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
++constexpr char kOtherExtensionId[] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
++constexpr char kNamespaceA[] = "10000000-0000-4000-8000-000000000001";
++constexpr char kNamespaceB[] = "10000000-0000-4000-8000-000000000002";
++
++class CookieTestClient : public TestExtensionsBrowserClient {
++ public:
++  bool IsExtensionIncognitoEnabled(const ExtensionId&,
++                                  content::BrowserContext*) const override {
++    return incognito_enabled;
++  }
++  bool IsExtensionIncognitoEnabled(const Extension*,
++                                  content::BrowserContext*) const override {
++    return incognito_enabled;
++  }
++  bool incognito_enabled = false;
++};
++
++class YabCookieStorePolicyTest : public ExtensionsTest {
++ public:
++  void SetUp() override {
++    auto client = std::make_unique<CookieTestClient>();
++    client_ = client.get();
++    SetExtensionsBrowserClient(std::move(client));
++    ExtensionsTest::SetUp();
++    extension_ = ExtensionBuilder("Native namespace test")
++                     .SetID(kExtensionId)
++                     .AddAPIPermission("cookies")
++                     .AddHostPermission("https://example.test/*")
++                     .Build();
++    ASSERT_TRUE(ExtensionRegistry::Get(browser_context())->AddEnabled(extension_));
++    policy_ = YabCookieStorePolicy::Get(browser_context(), /*create=*/true);
++  }
++
++  void TearDown() override {
++    if (policy_) policy_->RevokeAll();
++    policy_ = nullptr;
++    ExtensionsTest::TearDown();
++  }
++
++  auto Config(content::BrowserContext* context, const char* name, bool memory = false) {
++    return content::StoragePartitionConfig::Create(context, "YabWebsiteNamespace", name, memory);
++  }
++
++  std::unique_ptr<content::WebContents> Contents(
++      content::BrowserContext* context, const char* name, bool memory = false) {
++    auto site = content::SiteInstance::CreateForFixedStoragePartition(
++        context, GURL(), Config(context, name, memory));
++    content::WebContents::CreateParams params(context, std::move(site));
++    params.desired_renderer_state = content::WebContents::CreateParams::kNoRendererProcess;
++    return content::WebContents::Create(params);
++  }
++
++  std::string Grant(content::WebContents* proof, const char* name,
++                    bool implicit_default = false, int tab_id = 41) {
++    return policy_->Grant(browser_context(), proof->GetBrowserContext(), proof, kExtensionId,
++        Config(proof->GetBrowserContext(), name, proof->GetBrowserContext()->IsOffTheRecord()),
++        tab_id, implicit_default,
++        base::BindRepeating([](bool* owner) { return *owner; }, &owner_current_));
++  }
++
++ protected:
++  raw_ptr<CookieTestClient> client_ = nullptr;
++  raw_ptr<YabCookieStorePolicy> policy_ = nullptr;
++  scoped_refptr<const Extension> extension_;
++  bool owner_current_ = true;
++};
++
++TEST_F(YabCookieStorePolicyTest, UnknownAndForeignStoresNeverResolve) {
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "", true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "0", true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "1", true));
++  auto contents = Contents(browser_context(), kNamespaceA);
++  auto id = Grant(contents.get(), kNamespaceA);
++  ASSERT_FALSE(id.empty());
++  EXPECT_TRUE(policy_->Resolve(kExtensionId, id, true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "", true));
++  EXPECT_FALSE(policy_->Resolve(kOtherExtensionId, id, true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "yab-unissued", true));
++}
++
++TEST_F(YabCookieStorePolicyTest, ImplicitDefaultDoesNotFollowAnotherNamespace) {
++  auto a = Contents(browser_context(), kNamespaceA);
++  auto b = Contents(browser_context(), kNamespaceB);
++  const auto a_id = Grant(a.get(), kNamespaceA, true);
++  ASSERT_FALSE(a_id.empty());
++  EXPECT_TRUE(Grant(b.get(), kNamespaceB, true).empty());
++  const auto b_id = Grant(b.get(), kNamespaceB, false);
++  ASSERT_FALSE(b_id.empty());
++  EXPECT_NE(a_id, b_id);
++  auto implicit = policy_->Resolve(kExtensionId, "", true);
++  ASSERT_TRUE(implicit);
++  EXPECT_EQ(a_id, implicit->store_id());
++  EXPECT_TRUE(implicit->Allows(a.get()));
++  EXPECT_FALSE(implicit->Allows(b.get()));
++  EXPECT_FALSE(policy_->Revoke(kOtherExtensionId, a_id));
++  EXPECT_TRUE(policy_->Revoke(kExtensionId, a_id));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "", true));
++  EXPECT_TRUE(policy_->Resolve(kExtensionId, b_id, true));
++}
++
++TEST_F(YabCookieStorePolicyTest, RejectsWrongActualNativePartition) {
++  auto contents = Contents(browser_context(), kNamespaceA);
++  EXPECT_TRUE(Grant(contents.get(), kNamespaceB).empty());
++  EXPECT_TRUE(policy_->Stores(extension_.get(), true).empty());
++}
++
++TEST_F(YabCookieStorePolicyTest, SharedProofsSurviveOneTabButNotAllTabs) {
++  auto first = Contents(browser_context(), kNamespaceA);
++  auto second = Contents(browser_context(), kNamespaceA);
++  const auto id = Grant(first.get(), kNamespaceA, false, 41);
++  ASSERT_FALSE(id.empty());
++  EXPECT_EQ(id, Grant(second.get(), kNamespaceA, false, 42));
++  auto lease = policy_->Resolve(kExtensionId, id, true);
++  ASSERT_TRUE(lease);
++  EXPECT_EQ((std::vector<int>{41, 42}), lease->TabIds());
++  first.reset();
++  EXPECT_TRUE(policy_->Resolve(kExtensionId, id, true));
++  EXPECT_EQ((std::vector<int>{42}), lease->TabIds());
++  second.reset();
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++  EXPECT_TRUE(policy_->Stores(extension_.get(), true).empty());
++}
++
++TEST_F(YabCookieStorePolicyTest, ObservedOwnerRejectionCannotRevive) {
++  auto contents = Contents(browser_context(), kNamespaceA);
++  const auto id = Grant(contents.get(), kNamespaceA, true);
++  ASSERT_FALSE(id.empty());
++  auto lease = policy_->Resolve(kExtensionId, id, true);
++  ASSERT_TRUE(lease);
++  owner_current_ = false;
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++  owner_current_ = true;
++  EXPECT_FALSE(lease->IsCurrent(true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, "", true));
++  const auto replacement = Grant(contents.get(), kNamespaceA, true);
++  EXPECT_FALSE(replacement.empty());
++  EXPECT_NE(id, replacement);
++}
++
++TEST_F(YabCookieStorePolicyTest, ReloadCannotInheritPreviousExtensionCapability) {
++  auto contents = Contents(browser_context(), kNamespaceA);
++  const auto id = Grant(contents.get(), kNamespaceA);
++  ASSERT_FALSE(id.empty());
++  auto old_lease = policy_->Resolve(kExtensionId, id, true);
++  ASSERT_TRUE(old_lease);
++  auto replacement = ExtensionBuilder("Reloaded extension")
++                         .SetID(kExtensionId).AddAPIPermission("cookies").Build();
++  auto* registry = ExtensionRegistry::Get(browser_context());
++  ASSERT_TRUE(registry->RemoveEnabled(kExtensionId));
++  ASSERT_TRUE(registry->AddEnabled(replacement));
++  EXPECT_NE(extension_.get(), replacement.get());
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++  EXPECT_TRUE(policy_->Stores(replacement.get(), true).empty());
++  EXPECT_FALSE(policy_->AllowsWebContents(replacement.get(), contents.get(), true));
++  const auto replacement_id = Grant(contents.get(), kNamespaceA);
++  EXPECT_FALSE(replacement_id.empty());
++  EXPECT_NE(id, replacement_id);
++  EXPECT_FALSE(old_lease->IsCurrent(true));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++}
++
++TEST_F(YabCookieStorePolicyTest, ObservedDisableDoesNotReviveOnSameInstance) {
++  auto contents = Contents(browser_context(), kNamespaceA);
++  const auto id = Grant(contents.get(), kNamespaceA);
++  ASSERT_FALSE(id.empty());
++  auto* registry = ExtensionRegistry::Get(browser_context());
++  ASSERT_TRUE(registry->RemoveEnabled(kExtensionId));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++  ASSERT_TRUE(registry->AddEnabled(extension_));
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++}
++
++TEST_F(YabCookieStorePolicyTest, CookiesApiPermissionStillRequired) {
++  auto contents = Contents(browser_context(), kNamespaceA);
++  auto no_permission = ExtensionBuilder("No cookies permission").SetID(kOtherExtensionId).Build();
++  ASSERT_TRUE(ExtensionRegistry::Get(browser_context())->AddEnabled(no_permission));
++  EXPECT_TRUE(policy_->Grant(browser_context(), browser_context(), contents.get(), kOtherExtensionId,
++      Config(browser_context(), kNamespaceA), 41, false, base::BindRepeating([] { return true; })).empty());
++}
++
++TEST_F(YabCookieStorePolicyTest, PrivateRequiresChromeOptInAndRequestPermission) {
++  auto contents = Contents(incognito_context(), kNamespaceA, true);
++  EXPECT_TRUE(Grant(contents.get(), kNamespaceA).empty());
++  client_->incognito_enabled = true;
++  const auto id = Grant(contents.get(), kNamespaceA);
++  ASSERT_FALSE(id.empty());
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, false));
++  EXPECT_TRUE(policy_->Resolve(kExtensionId, id, true));
++  client_->incognito_enabled = false;
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++  client_->incognito_enabled = true;
++  EXPECT_FALSE(policy_->Resolve(kExtensionId, id, true));
++}
++}  // namespace
++}  // namespace extensions

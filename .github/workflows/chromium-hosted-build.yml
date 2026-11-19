@@ -1,0 +1,162 @@
+# Hosted chained build of the Chromium baseline for the Yab fork.
+#
+# Why a chain: a Chromium Android build needs ~100 GB of disk and peaks at
+# ~16 GB RAM while linking libchrome.so. A stock ubuntu-latest runner has
+# ~108 GB free after dropping preinstalled toolchains (measured, run
+# 44357398079), so no single job can hold it. This ports the
+# ungoogled-chromium-android technique: every job imports the packed tree,
+# builds until its time budget ends, and exports the tree for the next job.
+#
+# Transport is GitHub release assets, not run artifacts: artifacts cap at
+# 10 GB per artifact, cannot be streamed per part, and die with the run.
+# Release assets cap at 2 GB per file (the packer chunks under it) and are
+# addressable across runs, which is what lets the APK CI reuse the latest
+# successful base without rebuilding it.
+#
+# This workflow builds the PRISTINE baseline only (pinned revisions, no
+# adapter patch). chromium-apk.yml consumes its result. Manual dispatch only.
+
+name: Chromium hosted chain
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One chain at a time: dispatches share the CHAIN_TAG/BASE_TAG releases and
+# would overwrite each other's generations. Queue, never cancel: a queued
+# run resumes the state the running one leaves behind.
+concurrency:
+  group: chromium-hosted-chain
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  prepare:
+    name: Fetch and generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Prepare pinned tree
+        run: bash scripts/chromium-hosted/chain.sh prepare
+
+  build-01:
+    name: Build part 1
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-02:
+    name: Build part 2
+    needs: build-01
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-03:
+    name: Build part 3
+    needs: build-02
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-04:
+    name: Build part 4
+    needs: build-03
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-05:
+    name: Build part 5
+    needs: build-04
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-06:
+    name: Build part 6
+    needs: build-05
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-07:
+    name: Build part 7
+    needs: build-06
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  build-08:
+    name: Build part 8
+    needs: build-07
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Resume build
+        run: bash scripts/chromium-hosted/chain.sh resume
+
+  finish:
+    name: Verify, package APK, publish base
+    needs: build-08
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Finish build, publish base
+        run: bash scripts/chromium-hosted/chain.sh finish
+      - name: Upload baseline APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-chromium-baseline-apk
+          path: ~/yab-chromium/apk-out/
+          retention-days: 30
+          if-no-files-found: error

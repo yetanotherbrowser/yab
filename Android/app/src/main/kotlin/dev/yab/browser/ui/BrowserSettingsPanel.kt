@@ -315,6 +315,9 @@ internal fun BrowserSettingsPanel(
                             SettingsGroup { IndexedSetting(SettingsRowId.VERSION) {
                                 SettingsActionRow("Yab", YabGlyphs.Globe, trailing = "${dev.yab.android.BuildConfig.VERSION_NAME} (${dev.yab.android.BuildConfig.VERSION_CODE})")
                             }
+                            IndexedSetting(SettingsRowId.ENGINE) {
+                                SettingsActionRow("Engine", YabGlyphs.Globe, trailing = dev.yab.android.BuildConfig.ENGINE_NAME)
+                            }
                             if (updater.endpoint != null) IndexedSetting(SettingsRowId.CHECK_UPDATES) {
                                 SettingsActionRow("Check for Updates", trailing = updateState.words, action = act { updater.checkNow() })
                             } }

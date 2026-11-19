@@ -61,6 +61,7 @@ object SettingsRowId {
     const val AUTOFILL_PROVIDER = "autofill.provider"
     const val AUTOFILL_SETTINGS = "autofill.settings"
     const val VERSION = "about.version"
+    const val ENGINE = "about.engine"
     const val CHECK_UPDATES = "about.update"
     const val ABOUT_BROWSER = "about.browser"
     const val CRASHES = "about.crashes"
@@ -106,7 +107,8 @@ object SettingsSearchIndex {
             add(SettingsSearchPage(SettingsPage.AUTOFILL, listOf(row(SettingsRowId.AUTOFILL_PROVIDER, "Autofill", "Managed by Android")) +
                 if (availability.credentialsSettings) listOf(row(SettingsRowId.AUTOFILL_SETTINGS, "Open Android Settings")) else emptyList()))
             add(SettingsSearchPage(SettingsPage.PRIVACY, listOf(row(SettingsRowId.BLOCK_ADS, "Block ads and trackers"), row(SettingsRowId.SYNC_HISTORY, "Sync History"), row(SettingsRowId.CLEAR_DATA, "Clear History and Website Data"))))
-            add(SettingsSearchPage(SettingsPage.ABOUT, listOf(row(SettingsRowId.VERSION, "Version $version ($build)")) +
+            add(SettingsSearchPage(SettingsPage.ABOUT, listOf(row(SettingsRowId.VERSION, "Version $version ($build)"),
+                row(SettingsRowId.ENGINE, "Engine", dev.yab.android.BuildConfig.ENGINE_NAME)) +
                 (if (availability.updates) listOf(row(SettingsRowId.CHECK_UPDATES, "Check for Updates")) else emptyList()) +
                 row(SettingsRowId.ABOUT_BROWSER, "Your browser", "Pages, spaces and conversations, on your devices.") +
                 if (availability.reports) listOf(row(SettingsRowId.CRASHES, "Automatically send crash reports"), row(SettingsRowId.ACTIVITY, "Share daily activity")) else emptyList()))

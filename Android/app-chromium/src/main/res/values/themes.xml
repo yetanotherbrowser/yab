@@ -1,0 +1,5 @@
+<resources>
+    <!-- Inherits the shared launcher theme wholesale; the separate name keeps
+         the chromium edition free to diverge if the engines ever need to. -->
+    <style name="Theme.YabChromium" parent="Theme.Yab" />
+</resources>

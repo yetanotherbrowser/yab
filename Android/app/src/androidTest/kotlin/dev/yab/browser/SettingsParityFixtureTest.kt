@@ -32,6 +32,50 @@ class SettingsParityFixtureTest {
         bitmap.recycle()
         File(folder, "parity-$name.json").writeText("""{"kind":"production-component-fixture","reference":"iphone-0.1.13","screen":"$name","pageEngine":"inert","externalActions":false}""")
     }
+    @Test fun aboutNamesTheEngineAndNoSwitchExistsAnywhere() {
+        check(InstrumentationRegistry.getArguments().getString("ownedEmulator") == "true")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val engine = object : BrowserEngine {
+            override fun activate(tab: BrowserTab, profile: WebsiteProfile) {}
+            override fun navigate(tab: BrowserTab, url: String, profile: WebsiteProfile) {}
+            override fun goBack(tabId: String) {}
+            override fun goForward(tabId: String) {}
+            override fun reload(tabId: String) {}
+            override fun stop(tabId: String) {}
+            override fun close(tabId: String) {}
+            override suspend fun clearWebsiteData(profileIds: Set<String>) {}
+        }
+        val browser = BrowserController(object : BrowserRepository {
+            override suspend fun load(): BrowserSnapshot? = BrowserSnapshot(spaces = listOf(BrowserSpace("parity", "Personal")), selectedSpaceId = "parity", settings = BrowserSettings(appearance = BrowserAppearance.LIGHT))
+            override suspend fun save(snapshot: BrowserSnapshot) {}
+        }, engine, scope)
+        val agent = AgentRepository(object : ChatPersistence {
+            override suspend fun load() = ChatSnapshot()
+            override suspend fun save(snapshot: ChatSnapshot) = Unit
+        }, UnavailableLocalAiAdapter(), DisconnectedRemoteTransport)
+        runBlocking { agent.load() }
+        try {
+            compose.setContent {
+                val state by browser.state.collectAsState()
+                ParitySystemBars(state.settings.appearance)
+                BrowserScreen(browser, onSyncSettings = {}, aiSettingsContent = { current -> AiSettings(agent, null, {}, current) },
+                pageContent = { _, _, modifier -> Box(modifier) }) }
+            compose.waitUntil(10_000) { !browser.state.value.loading }
+            compose.runOnIdle { browser.show(BrowserSurface.SETTINGS) }
+            compose.onNodeWithTag("settings.search").performTextInput("engine")
+            compose.onNodeWithText("About").performClick()
+            compose.onNodeWithText("Engine", substring = false).assertExists()
+            compose.onNodeWithText("Gecko", substring = false).assertExists()
+            shot("about.engine")
+            compose.onNodeWithText("chromium").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithTag("settings.search").performTextClearance()
+            compose.onNodeWithText("Chromium").assertDoesNotExist()
+        } finally {
+            scope.cancel()
+        }
+    }
+
     @Test fun settingsRootAndAppearanceUsePhoneDesignAndKeepNavigation() {
         check(InstrumentationRegistry.getArguments().getString("ownedEmulator") == "true")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

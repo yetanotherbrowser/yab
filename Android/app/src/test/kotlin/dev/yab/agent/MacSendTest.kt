@@ -201,7 +201,10 @@ class MacSendTest {
         val early = MacRouting.waiting(mac, sent, sent + MacRouting.EXPIRY_SHOWN - 1, zone, Locale.US)!!
         assertTrue(early.contains("since yesterday")); assertTrue(early.endsWith("It starts when it wakes.")); assertFalse(early.contains("Expires"))
         val warning = MacRouting.waiting(mac, sent, sent + MacRouting.EXPIRY_SHOWN, zone, Locale.US)!!
-        assertTrue(warning.endsWith("Expires at 12:00 PM if it’s still asleep."))
+        // CLDR puts a narrow no-break space (U+202F) between time and AM/PM;
+        // older JDKs used a plain space. Devices use U+202F too. Normalize
+        // before asserting so the test does not pin one JDK's CLDR version.
+        assertTrue(warning.replace('\u202F', ' ').endsWith("Expires at 12:00 PM if it’s still asleep."))
         assertTrue(MacRouting.waiting(mac, sent, sent + MacRouting.LIFETIME + 1, zone, Locale.US)!!.contains("Expires at"))
         assertTrue(MacRouting.waiting(mac.copy(availability = MacAvailability(MacPhase.CLOSED)), sent, sent + MacRouting.EXPIRY_SHOWN, zone, Locale.US)!!.endsWith("still closed."))
         assertTrue(MacRouting.waiting(mac.copy(availability = MacAvailability(MacPhase.SILENT)), sent, sent + MacRouting.EXPIRY_SHOWN, zone, Locale.US)!!.endsWith("still away."))

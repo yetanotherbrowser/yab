@@ -1,0 +1,23 @@
+{
+  "chromiumRepository": "https://chromium.googlesource.com/chromium/src.git",
+  "chromiumRevision": "ac19329a1d32108fd05ead15568cb6e188f8615a",
+  "depotToolsRepository": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+  "depotToolsRevision": "b1c2e86792a7f2b6576c181b7327ddd53b1a42a8",
+  "target": "chrome_public_apk",
+  "targetLabel": "//chrome/android:chrome_public_apk",
+  "gnArgs": {
+    "target_os": "android",
+    "target_cpu": "arm64",
+    "is_desktop_android": true,
+    "is_debug": false,
+    "is_component_build": false,
+    "is_chrome_branded": false,
+    "symbol_level": 0,
+    "blink_symbol_level": 0,
+    "v8_symbol_level": 0,
+    "chrome_pgo_phase": 0,
+    "clang_use_default_sample_profile": false,
+    "use_remoteexec": false,
+    "concurrent_links": 1
+  }
+}

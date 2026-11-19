@@ -38,6 +38,19 @@ class SettingsSearchIndexTest {
         assertEquals(listOf(SettingsPage.GENERAL, SettingsPage.SEARCH, SettingsPage.APPEARANCE, SettingsPage.APP_ICON), pages().take(4).map { it.page })
     }
 
+    @Test fun aboutNamesTheEngineUnderVersionAndSearchFindsIt() {
+        val about = pages().single { it.page == SettingsPage.ABOUT }
+        assertEquals(SettingsRowId.VERSION, about.rows.first().id)
+        assertEquals(SettingsRowId.ENGINE, about.rows[1].id)
+        assertEquals("Engine", about.rows[1].title)
+        assertEquals(dev.yab.android.BuildConfig.ENGINE_NAME, about.rows[1].value)
+        assertTrue(matches("engine").any { it.row?.id == SettingsRowId.ENGINE })
+        assertTrue(matches(dev.yab.android.BuildConfig.ENGINE_NAME.lowercase(Locale.ENGLISH)).any { it.row?.id == SettingsRowId.ENGINE })
+        if (dev.yab.android.BuildConfig.ENGINE_NAME == "Chromium") assertTrue(matches("gecko").isEmpty())
+        else assertTrue(matches("chromium").isEmpty())
+        assertTrue(matches("switch engine").isEmpty())
+    }
+
     @Test fun rowValuesAndExistingNestedSpaceDestinationsAreIndexedButPrivateNamesAreNot() {
         val research = matches("research").single()
         assertEquals(SettingsPage.SPACES, research.page)

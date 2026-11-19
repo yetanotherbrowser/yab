@@ -1,0 +1,34 @@
+# One-shot capacity probe for the Chromium engine build. Dispatch manually;
+# never runs on push or PR. Answers three numbers the Chromium build plan
+# depends on: usable disk (the checkout+out directories need tens of GB),
+# cores (build wall time), and the runner image (x86_64 required by the
+# pinned bootstrap.py).
+
+name: Chromium env probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/chromium-env-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Runner capacity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report capacity
+        run: |
+          echo "arch=$(uname -m)"
+          echo "cpu=$(nproc)"
+          free -h | sed -n 1,2p
+          echo "--- disk ---"
+          df -h / /mnt 2>/dev/null || df -h
+          echo "--- image ---"
+          sed -n 1,2p /etc/os-release
+          echo "--- largest free workspace root ---"
+          df -BH --output=avail,target / /mnt 2>/dev/null || true

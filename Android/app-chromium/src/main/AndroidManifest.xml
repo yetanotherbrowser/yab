@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_SET_ORIGIN" />
+    <!-- Cefrium's WebAuthn registrar runs the same Android 14+ prepareGetCredential queries as Gecko; they require this normal permission. -->
+    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets Yab replace itself without a prompt on Android 12 and later; PackageInstaller requires it. -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+    </queries>
+    <application android:name=".YabApplication" android:allowBackup="false" android:largeHeap="true" android:label="@string/app_name"
+        android:icon="@drawable/app_icon_flat" android:supportsRtl="true" android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.YabChromium">
+        <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
+        <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
+        <meta-data android:name="dev.yab.REPORTS_SITE" android:value="${yabReportsSite}" />
+        <!-- Javaless renderer processes: the engine appends javaless-renderers=disabled
+             unless this meta-data opts the app into the modern Chromium renderer mode. -->
+        <meta-data android:name="com.cefrium.JAVALESS_RENDERERS" android:value="true" />
+        <service android:name="dev.yab.browser.media.PageMediaService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback" android:stopWithTask="true" />
+        <service android:name=".PageDownloadService" android:exported="false"
+            android:foregroundServiceType="dataSync" android:stopWithTask="true" />
+        <receiver android:name="dev.yab.update.UpdateInstallReceiver" android:exported="false" />
+        <service android:name="dev.yab.notifications.YabMessagingService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <receiver android:name=".EntrancesWidget" android:exported="false" android:label="@string/app_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/entrances_widget" />
+        </receiver>
+        <receiver android:name=".NowWidget" android:exported="false" android:label="@string/now_widget_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/now_widget" />
+        </receiver>
+        <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true" android:launchMode="singleTask"
+            android:supportsPictureInPicture="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="yab" />
+                <data android:scheme="yab-open" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/shared_paths" />
+        </provider>
+        <activity-alias android:name="${applicationId}.icons.Flat" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="true" android:label="@string/app_name" android:icon="@drawable/app_icon_flat">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Original" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_original">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.WatercolorGlass" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_watercolor_glass">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Opal" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_opal">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.SmokedChrome" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_smoked_chrome">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Amber" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_amber">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.RedEnamel" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/app_name" android:icon="@drawable/app_icon_red_enamel">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Pumpkin" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_pumpkin" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Ghost" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_ghost" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Mummy" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_mummy" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Witch" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_witch" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.WaxSeal" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_wax_seal" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Bracelet" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_bracelet" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Ticket" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_ticket" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Yearbook" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_yearbook" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Arcade" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_arcade" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.FirstEdition" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_first_edition" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_mint_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_mint_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lilac_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lilac_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_sky_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_sky_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_rose_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_rose_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_coral_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_coral_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_lemon_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_lemon_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_mint" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_mint" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_lilac" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_lilac" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_sky" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_sky" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_rose" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_rose" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_coral" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_coral" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_lemon" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_lemon" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_indigo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_indigo" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name="${applicationId}.icons.Charm_indigo_silver" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@drawable/app_icon_charm_indigo_silver" android:label="@string/app_name">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+    </application>
+</manifest>

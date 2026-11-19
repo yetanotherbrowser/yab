@@ -1,0 +1,43 @@
+# Yab Chromium engine APK CI. Reuses the base built by chromium-hosted-build.yml
+# so the Chromium tree is compiled once and only the adapter-patched graph is
+# rebuilt here (a Java+C++ patch touching 27 files: incremental, one job).
+#
+# The base travels through the chromium-base release (src + out sets). If it
+# is missing, this workflow fails fast and says to run the chain first, which
+# matches how Cromite treats its own base artifacts: reuse the prebuilt
+# engine, never rebuild it per push.
+#
+# Also fails fast if the adapter patch stops applying cleanly.
+
+name: Chromium engine APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - scripts/chromium-hosted/**
+      - .github/workflows/chromium-apk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: Adapter patch APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build Yab engine APK from base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/chromium-hosted/chain.sh apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-chromium-engine-apk
+          path: ~/yab-chromium/apk-out/
+          retention-days: 30
+          if-no-files-found: error

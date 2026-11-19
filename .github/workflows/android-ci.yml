@@ -1,0 +1,203 @@
+# Android CI for the fork. Builds the Yab Android APK on every push to this
+# repository and on PRs targeting it, and publishes the APK as an artifact.
+#
+# The upstream repo's CI (ci.yml) covers the Mac app only; this workflow is
+# fork-specific and does not exist upstream.
+#
+# The repo's ./gradlew delegates to scripts/gradle.py, which is not in the
+# tree (private owner infra). CI downloads the pinned Gradle distribution
+# directly instead. Keep GRADLE_VERSION in sync with what the owner's
+# scripts/gradle.py resolves locally (9.7.1 as of 2026-11; AGP 9.4.1 needs
+# it, and Cefrium's AAR is JDK 25 class files).
+#
+# No secrets: the debug build is signed with the generated debug key and is
+# for testing only. Release signing needs YAB_ANDROID_KEYSTORE (app/
+# build.gradle.kts, "Release key"); that stays on the owner's machine.
+
+name: Android CI
+
+on:
+  push:
+  pull_request:
+    paths:
+      - "Android/**"
+      - "SharedContracts/**"
+      - ".github/workflows/android-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_VERSION: "9.7.1"
+
+jobs:
+  apk:
+    name: Build APK (debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # JDK 17 first (last setup-java wins JAVA_HOME): :core compiles with
+      # jvmToolchain(17) and finds this via toolchain auto-detection, while
+      # Gradle itself runs on the JDK 25 that the next step installs.
+      - name: Set up JDK 17 for toolchains
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Android SDK
+        run: |
+          if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "cmdline-tools missing from runner image" >&2
+            exit 1
+          fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-37.2" "build-tools;36.0.0" "platform-tools" >/dev/null
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle-dist
+          key: android-gradle-${{ env.GRADLE_VERSION }}-${{ hashFiles('Android/**/*.gradle.kts', 'Android/gradle.properties') }}
+          restore-keys: |
+            android-gradle-${{ env.GRADLE_VERSION }}-
+      - name: Install Gradle
+        run: |
+          mkdir -p "$HOME/.gradle-dist"
+          if [ ! -x "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" ]; then
+            curl -fsSLo /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q -o /tmp/gradle.zip -d "$HOME/.gradle-dist"
+          fi
+          "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" --version
+      - name: Build debug APK and unit tests
+        working-directory: Android
+        run: |
+          # ChatTurnSemanticsTest reads Android/parity/chat-work/fixtures.json,
+          # private owner data kept outside the tree (same as scripts/
+          # gradle.py). It cannot run on a clean checkout; upstream never runs
+          # Android tests in CI. Everything else is gated.
+          "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" \
+            :app:assembleDebug :app-chromium:assembleDebug \
+            :app:testDebugUnitTest :app-chromium:testDebugUnitTest :core:test \
+            -PyabExcludeSuites=dev.yab.agent.ChatTurnSemanticsTest,dev.yab.android.PageDownloadControllerTest \
+            --no-daemon --stacktrace
+      - name: Upload Gecko edition APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-gecko-debug-apk
+          path: Android/app/build/outputs/apk/debug/yab-gecko-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload Chromium edition APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-chromium-debug-apk
+          path: Android/app-chromium/build/outputs/apk/debug/yab-chromium-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-results
+          path: |
+            Android/app/build/test-results/testDebugUnitTest/*.xml
+            Android/app-chromium/build/test-results/testDebugUnitTest/*.xml
+            Android/core/build/test-results/test/*.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
+  release-apk:
+    name: Build release APK (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # JDK 17 first (last setup-java wins JAVA_HOME), then 25 so Gradle
+      # runs on 25; :core's jvmToolchain(17) auto-detects the 17 install.
+      - name: Set up JDK 17 for toolchains
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Android SDK
+        run: |
+          if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "cmdline-tools missing from runner image" >&2
+            exit 1
+          fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-37.2" "build-tools;36.0.0" "platform-tools" >/dev/null
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle-dist
+          key: android-gradle-${{ env.GRADLE_VERSION }}-${{ hashFiles('Android/**/*.gradle.kts', 'Android/gradle.properties') }}
+          restore-keys: |
+            android-gradle-${{ env.GRADLE_VERSION }}-
+      - name: Install Gradle
+        run: |
+          mkdir -p "$HOME/.gradle-dist"
+          if [ ! -x "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" ]; then
+            curl -fsSLo /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q -o /tmp/gradle.zip -d "$HOME/.gradle-dist"
+          fi
+          "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" --version
+      # Same recipe as the locally verified 160.9 MB build: release, debug-signed
+      # via yabTestSign (no release keystore in CI), compressed native libs,
+      # arm64 only. Not for distribution; it is the phone-test artifact.
+      - name: Build release APK (arm64)
+        working-directory: Android
+        run: |
+          "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" :app:assembleRelease \
+            -PyabTestSign=true -PyabCompressNative=true -PyabAbis=arm64-v8a \
+            --no-daemon --stacktrace
+      # Same recipe for the Chromium edition: one debug and one release arm64
+      # APK per engine, all four artifacts named by engine.
+      - name: Build Chromium release APK (arm64)
+        working-directory: Android
+        run: |
+          "$HOME/.gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle" :app-chromium:assembleRelease \
+            -PyabTestSign=true -PyabCompressNative=true -PyabAbis=arm64-v8a \
+            --no-daemon --stacktrace
+      - name: Upload release APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-gecko-release-arm64-apk
+          path: Android/app/build/outputs/apk/release/yab-gecko-release.apk
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload Chromium release APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yab-chromium-release-arm64-apk
+          path: Android/app-chromium/build/outputs/apk/release/yab-chromium-release.apk
+          retention-days: 30
+          if-no-files-found: error
