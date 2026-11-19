@@ -134,6 +134,21 @@ struct ChromiumInputMethodTests {
         #expect(read.route(typed: "\u{7f}", inputMethod: false, taken: true) == .page)
     }
 
+    @Test func interpretationSendsAnEditingCommandAfterTheInputMethodFinishes() {
+        var read = ChromiumKeyInterpretation(commands: 1)
+        let none = NSRange(location: NSNotFound, length: 0)
+        read.edits = [.unmark]
+        #expect(read.route(typed: nil, inputMethod: true, taken: true, composing: true) == .inputMethodThenPage)
+        read.edits = [.insert("chào", replacing: none)]
+        #expect(read.route(typed: "\r", inputMethod: true, taken: true, composing: true) == .inputMethodThenPage)
+
+        read.edits = [.unmark, .mark("日本", selected: NSRange(location: 2, length: 0), replacing: none)]
+        #expect(read.route(typed: nil, inputMethod: true, taken: true, composing: true) == .inputMethod)
+        read.edits = [.insert("chào", replacing: none)]
+        read.commands = 0
+        #expect(read.route(typed: "\r", inputMethod: true, taken: true, composing: true) == .inputMethod)
+    }
+
     @Test func replacementCoordinatesAreUTF16AndMarkedTextStartsAtTheSelection() {
         #expect(ChromiumNativeTextInput.replacementFields(NSRange(location: NSNotFound, length: 0)).isEmpty)
         #expect(ChromiumNativeTextInput.replacementFields(NSRange(location: Int.max - 1, length: 4)).isEmpty)
@@ -173,6 +188,52 @@ struct ChromiumInputMethodTests {
         // The suite runs without a display lease. Model key-window status
         // without activating a test window over another farm job's app.
         override var isKeyWindow: Bool { true }
+    }
+
+    enum EditingHandoff: CaseIterable {
+        case click, leftArrow, selectAll, forwardDelete
+    }
+
+    @Test(arguments: EditingHandoff.allCases)
+    func pageEditingFinishesTheWordWhileThePageKeepsFocus(_ handoff: EditingHandoff) throws {
+        _ = NSApplication.shared
+        let tab = Tab(shy: true)
+        let page = ChromiumPage(tab: tab)
+        let window = InputWindow(contentRect: NSRect(x: -30000, y: 0, width: 400, height: 200),
+                                 styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        defer { window.close(); page.retire(call: false, pictureInPicture: false); tab.close() }
+        try #require(window.makeFirstResponder(page))
+        var state = native()
+        state["selection"] = .object(["valid": .bool(true), "start": .number(4), "end": .number(4)])
+        page.receiveNativeTextInput(state)
+        page.setMarkedText("chào", selectedRange: NSRange(location: 4, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        let composition = try #require(page.inputMethodTicket?.id)
+        try #require(page.hasMarkedText())
+
+        switch handoff {
+        case .click:
+            try #require(PageBenchInput.click(page, x: 56, y: 40))
+        case .selectAll:
+            page.selectAll(nil)
+        case .leftArrow, .forwardDelete:
+            let deleting = handoff == .forwardDelete
+            let character = deleting ? "d" : String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: deleting ? .control : [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character,
+                isARepeat: false, keyCode: deleting ? 2 : 123))
+            page.keyDown(with: event)
+        }
+
+        #expect(window.firstResponder === page)
+        let marked = page.hasMarkedText()
+        let finish = try #require(page.inputMethodTicket?.id)
+        #expect(!marked)
+        #expect(finish != composition, "The editing action requested an unmark for the renderer")
     }
 
     @Test func inputContextAndCaretFollowActualEditableResponder() throws {

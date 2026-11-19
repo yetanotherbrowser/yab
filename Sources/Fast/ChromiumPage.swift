@@ -1999,6 +1999,11 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
 
     func input(_ kind: String, _ fields: [String: JSONValue] = [:]) {
+        // A press that reached this route belongs to the page. Finish the
+        // composition on the same queue before the renderer handles it.
+        if hasMarkedText(), ["keyDown", "mouseDown", "rightDown", "middleDown"].contains(kind) {
+            finishComposition()
+        }
         // A press or a key, as a WebKit page counts it. A pointer passing over
         // the page is nobody asking for a download or a window.
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) { lastInput = ProcessInfo.processInfo.systemUptime }

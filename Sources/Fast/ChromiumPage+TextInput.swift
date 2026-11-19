@@ -77,6 +77,7 @@ extension ChromiumPage {
         }
         switch route {
         case .page:
+            imeKeys.remove(event.keyCode)
             return false
         case .kept:
             // A held letter's keydown reached the page, so its keyup does
@@ -87,7 +88,18 @@ extension ChromiumPage {
             heard.edits.forEach(sendTextEdit)
             imeKeys.insert(event.keyCode)
             return true
+        case .inputMethodThenPage:
+            heard.edits.forEach(sendTextEdit)
+            imeKeys.remove(event.keyCode)
+            return false
         }
+    }
+
+    /// Commit in the renderer and release the Mac's conversion session.
+    func finishComposition() {
+        guard hasMarkedText() else { return }
+        unmarkText()
+        inputContext?.discardMarkedText()
     }
 
     /// Every editable field uses the Mac's context, including plain keys
