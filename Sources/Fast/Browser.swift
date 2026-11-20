@@ -3291,8 +3291,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
         pinsShared = !blank && prefs.usesSpaces && prefs.pinsEverySpace
         // Any left in their file while they aren't shared are the first
         // space's, as turning them off makes them, before its row is read
-        // (SharedPins.handBack): shown where sync sends them.
-        if windowID == nil, !blank, !(prefs.usesSpaces && prefs.pinsEverySpace) { SharedPins.handBack(to: homeSpaceID) }
+        // (PinsHandBack): shown where sync sends them.
+        if windowID == nil, !blank, !(prefs.usesSpaces && prefs.pinsEverySpace) { PinsHandBack.run(to: homeSpaceID) }
         var row = windowID == nil ? Startup.stage("session") { loadRow(spaceID) } : loadRow(spaceID)
         if showsShared(spaceID) { row = joinShared(row, along: [], fromShowing: false) }
         guard !row.tabs.isEmpty else {

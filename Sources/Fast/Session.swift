@@ -220,6 +220,19 @@ enum Session {
         }
     }
 
+    /// `shape` on disk as `space`'s row before this returns, or the reason
+    /// it isn't: for a migration that may clear another file only once this
+    /// one is saved. In the queue with the writes, after any already asked.
+    static func save(space: UUID, _ shape: Shape) throws {
+        let file = Session.file(space)
+        let data = try JSONEncoder().encode(shape)
+        try writes.sync {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+        }
+        DispatchQueue.main.async { NotificationCenter.default.post(name: written, object: space) }
+    }
+
     /// A deleted space's, gone with it.
     /// In the queue with the writes: one still queued for the space lands
     /// before it, not after, over a space already gone.

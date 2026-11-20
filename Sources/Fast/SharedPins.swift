@@ -237,29 +237,14 @@ enum SharedPins {
         return folded(pins.tabs, into: row, pinPairs: pins.pairs)
     }
 
-    /// Shared pins left in their file while they aren't shared (Pins turned
-    /// off by sync with no window open to turn them) become pins of `home`,
-    /// at its head, as turning them off gives them (`heir`). Only where no
-    /// window holds `home`'s row: at launch, before the row is read, or with
-    /// no window open. Otherwise they lay hidden while sync still sent them,
-    /// and with that stopped (`syncRow`) would be gone from every device.
-    @discardableResult
-    nonisolated static func handBack(to home: UUID) -> Bool {
-        let pins = Session.read(space: Space.pinsID)
-        guard !pins.tabs.isEmpty else { return false }
-        Session.write(now: true, space: home, folded(pins.tabs, into: Session.read(space: home), pinPairs: pins.pairs))
-        Session.write(now: true, space: Space.pinsID, .init(tabs: [], active: 0))
-        return true
-    }
-
     /// Whether sync sends the shared pins as the first space's: while they
     /// head it (`on`). With no window open, any left over go to the first
-    /// space now (`handBack`), so they are sent as its, where they show.
+    /// space now (`PinsHandBack`), so they are sent as its, where they show.
     static var sentAsFirst: Bool {
         if on { return true }
         if BrowserWindows.shared.normalBrowsers.isEmpty {
             let spaces = Spaces.read()
-            if let home = spaces.first(where: \.isFirst)?.id ?? spaces.first?.id { handBack(to: home) }
+            if let home = spaces.first(where: \.isFirst)?.id ?? spaces.first?.id { PinsHandBack.run(to: home) }
         }
         return false
     }
