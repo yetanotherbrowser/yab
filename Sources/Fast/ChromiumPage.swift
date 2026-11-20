@@ -707,7 +707,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                 guard tab.chromiumProfile == self.profile else { throw SiteEngineError.profileChanged }
                 // Cookies that didn't carry over cost a sign-in, never the page.
                 OpenTrace.mark("chromium.cookies.begin")
-                do { if !LinkGap.cut("chromium.cookies") { try await ChromiumDRMCookies.of(tab).prepare(for: target, in: .chromium) } }
+                do { if !LinkGap.cut("chromium.cookies") { try await ChromiumDRMCookies.of(tab).prepare(for: target, in: .chromium, page: tab.id) } }
                 catch is CancellationError { throw CancellationError() }
                 catch { NSLog("DRM cookies: not carried over: %@", String(describing: error)) }
                 OpenTrace.mark("chromium.cookies.end")
@@ -860,7 +860,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     /// Heard from the helper: `url` is being navigated to in this page.
     func cookiesTouched(_ url: URL, mainFrame: Bool) {
         guard !retired else { return }
-        ChromiumDRMCookies.session(of: tab)?.touched(url, mainFrame: mainFrame, by: .chromium)
+        ChromiumDRMCookies.session(of: tab)?.touched(url, mainFrame: mainFrame, by: .chromium, in: tab?.id)
     }
     /// `recover`: the page comes back by itself, now if it is on screen,
     /// else when it next is. Out of retries, it says what happened.
@@ -1108,6 +1108,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
             title = ""
             stateEvents?.page(self, changed: .title(""))
             committedURL = committed; events?.page(self, navigation: .committed(navigation))
+            ChromiumDRMCookies.session(of: tab)?.pageCommitted(committed, by: .chromium, in: tab?.id)
             firstPaintMayHaveCome()
         case "page.finished":
             readCertificate()
@@ -1430,7 +1431,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); updateSurface() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { recoverPage() }
+        if window != nil { recoverPage(); ChromiumDRMCookies.session(of: tab)?.pageChanged() }
         if window == nil { hoverLeft(); receiveTooltip("") }
         updateSurface()
         watchKeyWindow()
@@ -1443,7 +1444,10 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     override func viewDidHide() { super.viewDidHide(); hoverLeft(); syncGeometry(); focusChanged() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); scripts.appearanceChanged() }
-    override func viewDidUnhide() { super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon() }
+    override func viewDidUnhide() {
+        super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon()
+        ChromiumDRMCookies.session(of: tab)?.pageChanged()
+    }
 
     /// Chrome draws only what is on screen, so ⌃Tab's picture of a page in the
     /// back is the one taken here while it was in front.
@@ -1542,6 +1546,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         restoreSurfaceAttachment()
         syncGeometry()
         focusChanged()
+        ChromiumDRMCookies.session(of: tab)?.pageChanged()
     }
     /// Surface ownership acknowledgement. Every layer.changed says which
     /// document and renderer the compositor shows and whether the helper

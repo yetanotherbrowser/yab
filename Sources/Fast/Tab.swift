@@ -2239,7 +2239,7 @@ final class Tab: ObservableObject, Identifiable, Relaying {
                 // What the bridges couldn't do costs a cookie or an extension on
                 // this page, never the page: a canceled hop of a sign-in looked
                 // like the site refusing it.
-                do { try await ChromiumDRMCookies.of(self).prepare(for: url, in: .webKit) }
+                do { try await ChromiumDRMCookies.of(self).prepare(for: url, in: .webKit, page: self.id) }
                 catch { NSLog("Cookie bridge: not carried before a WebKit page: %@", String(describing: type(of: error))) }
                 guard !self.gone else { throw CancellationError() }
                 if !self.shy {
@@ -2253,8 +2253,9 @@ final class Tab: ObservableObject, Identifiable, Relaying {
             }
         }
         if engineFactory.kinds.contains(.chromium) {
-            web.navigationEvents.redirected = { [weak self] url in ChromiumDRMCookies.session(of: self)?.touched(url, by: .webKit) }
-            web.navigationEvents.prepareFrame = { [weak self] url in await ChromiumDRMCookies.session(of: self)?.prepareFrame(url) }
+            web.navigationEvents.redirected = { [weak self] url in ChromiumDRMCookies.session(of: self)?.touched(url, by: .webKit, in: self?.id) }
+            web.navigationEvents.prepareFrame = { [weak self] url in await ChromiumDRMCookies.session(of: self)?.prepareFrame(url, in: self?.id) }
+            web.navigationEvents.committed = { [weak self] url in ChromiumDRMCookies.session(of: self)?.pageCommitted(url, by: .webKit, in: self?.id) }
         }
         if sibling != nil || spare != nil { configuration.perform(Tab.relatedSelector, with: nil) }
         if let spare {
