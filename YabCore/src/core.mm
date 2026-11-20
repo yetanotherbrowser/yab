@@ -890,6 +890,7 @@ static void Attach(CefRefPtr<CefBrowser> b, std::string profile, std::string pre
 #include "media.inc"
 #include "health.inc"
 #include "context_menu.inc"
+static void TouchPump(const std::string& tabID);
 #include "lifecycle.inc"
 #include "native_switch_group.inc"
 #include "html_load.inc"
@@ -1325,6 +1326,7 @@ class Client : public CefClient, public CefLifeSpanHandler, public CefLoadHandle
     // The CAContext belongs to the native window compositor, not this
     // renderer. Only its native reset callback invalidates the cached handle.
     // page.crash clears the client host; main-frame load rebinds that handle.
+    if (auto t = Find(b)) t->touch.Interrupt();
     if (auto t = Find(b)) { ++t->documentGeneration; t->rendererPID = 0; t->rendererBorn = 0; t->crashed = true; t->shedding = false; t->themeReady = false; t->worlds.clear(); t->contextNames.clear(); t->lastLayer = nil; if (!t->closing) Event(@"page.crash", t, @{@"status": @(status), @"code": @(code), @"message": Str(text)}); }
     CancelPending(b->GetIdentifier(), @"Renderer crashed");
   }
@@ -1703,7 +1705,6 @@ static bool TouchReleased(NSString* error) {
 static void TouchFailed(const char* what, NSString* error) {
   fprintf(stderr, "YabCore touch %s: %s\n", what, [error substringToIndex:MIN(error.length, (NSUInteger)300)].UTF8String);
 }
-static void TouchPump(const std::string& tabID);
 // One step of the finger to Chromium, or a cancel of no step. Its answer
 // decides the next step (TouchPump).
 static void TouchSend(Tab& tab, const ::yabcore::TouchStep& step) {
@@ -1724,6 +1725,9 @@ static void TouchSend(Tab& tab, const ::yabcore::TouchStep& step) {
   });
 }
 // The tab's touch events, in order, each once the one before it is answered.
+// A step dispatched before the helper reads a reset or hide can still reach
+// the page, as a mouse event sent just before a hide can. Preventing that
+// race would require synchronous IPC.
 static void TouchPump(const std::string& tabID) {
   using Next = ::yabcore::TouchLine::Next;
   for (;;) {
@@ -1731,12 +1735,7 @@ static void TouchPump(const std::string& tabID) {
     if (found == tabs.end()) return;
     Tab& t = found->second;
     ::yabcore::TouchStep step;
-    if (t.closing || t.crashed || !t.browser) {
-      if (t.touch.busy) return;  // its answer comes back here
-      t.touch.live = 0;
-      t.touch.waiting.clear();
-      return;
-    }
+    if (t.closing || t.crashed || !t.browser) { t.touch.Interrupt(); return; }
     switch (t.touch.Decide(t.documentGeneration, step)) {
       case Next::kWait: return;
       case Next::kDrop: continue;
@@ -1747,22 +1746,24 @@ static void TouchPump(const std::string& tabID) {
       case Next::kSend: TouchSend(t, step); return;
       case Next::kPlace: {
         auto browser = t.browser;
-        auto alive = [tabID, browser]() -> Tab* {
+        const uint64_t placement = t.touch.placement;
+        auto finish = [tabID, browser, placement](double scale, NSString* error) {
           auto live = tabs.find(tabID);
-          return live != tabs.end() && live->second.browser == browser ? &live->second : nullptr;
-        };
-        WithPageZoom(t, nil, [=](double zoom, double pinch) {
-          Tab* live = alive();
-          if (!live) return;
-          TouchSend(*live, live->touch.Placed(live->documentGeneration, zoom * pinch));
-        }, [=](NSString* error) {
-          Tab* live = alive();
-          if (!live) return;
+          if (live == tabs.end() || live->second.browser != browser) return;
+          Tab& tab = live->second;
+          if (!tab.touch.AcceptPlacement(placement, !tab.closing && !tab.crashed)) return;
+          if (!error) {
+            TouchSend(tab, tab.touch.Placed(tab.documentGeneration, scale));
+            return;
+          }
           ::yabcore::TouchStep start;
-          live->touch.NotPlaced(start);
+          tab.touch.NotPlaced(start);
           TouchFailed("touchStart", error);
           TouchPump(tabID);
-        }, false);
+        };
+        WithPageZoom(t, nil, [=](double zoom, double pinch) {
+          finish(zoom * pinch, nil);
+        }, [=](NSString* error) { finish(0, error); }, false);
         return;
       }
     }
@@ -1955,6 +1956,7 @@ static void Input(Tab& tab, NSDictionary* p, NSString* request, bool nativePopup
     if (!host) { Reply(request, nil, @"Page input browser not ready"); return; }
     const bool start = [kind isEqual:@"touchStart"];
     if ([p[@"gesture"] doubleValue] < 1) { Reply(request, nil, @"Invalid touch input"); return; }
+    if (!tab.visible) { Reply(request); return; }
     HealthInput(tab);
     ::yabcore::TouchStep step;
     step.kind = start ? ::yabcore::TouchKind::kStart : [kind isEqual:@"touchMove"] ? ::yabcore::TouchKind::kMove :
@@ -2282,11 +2284,19 @@ static void Request(NSDictionary* request) {
   if (NativeSwitchGroupRequest(method, p, id)) return;
   if (LifecycleBatchRequest(method, p, id)) return;
   auto found = tabs.find(Key(S(p, @"tab")));
-  if (found == tabs.end() || !found->second.browser || found->second.closing) { Reply(id, nil, @"Unknown or unready tab"); return; }
+  const bool resetTouch = [method isEqual:@"input.resetTouch"];
+  if (found == tabs.end() || !found->second.browser || (found->second.closing && !resetTouch)) { Reply(id, nil, @"Unknown or unready tab"); return; }
   Tab& t = found->second;
   if (IsReadTab(&t)) { Reply(id, nil, @"Task read pages require dedicated read.page transport"); return; }
   if (!t.adopted && ![@[@"tab.adopt", @"tab.close", @"tab.state"] containsObject:method]) {
     Reply(id, nil, @"Adopt this Chrome-created tab first"); return;
+  }
+  if (resetTouch) {
+    if ([p[@"gesture"] doubleValue] < 1) { Reply(id, nil, @"Invalid touch reset"); return; }
+    t.touch.ResetThrough([p[@"gesture"] unsignedLongLongValue]);
+    TouchPump(t.id);
+    Reply(id);
+    return;
   }
   auto b = t.browser;
   if ([method isEqual:@"tab.readiness"]) { Readiness(t, p, id); return; }
@@ -2478,7 +2488,12 @@ static void Request(NSDictionary* request) {
 #endif
   } else if ([method isEqual:@"tab.visible"]) {
     Mark("tab.visible", t.id);
+    const bool wasVisible = t.visible;
     t.visible = [p[@"visible"] boolValue];
+    if (wasVisible && !t.visible) {
+      t.touch.Interrupt();
+      TouchPump(t.id);
+    }
     // Hidden from the page only, the window being out of sight. Its picker may be what covers it.
     bool keep = [p[@"keep"] boolValue];
     // Shown again, or kept drawn: a hide held for a picture is not run after it.

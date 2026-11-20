@@ -39,7 +39,8 @@ struct ChromiumTouchSequence {
     typealias Event = (kind: String, fields: [String: JSONValue])
     enum Held: Equatable { case up, down(turn: Int), dropped }
     private(set) var held = Held.up
-    private(set) var gesture = 0
+    private var gesture = 0
+    private(set) var interruptedThrough = 0
 
     /// The page's touch events for one step of the pan, in page points from
     /// the top left, and whether the pan should let go of the fingers. The
@@ -74,12 +75,13 @@ struct ChromiumTouchSequence {
         }
     }
 
-    /// The page stops hearing the finger (hidden, or out of its window): the
-    /// touch is cancelled, once, and the rest of its pan is ignored.
-    mutating func interrupt() -> [Event] {
-        guard case .down = held else { return [] }
-        held = .dropped
-        return [event("touchCancel")]
+    /// Retire the gesture even if the finger already lifted. Return its
+    /// number once, so repeated hide and detach notices queue only one reset.
+    mutating func interrupt() -> Int? {
+        guard gesture > interruptedThrough else { return nil }
+        if case .down = held { held = .dropped }
+        interruptedThrough = gesture
+        return gesture
     }
 
     private func event(_ kind: String, _ point: CGPoint? = nil) -> Event {
@@ -126,6 +128,8 @@ extension ChromiumPage: NSGestureRecognizerDelegate {
     }
 
     @objc func touchPanned(_ pan: ChromiumTouchPan) {
+        guard !retired, window != nil, !isHiddenOrHasHiddenAncestor,
+              ChromiumCloseBatch.active[ObjectIdentifier(self)]?.committing != true else { return }
         let point = pan.location(in: self), moved = pan.translation(in: self)
         // Page points from the top left; the view's y runs up.
         let step = touch.step(pan.state, fingers: pan.fingers, turn: documentTurn,
@@ -140,10 +144,12 @@ extension ChromiumPage: NSGestureRecognizerDelegate {
         if step.letGo { pan.letGo() }
     }
 
-    /// The page is hidden or leaves its window with a finger down. A page
-    /// that is torn down closes its browser, and the finger goes with it.
+    /// Reset the helper's touch line ahead of work still in the page queue.
+    /// Steps already waiting for a request slot carry the retired number.
     func touchInterrupted() {
-        for event in touch.interrupt() { input(event.kind, event.fields) }
+        guard let gesture = touch.interrupt(), !retired, let remoteID,
+              let core = ChromiumProcess.shared.connectedClient else { return }
+        core.resetTouch(tab: remoteID, through: gesture)
     }
 
     /// The pan takes no event stream offered here. Per TN3212, AppKit asks

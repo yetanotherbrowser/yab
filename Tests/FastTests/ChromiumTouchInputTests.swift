@@ -81,16 +81,27 @@ struct ChromiumTouchInputTests {
     }
 
     /// The page hidden, or out of its window, with a finger down.
-    @Test func anInterruptedTouchIsCancelledOnceAndTheRestOfItsPanIgnored() {
+    @Test func anInterruptedTouchRetiresItsNumberAndIgnoresTheRestOfItsPan() {
         var touch = ChromiumTouchSequence()
-        #expect(touch.interrupt().isEmpty)
+        #expect(touch.interrupt() == nil)
+        #expect(touch.interruptedThrough == 0)
         _ = step(&touch, .began)
-        #expect(touch.interrupt().map(\.kind) == ["touchCancel"])
-        #expect(touch.interrupt().isEmpty)
+        #expect(touch.interrupt() == 1)
+        #expect(touch.interruptedThrough == 1)
         #expect(step(&touch, .changed).kinds.isEmpty)
         #expect(step(&touch, .cancelled).kinds.isEmpty)
         // The next finger is a new touch.
         #expect(step(&touch, .began).kinds == ["touchStart", "touchMove"])
+    }
+
+    @Test func repeatedInterruptionsRequestOnlyOneResetPerGesture() {
+        var touch = ChromiumTouchSequence()
+        for gesture in 1...2 {
+            _ = step(&touch, .began)
+            _ = step(&touch, .ended)
+            #expect(touch.interrupt() == gesture)
+            for _ in 0..<128 { #expect(touch.interrupt() == nil) }
+        }
     }
 
     /// One finger only: a second one cancels the page's touch and lets go
@@ -146,7 +157,8 @@ struct ChromiumTouchInputTests {
         _ = touch.step(.began, fingers: 2, turn: 0, at: .zero, moved: .zero)
         _ = touch.step(.cancelled, fingers: 2, turn: 0, at: .zero, moved: .zero)
         #expect(gestures(touch.step(.began, fingers: 1, turn: 0, at: .zero, moved: .zero).events) == [4, 4])
-        #expect(gestures(touch.interrupt()) == [4])
+        #expect(touch.interrupt() == 4)
+        #expect(touch.interruptedThrough == 4)
     }
 
     /// The pan was told of no touch (`fingers` 0: AppKit called no

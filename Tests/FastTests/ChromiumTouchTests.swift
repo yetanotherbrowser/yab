@@ -55,13 +55,71 @@ struct ChromiumTouchTests {
         fingerDown()
         page.isHidden = true
         #expect(page.touch.held == .dropped)
-        #expect(page.touch.interrupt().isEmpty)
+        #expect(page.touch.interruptedThrough == 1)
         _ = page.touch.step(.cancelled, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
         page.isHidden = false
 
         fingerDown()
         window.contentView = nil
         #expect(page.touch.held == .dropped)
+        #expect(page.touch.interruptedThrough == 2)
+    }
+
+    @Test func reparentingAVisiblePageRetiresAnAlreadyLiftedGesture() {
+        _ = NSApplication.shared
+        let tab = Tab(shy: true)
+        let page = ChromiumPage(tab: tab)
+        let frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        let first = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: true)
+        let second = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: true)
+        first.isReleasedWhenClosed = false
+        second.isReleasedWhenClosed = false
+        defer { page.removeFromSuperview(); first.close(); second.close(); page.retire(call: false, pictureInPicture: false); tab.close() }
+        first.contentView?.addSubview(page)
+        _ = page.touch.step(.began, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
+        let lift = page.touch.step(.ended, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
+        #expect(lift.events.map(\.kind) == ["touchEnd"])
+        #expect(page.touch.held == .up)
+        #expect(page.touch.interruptedThrough == 0)
+
+        second.contentView?.addSubview(page)
+        #expect(page.window === second)
+        #expect(!page.isHiddenOrHasHiddenAncestor)
+        #expect(page.touch.interruptedThrough == 1)
+    }
+
+    @Test func retiringAnAttachedPageRetiresItsTouchBeforeDetaching() {
+        _ = NSApplication.shared
+        let tab = Tab(shy: true)
+        let page = ChromiumPage(tab: tab)
+        page.adoptRemote("touch-retire-" + UUID().uuidString)
+        defer { tab.close() }
+        _ = page.touch.step(.began, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
+
+        page.retire(call: false, pictureInPicture: false)
+
+        #expect(page.remoteID == nil)
+        #expect(page.touch.interruptedThrough == 1)
+        #expect(page.touch.held == .dropped)
+    }
+
+    @Test func committingNativeCloseRetiresAnAlreadyLiftedGesture() throws {
+        _ = NSApplication.shared
+        let factory = PageEngineFactory(kinds: [.chromium]) { tab, _ in ChromiumPage(tab: tab) }
+        let tab = Tab(shy: true, engine: .chromium, factory: factory)
+        let page = try #require(tab.page as? ChromiumPage)
+        let remote = "touch-native-close-" + UUID().uuidString
+        page.adoptRemote(remote)
+        defer { page.retire(call: false, pictureInPicture: false); tab.close() }
+        let entry = ChromiumCloseBatch.Entry(tab: tab, page: page, remote: remote)
+        try #require(entry.live)
+        _ = page.touch.step(.began, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
+        _ = page.touch.step(.ended, fingers: 1, turn: page.documentTurn, at: .zero, moved: .zero)
+
+        entry.beginCommit()
+
+        #expect(entry.committing)
+        #expect(page.touch.interruptedThrough == 1)
     }
 
     /// The pan holds back only the finger's mouse events. A synthetic mouse

@@ -477,10 +477,12 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         let previousSubmission = inputSubmission ?? tail
         let previousCompletion = tail
         let epoch = operationEpoch
+        let gesture = fields["gesture"]?.number
         let reply = InputReply()
         let submission = Task { @MainActor [weak self] in
             await previousSubmission?.value
             guard let self, !retired, !Task.isCancelled, operationEpoch == epoch else { return }
+            if let gesture, gesture <= Double(touch.interruptedThrough) { return }
             do {
                 let (core, id) = try await endpoint()
                 guard operationEpoch == epoch, !retired, ChromiumProcess.shared.isCurrent(core) else { return }
@@ -493,6 +495,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                         guard let self, !retired, operationEpoch == epoch, ChromiumProcess.shared.isCurrent(core) else {
                             sent.resume(); return
                         }
+                        if let gesture, gesture <= Double(touch.interruptedThrough) { sent.resume(); return }
                         do { _ = try await core.sendInput(inputParams, submitted: { sent.resume() }) }
                         catch {
                             if !retired, operationEpoch == epoch { queuedOperationFailed(error, navigation: false, request: "input.send") }
@@ -838,6 +841,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         }
     }
     func retire(call: Bool, pictureInPicture: Bool) {
+        // The asynchronous tab.close can wait after we lose the remote ID.
+        touchInterrupted()
         invalidateOriginalPDFPresence(releasePeer: true)
         questionRequests.cancel()
         resetNativeTextInput()
@@ -1430,9 +1435,12 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     override func layout() { super.layout(); updateSurface() }
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); updateSurface() }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow { touchInterrupted() }
+        super.viewWillMove(toWindow: newWindow)
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        touchInterrupted()
         if window != nil { recoverPage() }
         if window == nil { hoverLeft(); receiveTooltip("") }
         updateSurface()
@@ -1542,6 +1550,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     /// The window came into view or went out of it.
     func sightChanged() {
+        if windowCovered { touchInterrupted() }
         restoreSurfaceAttachment()
         syncGeometry()
         focusChanged()
@@ -2093,6 +2102,9 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
             // renderer acknowledgement between every movement. CDP replies
             // after handling input; waiting for each one makes a fast drag
             // accumulate stale points and leaves selection behind the hand.
+            // Later mouse and wheel input wait behind a touch waiting for
+            // a request slot, as behind a mouse move. Keys and resize wait
+            // for the helper's reply on the completion chain.
             enqueueStreamingInput(p)
         }
         else { command("input.send", p) }
