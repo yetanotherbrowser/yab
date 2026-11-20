@@ -256,6 +256,15 @@ enum Mcp {
     /// The task has a name, or was asked for one.
     static var named = false
     private static var inbox: Inbox?
+    /// The client's `initialize`, said again to a server this one hands
+    /// over to, and that server once it has.
+    private static var greeting: [String: Any]?
+    private static var successor: McpHandover?
+    /// Whether the browser refused this process as not Yab's own code
+    /// during the message being answered.
+    private static var refused = false
+    /// This server's arguments, for the one it hands over to.
+    private static var arguments: [String] = []
     static var cancelled: Bool { inbox?.cancelled == true }
     /// What the user let agents have beyond the browser, as the browser
     /// says it (`agent-caps`): read when the tools are listed, and again
@@ -309,6 +318,7 @@ enum Mcp {
         // is being written. Treat that as a disconnect, not SIGPIPE.
         signal(SIGPIPE, SIG_IGN)
         socket = Wire.socket(args)
+        arguments = args
         session = Wire.value(args, "--session")
         inner = args.contains("--inner")
         assistant = Wire.value(args, "--assistant")
@@ -321,7 +331,12 @@ enum Mcp {
         Thread.detachNewThread { inbox.read() }
         while let message = inbox.next() {
             answer(message)
-            recheck()
+            if successor == nil { recheck() }
+        }
+        // Handed over: the new server says goodbye for the agent.
+        if let successor {
+            successor.finish()
+            exit(0)
         }
         // The client has gone: so has this agent, as far as the window is
         // concerned. Its tabs stay, and are tidied later like any agent's.
@@ -337,6 +352,7 @@ enum Mcp {
         guard let id, !(id is NSNull) else { return }
         switch method {
         case "initialize":
+            greeting = message
             if let info = params["clientInfo"] as? [String: Any], let name = info["name"] as? String { client = name }
             reply(id, [
                 "protocolVersion": (params["protocolVersion"] as? String) ?? "2025-06-18",
@@ -348,7 +364,9 @@ enum Mcp {
             reply(id, [:])
         case "tools/list":
             capsKnown = nil
+            refused = false
             let list = tools
+            if refused, handOver(message) { return }
             listed = list.compactMap { $0["name"] as? String }
             reply(id, ["tools": list])
         case "tools/call":
@@ -356,12 +374,40 @@ enum Mcp {
             let input = params["arguments"] as? [String: Any] ?? [:]
             progressToken = (params["_meta"] as? [String: Any])?["progressToken"]
             progressCount = 0
-            reply(id, call(name, input))
+            refused = false
+            let result = call(name, input)
+            if refused, handOver(message) { progressToken = nil; return }
+            reply(id, result)
             progressToken = nil
             if ["open", "navigate", "close", "boost", "boosts"].contains(name) { capsAt = .distantPast }
         default:
             say(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "no method \(method)"]])
         }
+    }
+
+    /// Refused as not Yab's own code because an update replaced the app
+    /// this was started from (McpHandover): a server started from the new
+    /// copy answers `message`, and everything after it. Whether one does.
+    private static func handOver(_ message: [String: Any]) -> Bool {
+        // The path this was started from, kept from launch (LaunchCopy):
+        // after an update the new copy is there.
+        guard successor == nil, let greeting, let inbox, let executable = Bundle.main.executablePath,
+              McpHandover.replacedOnDisk(executable) else { return false }
+        let out = FileHandle.standardOutput
+        let write: (Data) -> Void = { data in
+            do { try out.write(contentsOf: data) } catch { exit(0) }
+        }
+        guard let next = McpHandover(executable: executable, arguments: ["mcp"] + arguments,
+                                     greeting: greeting, client: write) else { return false }
+        successor = next
+        // The tools may differ in the new build: the client asks again,
+        // and the new server answers.
+        say(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
+        fflush(stdout)
+        next.carry { exit(0) }
+        next.send(message)
+        inbox.handOver { next.send(line: $0) }
+        return true
     }
 
     private static func reply(_ id: Any, _ result: [String: Any]) {
@@ -688,7 +734,9 @@ enum Mcp {
 
     /// Direct task/target requests retain the fixed inner MCP caller too.
     static func wire(_ request: [String: Any]) -> [String: Any] {
-        Wire.ask(socket, RemoteTaskBoundary.bindMCP(request, inner: inner || assistant != nil, session: session))
+        let got = Wire.ask(socket, RemoteTaskBoundary.bindMCP(request, inner: inner || assistant != nil, session: session))
+        if got["error"] as? String == BenchCaller.refusal { refused = true }
+        return got
     }
 
     static func ask(_ request: [String: Any]) -> [String: Any] {
@@ -1030,6 +1078,10 @@ final class Inbox: @unchecked Sendable {
     private var ended = false
     private var current: String?
     private var stopping = false
+    /// Where every line goes once this server has handed its client over
+    /// (McpHandover): as it came, cancellations too, as the new server
+    /// keeps its own line.
+    private var relay: ((String) -> Void)?
 
     /// The reader can stop an active batch between browser requests too.
     /// An effect already sent is reconciled by its returned tab id.
@@ -1041,10 +1093,17 @@ final class Inbox: @unchecked Sendable {
     /// Until the client's end; `line` is stdin's next line, or a test's.
     func read(_ line: () -> String? = { readLine(strippingNewline: true) }) {
         while let line = line() {
-            guard !line.isEmpty, let data = line.data(using: .utf8),
-                  let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
+            guard !line.isEmpty else { continue }
+            let message = line.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            // Whether it is handed over and where it goes are settled under
+            // one lock, so no line is queued here after the queue was sent on.
             lock.lock()
+            if let relay {
+                lock.unlock()
+                relay(line)
+                continue
+            }
+            guard let message else { lock.unlock(); continue }
             if message["method"] as? String == "notifications/cancelled",
                let id = (message["params"] as? [String: Any])?["requestId"] {
                 let key = Self.key(id)
@@ -1061,6 +1120,21 @@ final class Inbox: @unchecked Sendable {
         if current != nil { stopping = true }
         lock.signal()
         lock.unlock()
+    }
+
+    /// Every line from now on to `to`, the calls still waiting in line
+    /// first, in their order; `next` answers nil once the client has gone.
+    func handOver(_ to: @escaping (String) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        for message in waiting {
+            guard let data = try? JSONSerialization.data(withJSONObject: message) else { continue }
+            to(String(decoding: data, as: UTF8.self))
+        }
+        waiting.removeAll()
+        current = nil
+        stopping = false
+        relay = to
     }
 
     /// The next call to make, nil once the client has gone.
