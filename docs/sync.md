@@ -288,7 +288,7 @@ its own hybrid clock (`Clock.swift`) and sends the whole record.
 | `memory` | page path, or `episodic/<day>.md#<hash>` for a diary entry | `text`; a diary entry also `day` | |
 | `visit` | the page's key (`Address.pretty`, lowercased) | `url`, `title`, `last`, `typed` | `last` is the largest; history only ever adds |
 | `chat` | `a:<chat id>` | `kind` (`agent`), `device`, `title`, `state`, `answer`, `cli`, `model`, `started`, `updated`, `pinned`, `archived`, `unread`, `effort` (how hard its agent thinks now, absent for the agent's own; `model` is the one it is on now), `choices` (while it is going: what its agent waits for you to pick from, its question the last `message` named `question`; null once picked), `project` (the `project` record it is in, absent for a chat on its own; a phone writes it to move the chat, stamped as Pin is) | Metadata set on another device is taken by the owning Mac. A phone draws `choices` as the Mac's column does, numbered over its field; a tap, or words typed there, goes as an ordinary `send` and the Mac answers the pick with it (`Agents.choose`), never as a follow-up |
-| `chatitem` | `<chat record id>/<item id>` | `chat`, `n` (its place in the chat), `kind` (`asked`, `message`, `thinking`, `tool`, `command`, `edit`, `plan`, `subagent`, `chose`), `name`, `detail`, `text`, `state`, `began`, `ended` | the last 80 of each chat; `text` of a command its last 1,500 characters, of a thought or a tool its first 2,000, else 8,000 (an account holds 50 MB) |
+| `chatitem` | `<chat record id>/<item id>` | `chat`, `n` (its place in the chat), `kind` (`asked`, `message`, `thinking`, `tool`, `command`, `edit`, `plan`, `subagent`, `chose`), `name`, `detail`, `text`, `state`, `began`, `ended` | the last 80 of each chat; `text` of a command its last 1,500 characters, of a thought or a tool its first 2,000, else 8,000 (an account holds 250 MB) |
 | `project` | `prj-` and eight letters | `name`, `emoji`, `tint` (blue, green, orange, purple, pink, yellow, teal or gray), `instructions` (up to 8,000 characters), `memoryOn`, `pinned`, `archived`, `order` (among the pinned), `created`, `updated` | a project of chats (`SyncProject`, docs/chat-projects.md); its memory and files stay on the Macs; a removal sends its chats back to Chats on every Mac |
 | `send` | a new UUID per message | see below | |
 | `sendpart` | `<send id>/<file index>/<n>` | `send` (its send's id), `data` (up to 48,000 bytes of a file attached to the send, base64) | a removal wins; written by the iPhone before its send and removed by it once the send is done, never written or removed by a Mac |
@@ -453,7 +453,7 @@ removed long ago, goes up again instead. A list that couldn't be read
 takes nothing away, puts nothing in and changes nothing. A removal empties
 the record (Journal `reconcile(…, blank:)`): the server keeps removals for
 good, and a part kept with its data would be 85 KB a version toward the
-account's 50 MB.
+account's 250 MB.
 
 **Parts.** A Mac takes back only parts it gave itself at its last read and
 gives no more, that no plugin of the account names, and only once the line
@@ -855,8 +855,6 @@ A tab opened, closed, moved or kept on a Mac is written to its session at
 once (titles and the like wait out the usual second) and flushed 20 ms
 later, so another device has it in a few hundred milliseconds with the
 network (sync-ios.md, R8).
-
-## Merging on the device
 
 ## Merging on the device
 

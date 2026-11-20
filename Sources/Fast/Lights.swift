@@ -39,8 +39,13 @@ struct Lights: NSViewRepresentable {
     /// macOS has used.
     static let run: CGFloat = 60
 
+    /// The air around the three moves the window from a strip of the row's
+    /// own, for a place where no DragStrip may stand under them (SideBar's
+    /// band).
+    var handle = false
+
     func makeNSView(context: Context) -> LightsRow { LightsRow() }
-    func updateNSView(_ view: LightsRow, context: Context) {}
+    func updateNSView(_ view: LightsRow, context: Context) { view.handle = handle }
 }
 
 /// Local hit geometry is cheap; asking which window is above it is a
@@ -63,6 +68,23 @@ enum LightsPointerProbe {
 final class LightsRow: NSView {
     /// Every row in a window, for the views around them to keep clear of.
     private static let live = NSHashTable<LightsRow>.weakObjects()
+
+    /// Lights.handle: a strip in the row, under the buttons, so to
+    /// SwiftUI's accessibility hit test the row is the one view there.
+    var handle = false {
+        didSet {
+            guard handle != oldValue else { return }
+            strip?.removeFromSuperview()
+            strip = nil
+            guard handle else { return }
+            let made = DragStrip.Strip(frame: bounds)
+            made.autoresizingMask = [.width, .height]
+            made.isHidden = buttons.first?.isHidden ?? false
+            addSubview(made, positioned: .below, relativeTo: nil)
+            strip = made
+        }
+    }
+    private var strip: DragStrip.Strip?
 
     /// The button of a row shown in `window` under `point`, in `view`'s own
     /// coordinates: a window's drag strip hands a press there to the light
@@ -254,6 +276,9 @@ final class LightsRow: NSView {
         for (index, button) in buttons.enumerated() {
             button.isHidden = !shown || (index == 2 && window is LinkWindow.FullScreenFrame)
         }
+        // The row's own strip goes with them: the row takes nothing in the
+        // column's old place.
+        strip?.isHidden = !shown
         // Where the pointer is now, not where it was: a window coming back
         // from the Dock left with it over the minimize button, and one made
         // key under a resting pointer has it there with no move to say so.

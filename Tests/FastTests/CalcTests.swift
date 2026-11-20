@@ -65,6 +65,19 @@ struct CalcTests {
         }
     }
 
+    /// The line under an answer says the number the card shows, not every
+    /// digit a Double keeps of it.
+    @Test func theLineUnderAnAnswerSpellsTheNumberShown() {
+        #expect(answer("100 + 10%")?.result == "110")
+        #expect(answer("100 + 10%")?.resultNote == "One hundred ten")
+        #expect(answer("0.1+0.2")?.result == "0.3")
+        #expect(answer("0.1+0.2")?.resultNote == "Zero point three")
+        #expect(answer("1.005*1000")?.result == "1,005")
+        #expect(answer("1.005*1000")?.resultNote == "One thousand five")
+        #expect(answer("5 - 7")?.resultNote == "Minus two")
+        #expect(answer("1/4")?.resultNote == "Zero point two five")
+    }
+
     @Test func sumsAndPercentages() {
         #expect(answer("2400*12")?.result == "28,800")
         #expect(answer("2400*12")?.copy == "28800")

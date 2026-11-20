@@ -62,9 +62,9 @@ struct EmptyHomeLayer: View {
             if bar && app.field.sheetAllowed && !app.workspace.tabletControls {
                 // As All Tabs and the sidebar stand: Settings at the top left, the
                 // computer (the spaces sidebar) at the top right.
-                let head = SpacePagesCard.capsuleTop + Metrics.NewTab.highest
-                let settings = CGRect(x: Metrics.NewTab.inset, y: head, width: Metrics.touch, height: Metrics.touch)
-                let computer = CGRect(x: size.width - Metrics.NewTab.inset - Metrics.touch, y: head, width: Metrics.touch, height: Metrics.touch)
+                let sides = app.workspace.sides(ofSurface: size.width)
+                let settings = SpacePagesCard.headButton(right: false, width: size.width, sides: sides)
+                let computer = SpacePagesCard.headButton(right: true, width: size.width, sides: sides)
                 // One pill where a page's plate stands, worded as the plate with no
                 // tab ("+ New Tab"): the search sheet grows out of it, the pill
                 // turning into the field, as from the plate.

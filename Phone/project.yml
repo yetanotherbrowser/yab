@@ -67,6 +67,9 @@ targets:
       # rules of them, the same files (Page/Shield.swift): both devices block
       # the same things.
       - path: ../Sources/Fast/Filters.swift
+      - path: ../Sources/Fast/Filters+Network.swift
+      - path: ../Sources/Fast/Filters+Cosmetic.swift
+      - path: ../Sources/Fast/Filters+Skip.swift
       - path: ../Sources/Fast/ShieldLists.swift
       # A wide table in an answer read as cards, as the Mac's chat reads it
       # (Chats/ChatMarkdown).

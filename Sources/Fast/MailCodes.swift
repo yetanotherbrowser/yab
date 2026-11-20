@@ -533,7 +533,16 @@ extension Browser {
                 return
             }
             let fresh = SentCode(id: code.id, code: made, from: code.from, at: nil, source: .apple, mine: true)
-            guard request.accepts(fresh), self.offersAutofill(tab) else { return }
+            // The field was bound when the row was picked (document, field,
+            // request, above); the Touch ID sheet may hold key still.
+            guard request.accepts(fresh) else {
+                ApplePasswords.log.notice("code pick discarded: field request doesn't accept the code")
+                return
+            }
+            guard self.offersAutofill(tab, key: false) else {
+                ApplePasswords.log.notice("code pick discarded: tab no longer takes autofill")
+                return
+            }
             web.window?.makeFirstResponder(web)
             self.putCode(fresh, into: web, site: list.site, document: document, field: field)
         }

@@ -55,13 +55,13 @@ extension ChromiumPage {
     }
 
     /// Routes a key through Yab's input context while a page field has the
-    /// keyboard, an input method is selected, or words are being composed
+    /// keyboard or words are being composed
     /// (ChromiumKeyInterpretation says why). Returns true when the page must
     /// not get the key itself.
     func composeKey(_ event: NSEvent) -> Bool {
-        let source = inputContext?.selectedKeyboardInputSource ?? ""
-        guard Self.usesInputContext(event, source: source, marked: hasMarkedText(), editable: inputMethodEditable),
+        guard Self.usesInputContext(event, marked: hasMarkedText(), editable: inputMethodEditable),
               let context = inputContext else { return false }
+        let source = context.selectedKeyboardInputSource ?? ""
         let inputMethod = source.contains(".inputmethod.")
         // NSEvent.characters can already contain the composed character. A
         // matching insert still has to commit the renderer's marked text.
@@ -93,7 +93,7 @@ extension ChromiumPage {
     /// Every editable field uses the Mac's context, including plain keys
     /// that can open the accent menu. Page shortcuts outside a field and
     /// Command shortcuts keep the page's key-event path.
-    static func usesInputContext(_ event: NSEvent, source: String, marked: Bool, editable: Bool = false) -> Bool {
+    static func usesInputContext(_ event: NSEvent, marked: Bool, editable: Bool = false) -> Bool {
         (editable || marked) && !event.modifierFlags.contains(.command)
     }
 

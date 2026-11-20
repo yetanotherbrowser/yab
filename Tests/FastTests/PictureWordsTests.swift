@@ -26,6 +26,7 @@ final class PictureWordsTests: XCTestCase {
         let words = await PictureWords.read(screenshot(), whole: true)
         let lines = words.text.split(separator: "\n").map(String.init)
         XCTAssertEqual(lines.count, 3, words.text)
+        guard lines.count == 3 else { return }
         XCTAssertTrue(lines[1].contains("yab mcp add claude"), words.text)
         XCTAssertTrue(lines[2].hasPrefix("Added yab"), words.text)
         XCTAssertTrue(words.whole)
@@ -37,8 +38,9 @@ final class PictureWordsTests: XCTestCase {
         // The second line, drawn from 120 to about 160 of 300 down.
         XCTAssertGreaterThan(mcp.box.minY, 0.3)
         XCTAssertLessThan(mcp.box.maxY, 0.62)
-        let claude = try XCTUnwrap(words.lines[1].last)
+        let claude = try XCTUnwrap(words.lines.dropFirst().first?.last)
         XCTAssertGreaterThan(claude.box.minX, mcp.box.maxX)
+        guard words.script.count > 1 else { return XCTFail("one line read: \(words.text)") }
         XCTAssertEqual(words.script[1].map { $0["t"] as? String }, words.lines[1].map(\.text))
     }
 

@@ -157,6 +157,14 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     /// Where the hidden window was last put (placeProducer); nil for a new one.
     private var placedProducer: ProducerPlace?
     private var geometryQueued = false
+    /// Which queued geometry operation owns geometryQueued.
+    private var geometryTurn = 0
+    /// A tab.visible threw: the helper may or may not have applied it (a hide
+    /// can answer an error from its focus cleanup on an iframe's session that
+    /// has just gone, #883). The next sync sends visibility whatever
+    /// sentGeometry says; trusting it left the page hidden in the helper
+    /// while Yab counted it shown, and no show was sent again.
+    private var visibilityUnknown = false
     private var navigation: PageNavigation?
     private var awaitingInitialDocument = false
     var reachingFirstDocument: Bool { awaitingInitialDocument && !warmed }
@@ -1559,6 +1567,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         desiredGeometry = nil; sentGeometry = nil
         placedProducer = nil
         geometryQueued = false
+        geometryTurn &+= 1
+        visibilityUnknown = false
         layer?.backgroundColor = nil
     }
     /// A replacement compositor owns a new geometry handshake even when the
@@ -1604,12 +1614,18 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                 firstPaintMayHaveCome()
             }
         }
-        if geometry.changesVisibility(from: sentGeometry) {
+        if visibilityUnknown || geometry.changesVisibility(from: sentGeometry) {
             OpenTrace.mark("chromium.visible.send")
             // `keep`: a covered page stays drawn and comes back at once, as Chromium's
             // occluded page does. Only a page the stage took away gives up its layers.
-            _ = try await core.request("tab.visible", params: ["tab": .string(id), "visible": .bool(geometry.visible && !geometry.covered),
-                                                               "keep": .bool(geometry.visible)])
+            do {
+                _ = try await core.request("tab.visible", params: ["tab": .string(id), "visible": .bool(geometry.visible && !geometry.covered),
+                                                                   "keep": .bool(geometry.visible)])
+                visibilityUnknown = false
+            } catch {
+                visibilityUnknown = true
+                throw error
+            }
             OpenTrace.mark("chromium.visible.done")
         }
         sentGeometry = geometry
@@ -1622,15 +1638,38 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         // and a resize keeps its top, so a place sent first left a page that
         // grew taller standing its growth too low (a new tab, 900 points).
         defer { placeProducer() }
-        guard !geometryQueued, desiredGeometry != sentGeometry else { return }
+        guard let desired = desiredGeometry, !geometryQueued, geometryNeedsSend(desired) else { return }
         geometryQueued = true
+        geometryTurn &+= 1
+        let turn = geometryTurn
+        let ran = GeometryRun()
         enqueue { [weak self] core, id in
+            ran.started = true
             guard let self else { return }
-            defer { self.geometryQueued = false }
-            while self.remoteID == id, let geometry = self.desiredGeometry, geometry != self.sentGeometry {
+            defer { self.geometryFinished(turn) }
+            // A throw ends the loop; with visibilityUnknown set, the next sync sends again.
+            while self.remoteID == id, let geometry = self.desiredGeometry, self.geometryNeedsSend(geometry) {
                 try await self.sendGeometry(core, id, geometry)
             }
         }
+        // enqueue can return without running the operation (endpoint failed,
+        // helper not current, cancelled): then nothing else would clear
+        // geometryQueued, and every later sync of this page would be skipped.
+        if let queued = tail {
+            Task { @MainActor [weak self] in
+                await queued.value
+                guard let self, !ran.started else { return }
+                self.geometryFinished(turn)
+            }
+        }
+    }
+    @MainActor private final class GeometryRun { var started = false }
+    private func geometryNeedsSend(_ geometry: ChromiumResize.Geometry) -> Bool {
+        visibilityUnknown || geometry != sentGeometry
+    }
+    /// The queued geometry operation `turn` ended: ran, failed, or never ran.
+    private func geometryFinished(_ turn: Int) {
+        if turn == geometryTurn { geometryQueued = false }
     }
     private func applyZoom() {
         command("page.zoom", ["factor": .number(Double(pageZoom * magnification))])

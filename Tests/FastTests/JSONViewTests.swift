@@ -83,6 +83,15 @@ struct JSONViewTests {
         #expect(same == "same")
     }
 
+    @Test func aStringWithLineBreaksStaysOnItsRow() throws {
+        let c = try core()
+        let drawn = eval(c, "return C.oneLine(C.parse('{\"body\":\"one\\\\n\\\\ntwo\\\\r\\\\n\\\\tthree\\\\u0001\"}').root.v[0].v.v)").toString()
+        #expect(drawn == "one\\n\\ntwo\\r\\n\\tthree\\u0001")
+        #expect(eval(c, "return C.oneLine('plain \"quoted\" text')").toString() == "plain \"quoted\" text")
+        // Copy Value still takes the string itself.
+        #expect(eval(c, "return C.plain(C.parse('\"a\\\\nb\"').root)").toString() == "a\nb")
+    }
+
     @Test func pathsForCopying() throws {
         let c = try core()
         #expect(call(c, "pathText", [["owner", "login"]]).toString() == "owner.login")

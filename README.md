@@ -12,7 +12,7 @@ Yab is a browser with nothing in the way: a row of tabs, across the top or down 
 
 - **One field.** Type an address and you go there; type words and you search. It finishes addresses from your own history and sends nothing until you press Return.
 - **Tabs that stay out of the way.** Pins, folders and spaces. Tabs from your last session come back instantly and cost nothing until you click them. `⌘K` finds any open tab.
-- **Two engines.** WebKit by default; Chromium on Apple silicon for the sites that need it, with Chrome extensions, Chrome DevTools and the Chrome Web Store.
+- **Two engines.** WebKit and, on Apple silicon, Chromium, with Chrome extensions, Chrome DevTools and the Chrome Web Store. There the released app opens pages in Chromium by default, and protected video and Apple Pay checkouts in WebKit.
 - **Blocking and hiding built in.** An ad blocker that runs inside the engine, before a request is made. `⇧⌘H` hides any element on a site, for good.
 - **Reading mode, floating video, split view, Peek**, each one key away.
 - **Passwords in your keychain**, or in the password manager you already use.

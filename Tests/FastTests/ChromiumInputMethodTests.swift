@@ -73,26 +73,22 @@ struct ChromiumInputMethodTests {
                 timestamp: 1, windowNumber: 0, context: nil, characters: text,
                 charactersIgnoringModifiers: text, isARepeat: false, keyCode: 14))
         }
-        let abc = "com.apple.keylayout.ABC"
-        #expect(ChromiumPage.usesInputContext(try key("´", .option), source: abc, marked: false, editable: true))
-        #expect(ChromiumPage.usesInputContext(try key("ç", .option), source: abc, marked: false, editable: true))
-        #expect(ChromiumPage.usesInputContext(try key(""), source: abc, marked: false, editable: true))
-        #expect(ChromiumPage.usesInputContext(try key("e"), source: abc, marked: true, editable: true))
-        #expect(ChromiumPage.usesInputContext(try key("e"), source: abc, marked: false, editable: true))
-        #expect(!ChromiumPage.usesInputContext(try key("e", [.command, .option]), source: abc, marked: true, editable: true))
-        #expect(ChromiumPage.usesInputContext(try key("k"), source: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese", marked: false, editable: true))
+        #expect(ChromiumPage.usesInputContext(try key("´", .option), marked: false, editable: true))
+        #expect(ChromiumPage.usesInputContext(try key("ç", .option), marked: false, editable: true))
+        #expect(ChromiumPage.usesInputContext(try key(""), marked: false, editable: true))
+        #expect(ChromiumPage.usesInputContext(try key("e"), marked: false, editable: true))
+        #expect(!ChromiumPage.usesInputContext(try key("e", [.command, .option]), marked: true, editable: true))
     }
 
     // #1785: the page body is not an editing target. Selecting Pinyin must
     // not turn video shortcuts into text or open the candidate window.
-    @Test func chineseInputMethodLeavesNonEditingPageShortcutsAlone() throws {
+    @Test func inputContextLeavesNonEditingPageShortcutsAlone() throws {
         for (text, code) in [(" ", 49), ("k", 40), ("f", 3), ("m", 46)] {
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
                 modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
                 characters: text, charactersIgnoringModifiers: text, isARepeat: false,
                 keyCode: UInt16(code)))
-            #expect(!ChromiumPage.usesInputContext(event,
-                source: "com.apple.inputmethod.SCIM.ITABC", marked: false))
+            #expect(!ChromiumPage.usesInputContext(event, marked: false))
         }
     }
 
@@ -114,11 +110,9 @@ struct ChromiumInputMethodTests {
         let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
             modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
             characters: "n", charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45))
-        for source in ["com.apple.inputmethod.SCIM.ITABC", "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"] {
-            #expect(ChromiumPage.usesInputContext(event, source: source, marked: false, editable: true))
-            #expect(ChromiumPage.usesInputContext(event, source: source, marked: true, editable: true))
-            #expect(!ChromiumPage.usesInputContext(event, source: source, marked: false, editable: false))
-        }
+        #expect(ChromiumPage.usesInputContext(event, marked: false, editable: true))
+        #expect(ChromiumPage.usesInputContext(event, marked: true, editable: false))
+        #expect(!ChromiumPage.usesInputContext(event, marked: false, editable: false))
     }
 
 

@@ -101,6 +101,129 @@ final class CapsuleModelTests: XCTestCase {
         XCTAssertEqual(m.lens.center, track + pair.centers[0], accuracy: 0.01, "the lens went to Private")
     }
 
+    func testThePhoneFootKeepsBothNamesInPlaceWhileFollowingAPageSwipe() {
+        var m = CapsuleModel(track: pair, current: 1, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: true, fixedWidth: true)
+        let width = m.capW.v
+        let left = m.capLeft
+        let track = m.trackX.v
+        XCTAssertEqual(width, 180, accuracy: 0.001)
+        for (position, index) in [(0.0, 0), (0.25, 0), (0.75, 1), (1.0, 1)] {
+            m.follow(CGFloat(position), index: index, followingPageDrag: true)
+            run(&m, seconds: 0.15)
+            XCTAssertEqual(m.capW.v, width)
+            XCTAssertEqual(m.capLeft, left)
+            XCTAssertEqual(m.trackX.v, track)
+            XCTAssertEqual(m.lens.center, track + pair.at(CGFloat(position)).center, accuracy: 0.001)
+        }
+        settle(&m)
+    }
+
+    func testTheCompactPhoneFootKeepsAnimatingTheLensWhenATapCommits() {
+        var m = CapsuleModel(track: pair, current: 1, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: true, fixedWidth: true)
+        let track = m.trackX.v
+        let left = m.capLeft
+        XCTAssertEqual(m.select(0), .tap(0))
+        m.step(1 / 60)
+        let beforeCommit = m.lens.center
+        m.follow(0, index: 0)
+        XCTAssertEqual(m.lens.center, beforeCommit)
+        m.step(1 / 60)
+        XCTAssertLessThan(m.lens.center, beforeCommit)
+        settle(&m)
+        XCTAssertEqual(m.lens.center, track + pair.centers[0], accuracy: 0.001)
+        XCTAssertEqual(m.trackX.v, track)
+        XCTAssertEqual(m.capLeft, left)
+    }
+
+    func testThePhoneFootWithMoreSpacesStaysFullWidthAtEitherEnd() {
+        var m = CapsuleModel(track: many, current: 1, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: false, fixedWidth: true)
+        for index in [0, 1, 4, 3] {
+            XCTAssertEqual(m.select(index), .tap(index))
+            for _ in 0..<60 {
+                m.step(1 / 60)
+                XCTAssertEqual(m.capW.v, wide)
+                XCTAssertEqual(m.capLeft, mid - wide / 2)
+            }
+            settle(&m)
+        }
+    }
+
+    func testThePhoneFootWithMoreSpacesStaysFullWidthDuringAPageSwipe() {
+        var m = CapsuleModel(track: many, current: 1, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: false, fixedWidth: true)
+        m.follow(0.5, index: 1, followingPageDrag: true)
+        run(&m, seconds: 0.5)
+        XCTAssertEqual(m.lens.center, mid, accuracy: 0.001)
+        XCTAssertEqual(m.capW.v, wide)
+        XCTAssertEqual(m.capLeft, mid - wide / 2)
+
+        m.follow(0, index: 0, followingPageDrag: true)
+        settle(&m)
+        XCTAssertEqual(m.capW.v, wide)
+        XCTAssertEqual(m.capLeft, mid - wide / 2)
+    }
+
+    func testDraggingTheCompactPhoneFootMovesTheLensBetweenFixedNames() {
+        var m = CapsuleModel(track: pair, current: 1, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: true, fixedWidth: true)
+        let track = m.trackX.v
+        let left = m.capLeft
+        let chats = track + pair.centers[0]
+        let personal = track + pair.centers[1]
+
+        m.down(personal, now: m.time)
+        m.move(mid, now: m.time + 0.1)
+        run(&m, seconds: 0.1)
+        XCTAssertEqual(m.lens.center, mid, accuracy: 0.001)
+        m.move(left - 60, now: m.time)
+        run(&m, seconds: 0.1)
+        XCTAssertEqual(m.lens.center, chats, accuracy: 0.001)
+        XCTAssertEqual(m.trackX.v, track)
+        XCTAssertEqual(m.capLeft, left)
+        XCTAssertFalse(m.fades.left)
+        XCTAssertFalse(m.fades.right)
+        XCTAssertEqual(m.up(left - 60), .release(0))
+        settle(&m)
+
+        m.down(chats, now: m.time)
+        m.move(personal + 60, now: m.time + 0.2)
+        run(&m, seconds: 0.2)
+        XCTAssertEqual(m.lens.center, personal, accuracy: 0.001)
+        XCTAssertEqual(m.trackX.v, track)
+        XCTAssertEqual(m.capLeft, left)
+        m.cancel()
+        settle(&m)
+        XCTAssertEqual(m.lens.center, chats, accuracy: 0.001)
+        XCTAssertEqual(m.trackX.v, track)
+    }
+
+    func testTheCompactPhoneFootSettlesFromTheReleasePointWhileThePageCatchesUp() {
+        var m = CapsuleModel(track: pair, current: 0, mid: mid, restWidth: wide, wideWidth: wide,
+                             pair: true, fixedWidth: true)
+        let start = m.lens.center
+        let end = m.trackX.v + pair.centers[1]
+        let release = start + 0.75 * (end - start)
+        m.down(start, now: m.time)
+        m.move(release, now: m.time + 0.2)
+        run(&m, seconds: 0.2)
+        XCTAssertEqual(m.lens.center, release, accuracy: 0.001)
+        XCTAssertEqual(m.up(release), .release(1))
+
+        for pagePosition in [0.05, 0.25, 0.75, 1.0] {
+            let previous = m.lens.center
+            m.follow(CGFloat(pagePosition), index: 1)
+            XCTAssertEqual(m.lens.center, previous)
+            m.step(1 / 60)
+            XCTAssertGreaterThanOrEqual(m.lens.center, previous)
+            XCTAssertLessThanOrEqual(m.lens.center, end)
+        }
+        settle(&m)
+        XCTAssertEqual(m.lens.center, end, accuracy: 0.001)
+    }
+
     func testATapOnANeighborMovesLensAndNamesTogetherAndKeepsTheButtons() {
         var m = model(many, 1)
         let x = m.trackX.v + many.centers[2]

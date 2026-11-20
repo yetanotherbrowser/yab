@@ -303,12 +303,17 @@ struct SideBar: View {
                 // at the outer end, and the doors at the inner one.
                 HStack(spacing: 0) {
                     if browser.flank == .left {
-                        Lights()
+                        Lights(handle: true)
                             .frame(width: Lights.run)
                             // Lights.first in from the window's edge to the
                             // first one's center, where the strip keeps them and the lights
                             // stay while the tabs change sides (stillLights).
                             .padding(.leading, Lights.first - Lights.lead - SideBar.margin)
+                            // The window's edge up to the row, which the band
+                            // leaves to the lights (lightsEnd).
+                            .background(alignment: .leading) {
+                                DragStrip().frame(width: Lights.first - Lights.lead).offset(x: -SideBar.margin)
+                            }
                             .frame(width: Metrics.sideLights, alignment: .leading)
                             .opacity(browser.stillLights || browser.titleLights ? 0 : 1)
                             .allowsHitTesting(!browser.titleLights)
@@ -2032,8 +2037,21 @@ struct SideBar: View {
     /// page has nothing to read still move the window, as Arc's band does.
     private var band: some View {
         let right = browser.flank == .right
-        return DragStrip(notch: right ? columnDoorNotch : doorsNotch, leadNotch: right ? doorsNotch : columnDoorNotch)
+        let start = lightsEnd
+        return DragStrip(notch: right ? columnDoorNotch : doorsNotch,
+                         leadNotch: (right ? doorsNotch : columnDoorNotch).offsetBy(dx: -start, dy: 0))
             .frame(height: Metrics.strip)
+            .padding(.leading, start)
+    }
+
+    /// Where the band starts: past the lights when they are the column's
+    /// and on show. A strip under them, even one hidden from accessibility,
+    /// is where SwiftUI's accessibility hit test stops in this header, and
+    /// Magnet and VoiceOver found no lights; their row moves the window
+    /// itself (Lights.handle). See-through while the tabs change sides
+    /// (stillLights), the row may take no press, and the band runs under it.
+    private var lightsEnd: CGFloat {
+        browser.flank == .left && !browser.titleLights && !browser.stillLights ? Lights.first - Lights.lead + Lights.run : 0
     }
 
     /// The doors at the header's far end, back, forward and reload, or
@@ -3869,7 +3887,7 @@ struct SideRow: View {
                 WatchWords(tab: tab)
                 // A page on this Mac's own server: which port (DevMode.swift).
                 if showsDevPort {
-                    DevPort(tab: tab, hovering: hovering, gap: 8, speaker: false)
+                    DevPort(tab: tab, hovering: hovering, gap: 8, speaker: false, unkeeps: closes)
                 }
             }
         }

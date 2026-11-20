@@ -34,9 +34,10 @@ struct HiddenColumnLightsTests {
         try check(column, window, root)
     }
 
-    private func row(in parent: NSView) throws -> (LightsRow, [NSButton]) {
+    private func row(in parent: NSView, handle: Bool = false) throws -> (LightsRow, [NSButton]) {
         let row = LightsRow(frame: NSRect(x: 12, y: 12, width: Lights.run, height: Metrics.strip))
         parent.addSubview(row)
+        row.handle = handle
         row.layoutSubtreeIfNeeded()
         let buttons = row.subviews.compactMap { $0 as? NSButton }
         try #require(buttons.count == 3 && buttons.allSatisfy { $0.window != nil }, "native lights fixture must attach")
@@ -62,6 +63,25 @@ struct HiddenColumnLightsTests {
             column.slide(out: true, animated: false)
             #expect(column.shown && buttons.allSatisfy { !$0.isHidden })
             #expect(LightsRow.button(at: point, from: root, in: window) === green)
+        }
+    }
+
+    @Test func aHandleRowMovesTheWindowByItsAirAndGoesWithTheColumn() throws {
+        try world { column, window, root in
+            column.slide(out: true, animated: false)
+            let (row, buttons) = try row(in: column, handle: true)
+            let green = try #require(buttons.last)
+            let host = try #require(row.superview)
+            let light = host.convert(green.convert(NSPoint(x: green.bounds.midX, y: green.bounds.midY), to: nil), from: nil)
+            let air = host.convert(row.convert(NSPoint(x: row.bounds.midX, y: 3), to: nil), from: nil)
+            let onLight = try #require(row.hitTest(light))
+            #expect(onLight === green || onLight.isDescendant(of: green))
+            #expect(row.hitTest(air) is WindowHandle)
+            column.slide(out: false, animated: true)
+            #expect(row.hitTest(air) == nil, "the strip must not stay in the column's old place")
+            #expect(row.hitTest(light) == nil)
+            column.slide(out: true, animated: false)
+            #expect(row.hitTest(air) is WindowHandle)
         }
     }
 

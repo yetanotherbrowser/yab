@@ -29,44 +29,105 @@ enum Cli {
     private static let flags: Set = ["-h", "--help", "-V", "--version", "--cli", "-m", "--model", "--effort",
                                      "--access", "--permission", "--resume", "--socket", "--no-person", "--wait-person"]
 
-    static func run(_ args: [String]) -> Never {
-        setvbuf(stdout, nil, _IOLBF, 0)
+    /// Words less where to reach Yab: `yab status --socket X` is still `status`.
+    private static func unsocketed(_ words: [String]) -> [String] {
+        guard let at = words.firstIndex(of: "--socket") else { return words }
+        var kept = words
+        kept.removeSubrange(at..<min(at + 2, kept.count))
+        return kept
+    }
+
+    /// The command a line runs: its first word when what follows fits it,
+    /// else "" for a task ("yab help me write an email").
+    static func command(_ args: [String]) -> String {
         let rest = Array(args.dropFirst())
-        // What follows a word, less where to reach Yab: `yab status --socket X`
-        // is still `status`.
-        let words: [String] = {
-            guard let at = rest.firstIndex(of: "--socket") else { return rest }
-            var kept = rest
-            kept.removeSubrange(at..<min(at + 2, kept.count))
-            return kept
-        }()
+        let words = unsocketed(rest)
         // A word of its own only when what follows fits it: "yab help me
         // write an email" and "yab remove the draft" are tasks.
         func fits(_ words: Set<String>) -> Bool { rest.isEmpty || words.contains(rest[0].lowercased()) || rest[0].hasPrefix("-") }
         let first = args.first ?? ""
-        let word: String
         switch first {
-        case "help", "version": word = words.isEmpty ? first : ""
-        case "status": word = words.allSatisfy { $0 == "--json" } ? first : ""
-        case "quit": word = words.allSatisfy { $0 == "--force" } ? first : ""
-        case "serve": word = words.allSatisfy { ["--no-person", "--stop"].contains($0) } ? first : ""
+        case "help", "version": return words.isEmpty ? first : ""
+        case "status": return words.allSatisfy { $0 == "--json" } ? first : ""
+        case "quit": return words.allSatisfy { $0 == "--force" } ? first : ""
+        case "serve": return words.allSatisfy { ["--no-person", "--stop"].contains($0) } ? first : ""
         // "yab import chrome"; "yab import my contacts from gmail" is a task.
-        case "import": word = words.count <= 1 ? first : ""
-        case "guide": word = rest.count <= 1 ? first : ""
-        case "session", "sessions": word = fits(["list", "resume", "steer", "queue", "stop"]) ? first : ""
-        case "memory": word = fits(["search", "list", "show", "read", "path", "setup"]) ? first : ""
-        case "skills", "skill": word = fits(["list", "show", "read", "path"]) ? first : ""
+        case "import": return words.count <= 1 ? first : ""
+        case "guide": return rest.count <= 1 ? first : ""
+        case "session", "sessions": return fits(["list", "resume", "steer", "queue", "stop"]) ? first : ""
+        case "memory": return fits(["search", "list", "show", "read", "path", "setup"]) ? first : ""
+        case "skills", "skill": return fits(["list", "show", "read", "path"]) ? first : ""
         case "every", "routines":
             // A routine only when what follows reads as one: "yab every
             // morning check my mail" is a task.
             let when = Routines.leading(rest) != nil
-            word = fits(["list", "remove", "run", "pause", "resume"]) || when ? "every" : ""
-        case "mail": word = rest.first?.lowercased() == "flush" || CliFiles.mailWords(words) ? first : ""
+            return fits(["list", "remove", "run", "pause", "resume"]) || when ? "every" : ""
+        case "mail": return rest.first?.lowercased() == "flush" || CliFiles.mailWords(words) ? first : ""
         // "yab files search lease"; "yab files from last week" is a task.
-        case "files": word = CliFiles.filesWords(words) ? first : ""
-        case "setup", "remove": word = rest.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
-        default: word = first
+        case "files": return CliFiles.filesWords(words) ? first : ""
+        case "setup", "remove": return rest.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
+        default: return first
         }
+    }
+
+    /// The word someone meant as a command, when a line that reached no
+    /// command reads as a mistyped one rather than a task: a help flag after
+    /// words (`yab feedback --help`), or one bare word that no task is
+    /// written as, a joined name (`yab list-tabs`) or a command's near miss
+    /// (`yab sesion`, `yab stauts`). Any other single word is a task
+    /// (`yab continue`, `yab summarize`), whatever its case. Nil for a task,
+    /// and for the words the agent answers itself (`yab list`, `yab stop
+    /// ID`). Asked only of a bare `yab …` line: the words after `yab agent`
+    /// or `yab session resume ID` are the task's own, and a one-word
+    /// follow-up ("yes") is one.
+    static func mistyped(_ args: [String]) -> String? {
+        let words = unsocketed(args)
+        guard let first = words.first, !first.hasPrefix("-"), !agentWords.contains(first.lowercased()) else { return nil }
+        if words.dropFirst().contains(where: { $0 == "-h" || $0 == "--help" }) { return first }
+        guard words.count == 1 else { return nil }
+        let word = first.lowercased()
+        if word.range(of: "^[a-z][a-z0-9]*([-_][a-z0-9]+)+$", options: .regularExpression) != nil { return first }
+        if commandWords.contains(where: { nearMiss(word, of: $0) }) { return first }
+        return nil
+    }
+
+    /// What `AgentCLI.run` answers itself as a first word, not as a task.
+    private static let agentWords: Set = ["list", "stop", "steer", "queue", "memory"]
+
+    /// Every first word `command` or the agent answers, for near misses.
+    static let commandWords: Set = ["help", "version", "status", "quit", "serve", "import", "guide", "session",
+                                    "sessions", "memory", "skills", "skill", "every", "routines", "mail", "files",
+                                    "setup", "remove", "agent", "exec", "plugin", "list", "stop", "steer", "queue"]
+
+    /// A word one slip from `command` (two for a long one), and not it: a
+    /// letter added, dropped, changed or two swapped. Beside a short
+    /// command only a changed or swapped letter counts, so `email` stays a
+    /// task beside `mail`, and `save` beside `serve`.
+    static func nearMiss(_ word: String, of command: String) -> Bool {
+        guard word != command, word.count >= 3 else { return false }
+        let a = Array(word), b = Array(command)
+        let shorter = min(a.count, b.count)
+        let most = shorter >= 7 ? 2 : 1
+        guard shorter >= 5 ? abs(a.count - b.count) <= most : a.count == b.count else { return false }
+        // Edits, with a swap of two neighbors as one.
+        var d = [[Int]](repeating: [Int](repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in 0...a.count { d[i][0] = i }
+        for j in 0...b.count { d[0][j] = j }
+        for i in 1...a.count {
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+                if i > 1, j > 1, a[i - 1] == b[j - 2], a[i - 2] == b[j - 1] { d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1) }
+            }
+        }
+        return d[a.count][b.count] <= most
+    }
+
+    static func run(_ args: [String]) -> Never {
+        setvbuf(stdout, nil, _IOLBF, 0)
+        let rest = Array(args.dropFirst())
+        let first = args.first ?? ""
+        let word = command(args)
         guard !args.isEmpty else { print(usage); exit(0) }
         switch word {
         case "mail":
@@ -122,6 +183,9 @@ enum Cli {
             openTab(first)
         default:
             if ((try? BoostLibrary(root: Store.file("boosts")).records()) ?? []).contains(where: { $0.id == first && $0.enabled }) { BoostCLI.run(args) }
+            if let typo = mistyped(args) {
+                fail("yab: no command \(typo); see yab help. A task is a sentence: yab \"what to do\"", code: 2)
+            }
             AgentCLI.run(args)
         }
     }

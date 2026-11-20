@@ -2158,6 +2158,11 @@ extension Preferences {
         if fullURL != o.fullURL { fullURL = o.fullURL }
         if pageZoom != o.pageZoom { pageZoom = o.pageZoom }
         if pageFonts != o.pageFonts { pageFonts = o.pageFonts }
+        // Pages read Dark pages from the store, which sync has already
+        // written: left out here, every new page went dark while Settings
+        // on this Mac still said Off, and picking Off again changed nothing.
+        if darkPages != o.darkPages { darkPages = o.darkPages }
+        if darkLook != o.darkLook { darkLook = o.darkLook }
         if bookmarkBar != o.bookmarkBar { bookmarkBar = o.bookmarkBar }
         if sleepsTabs != o.sleepsTabs { sleepsTabs = o.sleepsTabs }
         if tidyAfter != o.tidyAfter { tidyAfter = o.tidyAfter }

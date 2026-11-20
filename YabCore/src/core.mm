@@ -766,7 +766,7 @@ class Observer : public CefDevToolsMessageObserver {
     OriginalPDFPresenceClosed(browser->GetIdentifier());
     OriginalPDFBrowserClosed(browser->GetIdentifier(), @"Original PDF renderer detached");
     fprintf(stderr, "YabCore DevTools agent detached: browser %d\n", browser->GetIdentifier());
-    if (auto t = Find(browser)) { ++t->documentGeneration; t->drmReady = false; t->drmFrames.clear(); t->domainsReady = false; ShieldAgentGone(*t); t->worlds.clear(); t->contextNames.clear(); t->scripts.contexts.clear(); t->scripts.sessions.clear(); t->scripts.identifiers.clear(); t->scripts.consoleRelease.clear(); }
+    if (auto t = Find(browser)) { ++t->documentGeneration; t->drmReady = false; t->drmFrames.clear(); t->domainsReady = false; ShieldAgentGone(*t); t->worlds.clear(); t->contextNames.clear(); t->scripts.contexts.clear(); t->scripts.sessions.clear(); t->scripts.attaching.clear(); t->scripts.sessionParents.clear(); t->scripts.identifiers.clear(); t->scripts.consoleRelease.clear(); }
     CancelPending(browser->GetIdentifier(), @"Renderer detached");
   }
   IMPLEMENT_REFCOUNTING(Observer);
@@ -2421,19 +2421,23 @@ static void Request(NSDictionary* request) {
     }
 #endif
     if (!t.visible && t.domainsReady) {
-      // Retire each target's CDP focus capturer before acknowledging hide.
-      auto sessions = std::make_shared<std::vector<std::string>>(t.scripts.sessions.begin(), t.scripts.sessions.end());
-      if (sessions->empty()) sessions->push_back("");
-      auto remaining = std::make_shared<size_t>(sessions->size());
-      auto failure = std::make_shared<NSString*>(nil);
-      for (const auto& session : *sessions) {
+      // Retire each target's CDP focus capturer: sent before the reply, so it
+      // goes ahead of anything the client sends next, but not waited for. The
+      // hide is applied already; a target that has just gone (an iframe's
+      // session) must not turn it into an error, after which the client
+      // counted the page as shown and never sent the next show (#883), nor
+      // may a slow renderer hold the reply and the input queued behind it.
+      std::vector<std::string> sessions(t.scripts.sessions.begin(), t.scripts.sessions.end());
+      if (sessions.empty()) sessions.push_back("");
+      std::string tabID = t.id;
+      for (const auto& session : sessions) {
         CDP(t, @"Emulation.setFocusEmulationEnabled", @{@"enabled": @NO},
-          [id, remaining, failure](NSDictionary*, NSString* error) {
-            if (error) *failure = error;
-            if (!--*remaining) Reply(id, @{}, *failure);
+          [tabID, session](NSDictionary*, NSString* error) {
+            if (!ScriptSessionGone(error)) return;
+            auto found = tabs.find(tabID);
+            if (found != tabs.end()) ForgetScriptSession(found->second, session);
           }, @(session.c_str()));
       }
-      return;
     }
     Reply(id);
   } else if ([method isEqual:@"input.send"]) Input(t, p, id);

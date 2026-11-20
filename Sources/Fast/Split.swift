@@ -438,9 +438,14 @@ extension Browser {
             // tab left does (asksFollow): up over nothing, it would wait
             // unseen with nothing on the tab to say so.
             for id in gone where !onScreen(id) {
-                if let tab = tabs.first(where: { $0.id == id }), !tab.asks.isEmpty, !tab.asks[0].parked {
-                    tab.asks[0].parked = true
-                }
+                guard let tab = tabs.first(where: { $0.id == id }) else { continue }
+                // Seen until now, the half beside the tab in front as much
+                // as the one in front: its time unwatched starts here. Only
+                // the tab left was touched (activeID), so the other half's
+                // was still counted from when the pair came up, and a page
+                // read beside another for hours slept at the next look.
+                tab.touch()
+                if !tab.asks.isEmpty, !tab.asks[0].parked { tab.asks[0].parked = true }
             }
         }
         watchHalves()

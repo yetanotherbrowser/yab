@@ -122,6 +122,24 @@ static void ScriptAppearance(const Tab& tab, ScriptCommands& commands) {
   if ([appearance[@"focused"] isKindOfClass:NSNumber.class])
     commands.push_back({@"Emulation.setFocusEmulationEnabled", @{@"enabled": @([appearance[@"focused"] boolValue] && tab.visible)}});
 }
+// A child session is gone (detached, or answering "Session with given id not
+// found"): it and every session that arrived on it, with what they held.
+static void ForgetScriptSession(Tab& tab, const std::string& session) {
+  if (session.empty()) return;
+  std::set<std::string> gone{session};
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (const auto& [child, parent] : tab.scripts.sessionParents)
+      if (gone.count(parent) && gone.insert(child).second) grew = true;
+  }
+  for (const auto& key : gone) {
+    tab.scripts.sessions.erase(key); tab.scripts.attaching.erase(key); tab.scripts.sessionParents.erase(key);
+    tab.scripts.identifiers.erase(key); tab.scripts.consoleRelease.erase(key);
+  }
+  for (auto it = tab.scripts.contexts.begin(); it != tab.scripts.contexts.end();) {
+    if (gone.count(Key(it->second.session))) it = tab.scripts.contexts.erase(it); else ++it;
+  }
+}
 static void ScriptAttach(Tab& tab, NSString* session, Completion done) {
   tab.scripts.sessions.insert(Key(session));
   auto commands = std::make_shared<ScriptCommands>();
@@ -142,6 +160,12 @@ static void ScriptAttach(Tab& tab, NSString* session, Completion done) {
   ScriptAppearance(tab, *commands);
   ScriptRun(tab.id, session, commands, 0, [id = tab.id, session, done](NSDictionary*, NSString* error) {
     auto found = tabs.find(id);
+    if (error && found != tabs.end() && session.length) {
+      // Paused by waitForDebuggerOnStart: a live frame must not stay paused
+      // because its setup failed, and a gone one leaves the session set.
+      if (ScriptSessionGone(error)) ForgetScriptSession(found->second, Key(session));
+      else CDP(found->second, @"Runtime.runIfWaitingForDebugger", @{}, Ignore, session);
+    }
     if (error || found == tabs.end()) { done(nil, error ?: @"Tab closed"); return; }
     ScriptSetup(found->second, session, true, [id, session, done](NSDictionary* value, NSString* error) {
       // Release the target even on setup failure, and surface the failure.
@@ -241,27 +265,31 @@ static void ScriptEvent(Tab& tab, NSString* method, NSDictionary* params, NSStri
     std::string id = tab.id;
     NSString* type = S(params[@"targetInfo"], @"type");
     if (!child.length || !([type isEqual:@"iframe"] || [type isEqual:@"worker"] || [type isEqual:@"worklet"])) return;
+    // Recorded now, in event order with its detach: the attach below runs later.
+    NSString* parent = session ?: @"";
+    tab.scripts.sessionParents[Key(child)] = Key(parent);
+    bool frame = [type isEqual:@"iframe"];
+    if (frame) tab.scripts.attaching.insert(Key(child));
     // Not from inside the observer's notification: the commands it sends may
     // be answered at once, which would nest a second one.
     dispatch_async(dispatch_get_main_queue(), ^{
       auto found = tabs.find(id);
       if (found == tabs.end() || found->second.closing) return;
-      if ([type isEqual:@"worker"] || [type isEqual:@"worklet"]) {
+      if (!frame) {
         CDP(found->second, @"Runtime.runIfWaitingForDebugger", @{}, Ignore, child);
-        CDP(found->second, @"Target.detachFromTarget", @{@"sessionId": child}, Ignore);
+        // A nested worker's attachment belongs to the session it arrived on.
+        CDP(found->second, @"Target.detachFromTarget", @{@"sessionId": child}, Ignore, parent);
         return;
       }
+      // Detached meanwhile, or the agent went (its sessions cleared): nothing to attach.
+      if (!found->second.scripts.attaching.erase(Key(child))) return;
       ScriptAttach(found->second, child, [id](NSDictionary*, NSString* error) {
         auto found = tabs.find(id);
         if (error && found != tabs.end()) Event(@"script.error", &found->second, @{@"message": error});
       });
     });
   } else if ([method isEqual:@"Target.detachedFromTarget"]) {
-    NSString* child = S(params, @"sessionId");
-    tab.scripts.sessions.erase(Key(child)); tab.scripts.identifiers.erase(Key(child)); tab.scripts.consoleRelease.erase(Key(child));
-    for (auto it = tab.scripts.contexts.begin(); it != tab.scripts.contexts.end();) {
-      if ([it->second.session isEqual:child]) it = tab.scripts.contexts.erase(it); else ++it;
-    }
+    ForgetScriptSession(tab, Key(S(params, @"sessionId")));
   } else if ([method isEqual:@"Runtime.executionContextCreated"]) {
     NSDictionary* context = params[@"context"], *aux = context[@"auxData"];
     NSString* token = S(context, @"uniqueId"), *frame = S(aux, @"frameId");

@@ -30,6 +30,34 @@ struct AgentKnowsTests {
         #expect(AgentCalendar.day("2026-10-15") == Calendar.current.startOfDay(for: local))
     }
 
+    /// calendar_add said "with its zone" and refused 2026-12-03T07:30-06:00
+    /// (no seconds) and any zone given by name.
+    @Test func momentsTakeTheirZoneAsAnOffsetOrByName() throws {
+        let utc1330 = 1_796_304_600.0, utc1230 = 1_796_301_000.0
+        for said in ["2026-12-03T07:30-06:00", "2026-12-03T07:30:00-06:00", "2026-12-03T07:30:00.000-06:00",
+                     "2026-12-03T13:30Z", "2026-12-03T07:30 America/Mexico_City", "2026-12-03T07:30:00 America/Mexico_City",
+                     "2026-12-03T07:30[America/Mexico_City]", "2026-12-03 07:30 America/Mexico_City"] {
+            #expect(AgentCalendar.moment(said)?.timeIntervalSince1970 == utc1330, "\(said)")
+            #expect(Mcp.localDate(said)?.timeIntervalSince1970 == utc1330, "\(said)")
+        }
+        // Bogotá keeps no summer time: an hour ahead of Mexico City in December.
+        #expect(AgentCalendar.moment("2026-12-03T07:30 America/Bogota")?.timeIntervalSince1970 == utc1230)
+        #expect(AgentCalendar.moment("2026-12-03T07:30 Nowhere/Atlantis") == nil)
+        #expect(AgentCalendar.moment("2026-12-03T07:30+25:00") == nil)
+        let url = try AgentCalendar.page(["title": "Run", "start": "2026-12-03T07:30-06:00", "minutes": 60], accounts: []).get()
+        #expect(url.absoluteString.contains("dates=20261203T133000Z/20261203T143000Z"))
+    }
+
+    @Test func momentsWithoutAZoneAreOnTheClockTheyAreReadOn() throws {
+        let bogota = try #require(TimeZone(identifier: "America/Bogota"))
+        #expect(AgentCalendar.moment("2026-12-03T07:30", zone: bogota)?.timeIntervalSince1970 == 1_796_301_000)
+        #expect(AgentCalendar.moment("2026-12-03T12:30 UTC")?.timeIntervalSince1970 == 1_796_301_000)
+        #expect(AgentCalendar.moment("2026-12-03 07:30", zone: bogota)?.timeIntervalSince1970 == 1_796_301_000)
+        // A date alone is a day for `calendar`, not a start for calendar_add.
+        #expect(AgentCalendar.moment("2026-12-03") == nil)
+        #expect(Mcp.localDate("2026-12-03", zone: bogota)?.timeIntervalSince1970 == 1_796_274_000)
+    }
+
     @Test func anEventIsGoogleCalendarsOwnPageFilledIn() throws {
         let request: [String: Any] = ["title": "Coffee with Anna", "start": "2026-10-15T09:00:00Z", "minutes": 45,
                                       "guests": ["anna@fold.studio", "not an address"], "account": "Me@Gmail.com"]

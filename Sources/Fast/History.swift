@@ -194,17 +194,18 @@ final class History: ObservableObject {
                 spaceFrequent = [:]
                 spaceKeys = nil
             }
+            // Something forgotten leaves the field at once. Anything else,
+            // a page loaded or a tab's title changing, keeps the last index
+            // answering until the next is ready: dropping it emptied the
+            // field's places for most of a second at every page load, and
+            // the search took the top row.
+            let shrank = visits.count < counted
             counted = visits.count
             objectWillChange.send()
-            entries.removeAll(keepingCapacity: true)
+            if shrank || visits.count <= History.cap { dropIndex() }
+            indexed = false
             markSeen = nil
             entryMarked = []
-            indexed = false
-            hostGroups.removeAll(keepingCapacity: true)
-            hostList.removeAll(keepingCapacity: true)
-            addressOrder.removeAll(keepingCapacity: true)
-            addressPosition.removeAll(keepingCapacity: true)
-            titlePrefixes.removeAll(keepingCapacity: true)
             asked = nil
             indexGeneration += 1
             if visits.count > 500 { scheduleIndex() }
@@ -347,7 +348,22 @@ final class History: ObservableObject {
     private var indexGeneration = 0
     private var indexWork: DispatchWorkItem?
     let indexReady = PassthroughSubject<Void, Never>()
-    var isIndexing: Bool { !indexed && visits.count > History.cap }
+    /// No index to answer from yet, the first after launch or after a
+    /// place was forgotten: Return waits for it. A rebuild after a visit
+    /// answers from the last one meanwhile.
+    var isIndexing: Bool { !indexed && visits.count > History.cap && !hasIndex }
+    /// Whether `entries` hold an index, if an older one.
+    private var hasIndex = false
+
+    private func dropIndex() {
+        entries.removeAll(keepingCapacity: true)
+        hostGroups.removeAll(keepingCapacity: true)
+        hostList.removeAll(keepingCapacity: true)
+        addressOrder.removeAll(keepingCapacity: true)
+        addressPosition.removeAll(keepingCapacity: true)
+        titlePrefixes.removeAll(keepingCapacity: true)
+        hasIndex = false
+    }
     /// The last answer, for the same words asked again: the field asks
     /// twice for one key, for its list and for whether a clip is a place.
     private var asked: (needle: String, limit: Int, at: Date, offers: [Suggestion])?
@@ -500,6 +516,7 @@ final class History: ObservableObject {
         addressPosition = index.addressPosition
         titlePrefixes = index.titles
         indexed = true
+        hasIndex = true
         markSeen = nil
         asked = nil
     }
@@ -1101,9 +1118,11 @@ final class History: ObservableObject {
         if !indexed {
             if visits.count > History.cap {
                 if indexWork == nil { scheduleIndex() }
-                return []
+                // The last index answers while the next is made.
+                if !hasIndex { return [] }
+            } else {
+                apply(History.makeIndex(Array(visits.values)))
             }
-            apply(History.makeIndex(Array(visits.values)))
         }
 
         let asked = Needle(needle)
@@ -1279,7 +1298,9 @@ final class History: ObservableObject {
         }
         func offer(_ at: Int) -> Suggestion? {
             if at >= 0 {
-                let visit = entries[at].visit
+                // From an index made before the last change: the place as
+                // it is now, and none if it has gone.
+                guard let visit = indexed ? entries[at].visit : visits[entries[at].visit.key] else { return nil }
                 return URL(string: visit.url).map {
                     Suggestion(key: visit.key, title: visit.title, url: $0, kind: .visited, bookmarked: marked.contains(visit.key))
                 }

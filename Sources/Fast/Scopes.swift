@@ -71,15 +71,19 @@ struct Scope: Codable, Hashable, Identifiable {
         let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var found: String?
         if let name = shape.queryItems?.first(where: { $0.value == Scope.mark })?.name {
-            found = parts?.queryItems?.first(where: { $0.name == name })?.value
+            found = parts?.percentEncodedQueryItems?.first(where: { $0.name.removingPercentEncoding == name })?.value
         } else if let at = shape.path.range(of: Scope.mark) {
             let head = String(shape.path[..<at.lowerBound])
             let path = url.path()
             if !head.isEmpty, path.hasPrefix(head) {
-                found = String(path.dropFirst(head.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")).removingPercentEncoding
+                found = String(path.dropFirst(head.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             }
         }
-        let words = found?.replacingOccurrences(of: "+", with: " ").trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // A plus written in the address is a space, as a form sends one; a
+        // plus the words had is %2B. Read after decoding, both were spaces,
+        // and "c++ tutorial" was remembered as "c   tutorial".
+        let words = found?.replacingOccurrences(of: "+", with: " ").removingPercentEncoding?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return words.isEmpty ? nil : words
     }
 

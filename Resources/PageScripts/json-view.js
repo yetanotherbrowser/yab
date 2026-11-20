@@ -302,6 +302,18 @@
     // What Copy Value takes: a string without its quotes, the rest as JSON.
     function plain(n) { return n.t === 's' ? n.v : pretty(n); }
 
+    // A key or string as its row draws it: a line break, tab or other
+    // control character written back as JSON writes it. A row is one line
+    // 22 points high, so a real line break drew the rest of the string over
+    // the rows below it.
+    var CONTROL = /[\u0000-\u001f]/g;
+    var ESCAPES = { '\n': '\\n', '\r': '\\r', '\t': '\\t', '\b': '\\b', '\f': '\\f' };
+    function oneLine(v) {
+      return v.replace(CONTROL, function (c) {
+        return ESCAPES[c] || '\\u' + ('000' + c.charCodeAt(0).toString(16)).slice(-4);
+      });
+    }
+
     // `owner.login`, `topics[3]`, `["a b"]`; `$` for the whole.
     function pathText(p) {
       var out = '';
@@ -365,7 +377,7 @@
     }
 
     return { parse: parse, place: place, index: index, indexer: indexer, compact: compact, plainLines: plainLines, pretty: pretty,
-             inline: inline, plain: plain, pathText: pathText, jq: jq, child: child, ago: ago, hint: hint,
+             inline: inline, plain: plain, oneLine: oneLine, pathText: pathText, jq: jq, child: child, ago: ago, hint: hint,
              swatch: swatch, prefix: prefix };
   })();
 
@@ -643,11 +655,11 @@
     if (n.t === 's') {
       var v = n.v, sw = Core.swatch(n), body;
       if (v.length > 200 && !S.more.has(n)) {
-        body = '<span class="s">"' + hl(v.slice(0, 200), on) + '…"</span><span class="more" data-more>+' + (v.length - 200).toLocaleString('en-US') + ' more</span>';
+        body = '<span class="s">"' + hl(Core.oneLine(v.slice(0, 200)), on) + '…"</span><span class="more" data-more>+' + (v.length - 200).toLocaleString('en-US') + ' more</span>';
       } else if (/^https?:\/\/\S+$/.test(v)) {
         body = '<a class="s lnk" href="' + esc(v) + '" data-link>"' + hl(v, on) + '"</a>';
       } else {
-        body = '<span class="s">"' + hl(v, on) + '"</span>';
+        body = '<span class="s">"' + hl(Core.oneLine(v), on) + '"</span>';
       }
       return (sw ? '<span class="sw" style="background:' + esc(sw) + '"></span>' : '') + body;
     }
@@ -658,7 +670,7 @@
     var pad = '<span class="ind" style="width:' + (r.d * 16) + 'px"></span>';
     if (r.close) return '<div class="row">' + pad + '<span class="tw"></span><span class="p">' + (r.n.t === 'a' ? ']' : '}') + (r.last ? '' : ',') + '</span></div>';
     var hit = current(), on = !!hit && hit.node === r.n;
-    var keyH = r.k === null || r.idx ? '' : '<span class="k">"' + hl(r.k, on) + '"</span><span class="p">: </span>';
+    var keyH = r.k === null || r.idx ? '' : '<span class="k">"' + hl(Core.oneLine(r.k), on) + '"</span><span class="p">: </span>';
     var comma = '<span class="p">' + (r.last ? '' : ',') + '</span>';
     var html;
     if (r.box) {

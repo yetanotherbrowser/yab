@@ -107,7 +107,14 @@ private struct FileItems: View {
         Divider()
         Button("Open Address…") { selected.pressOpenAddress() }
             .shortcut(.openAddress)
-        Button("Paste and Go") { selected.pasteAndGo() }
+        Button("Paste and Go") {
+            // From its key, in a text field, the key is the text's
+            // (PasteStyleTarget.takesPasteAndGoKey). Chosen from the menu,
+            // by the pointer or by the arrows and Return, it goes.
+            if let event = NSApp.currentEvent, event.type == .keyDown, Keymap.shared.matches(event, .pasteAndGo),
+               PasteStyleTarget.takesPasteAndGoKey(in: NSApp.keyWindow) { return }
+            selected.pasteAndGo()
+        }
             .shortcut(.pasteAndGo)
         Divider()
         // Close Tab and Close Window in
@@ -1711,13 +1718,16 @@ struct ContentView: View {
     var body: some View {
         let _ = StripRenderMeter.window()
         lower
-            .overlay { HoardSky(hoard: browser.hoard).allowsHitTesting(false).ignoresSafeArea() }
+            // An AppKit view over the window, even one let through, is where
+            // SwiftUI's accessibility hit test stops: Magnet and VoiceOver
+            // found nothing under it. Those that only draw are hidden from it.
+            .overlay { HoardSky(hoard: browser.hoard).allowsHitTesting(false).accessibilityHidden(true).ignoresSafeArea() }
             .overlay { KeyFlightLayer(sky: browser.keySky).ignoresSafeArea() }
             .overlay { TearGround(sky: browser.keySky).ignoresSafeArea() }
-            .overlay { ChorusSky(chorus: browser.chorus).allowsHitTesting(false).ignoresSafeArea() }
+            .overlay { ChorusSky(chorus: browser.chorus).allowsHitTesting(false).accessibilityHidden(true).ignoresSafeArea() }
             // ⇧⌘2's outline, picture and card (Capture.swift): a room kept
             // in the window's own stack, empty and let through until then.
-            .overlay { CaptureSky(capture: browser.capture).ignoresSafeArea() }
+            .overlay { CaptureSkyLayer(capture: browser.capture).ignoresSafeArea() }
             // Picking a model, in the middle of the window over everything.
             .overlay { if let request = browser.modelPicker { ModelPickerLayer(browser: browser, request: request) } }
             // What the page in front is asking: in the middle of it for an

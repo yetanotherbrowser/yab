@@ -88,4 +88,28 @@ struct RecentTabsSleepTests {
         #expect(browser.relief(now: now) == nil)
         #expect(browser.relief(now: now + 24 * 3600) == nil)
     }
+
+    /// #399: the half beside the tab in front is on screen for as long as
+    /// the pair is. Its time unwatched was counted from when the pair came
+    /// up, so a page read beside another for hours went to sleep within a
+    /// minute of the pair being left.
+    @MainActor @Test func aSplitHalfIsSeenUntilThePairLeavesTheScreen() async throws {
+        let (browser, hidden, front, done) = try await world(2)
+        defer { done() }
+        let beside = hidden[0], elsewhere = hidden[1]
+        browser.pairs = [Pair(first: beside.id, second: front.id)]
+        browser.restage()
+        try #require(browser.stagePair?.contains(beside.id) == true && browser.activeID == front.id)
+        // Five hours beside the tab in front, never in front itself.
+        beside.touch(at: Date(timeIntervalSinceNow: -5 * 3600))
+        browser.activeID = elsewhere.id
+        try #require(browser.stagePair == nil)
+        let now = AwakeClock.now
+        #expect(beside.idle(at: now) < 60)
+        #expect(!browser.idleTabs(within: Browser.usualSleepAfter, now: now).contains { $0 === beside })
+        // Memory out leaves it its ten minutes, as it does the half that
+        // was in front.
+        browser.recent = []
+        #expect(browser.relief(now: now) == nil)
+    }
 }

@@ -9,7 +9,7 @@ struct ChromiumOriginalNativeReplyTests {
     private func wait(_ body: () -> Bool) async throws {
         let until = Date().addingTimeInterval(4)
         while !body(), Date() < until { try await Task.sleep(nanoseconds: 2_000_000) }
-        #expect(body())
+        try #require(body())
     }
     @Test func olderActualWriteCannotDispatchAStillUnqueuedTicket() async throws {
         let server = try TicketWire(); defer { server.close() }
@@ -39,7 +39,7 @@ struct ChromiumOriginalNativeReplyTests {
         socket.enqueueTracked(payload, ticket: ticket) // Refused without a phase change.
         socket.send(Data("barrier".utf8))
         try await wait { server.frames.count == 2 }
-        #expect(server.frames[0] == payload && server.frames[1] == Data("barrier".utf8))
+        #expect(server.frames == [payload, Data("barrier".utf8)])
         #expect(counter.value == 2) // Real barrier proves duplicate queue job ran.
     }
     @Test func exactFrameAndOriginalSocketRejectRetargeting() async throws {

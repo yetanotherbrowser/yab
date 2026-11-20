@@ -44,8 +44,9 @@ acceptance; source support alone does not establish PDF viewer parity.
   forwards its findNext flag to Chromium's find_match argument, so it is
   true even for the first query. Chromium recognizes a new text session.
 - `page.find.stop {tab}` clears native find marks and cancels a pending find.
-- `page.printPDF {tab}` renders the full document using print styles into
-  Letter pages with half-inch margins and returns an opaque stream token.
+- `page.printPDF {tab, paperWidth, paperHeight}` renders the full document
+  using print styles onto paper of that size in inches (Letter when none is
+  given) with 1 cm margins, and returns an opaque stream token.
 - `page.pdf.read {tab, stream}` returns at most 192 KiB per CDP read as
   `data`, `base64Encoded` and `eof`. The token is scoped to its originating
   tab. The app limits decoded PDF bytes to 64 MiB; the helper limits encoded

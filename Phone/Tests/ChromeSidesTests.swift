@@ -34,6 +34,19 @@ final class ChromeSidesTests: XCTestCase {
         XCTAssertLessThanOrEqual(g.space.maxX, 400 - sides.right)
     }
 
+    /// All Tabs and the spaces on the Duo's cover (466 wide, status column 84
+    /// at the right): the head's computer stays out of the column, which takes
+    /// every touch, and the foot's capsule stays clear of + and Done (#915).
+    func testSpacesHeadAndFootClearTheCoverColumn() {
+        let size = CGSize(width: 466, height: 678), column = ChromeGeometry.Sides(left: 0, right: 84)
+        let computer = SpacePagesCard.headButton(right: true, width: size.width, sides: column)
+        XCTAssertLessThanOrEqual(computer.maxX, size.width - column.right)
+        let foot = TabGalleryLayout(screen: size, count: 0, verticalControls: false, sides: column)
+        let width = SpacesFootBar.capsuleWidth(foot), mid = SpacesFootBar.capsuleMidX(foot)
+        XCTAssertGreaterThan(mid - width / 2, foot.chats.maxX)
+        XCTAssertLessThan(mid + width / 2, foot.gear.minX)
+    }
+
     func testPlateNeverReachesTheRail() {
         for leading in [false, true] {
             let g = geometry(leading: leading)

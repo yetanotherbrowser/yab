@@ -255,13 +255,22 @@ extension Mcp {
             return done(got) { text("\(got["title"] ?? "") · \(got["url"] ?? "")" + (hidden > 0 ? "\n(\(hidden) piece\(hidden == 1 ? "" : "s") of text a person can't see left out)" : "") + "\n\n\(got["text"] ?? "")") }
         },
         McpTool("screenshot", .read("Take Screenshot"),
-                "A picture of a tab as it is now, for when the snapshot is not enough. Unavailable after card details have been entered in that tab; use snapshot instead.",
-                ["tab": tab],
+                "A picture of a tab as it is now, for when the snapshot is not enough. Unavailable after card details have been entered in that tab; use snapshot instead. retina: true for a PNG at the screen's own pixels, up to 2560 on its long side, to read small type or check a design (about four times the tokens).",
+                ["tab": tab, "retina": ["type": "boolean"]],
                 required: ["tab"]) { name, input, id in
-            let got = ask(["do": "shot", "id": id ?? "", "width": 1024, "inline": true])
+            let retina = input["retina"] as? Bool == true
+            var request: [String: Any] = ["do": "shot", "id": id ?? "", "inline": true]
+            if retina { request["png"] = true } else { request["width"] = 1024 }
+            let got = ask(request)
             if let error = got["error"] as? String { return text(error, error: true) }
-            return ["content": [["type": "image", "data": got["data"] as? String ?? "", "mimeType": "image/jpeg"],
-                                ["type": "text", "text": "\(got["width"] ?? 1024)×\(got["height"] ?? "?") pixels; click(tab, x, y) takes a point in these."]], "isError": false]
+            let wide = got["width"] as? Int ?? 1024
+            // click and drag always take points of the 1024-wide picture
+            // (AgentCoordinates), so a retina one says how to get there.
+            let points = retina && wide > 0
+                ? "\(wide)×\(got["height"] ?? "?") pixels, PNG; click(tab, x, y) takes points of the 1024-wide screenshot: these × \(String(format: "%.4g", 1024 / Double(wide)))."
+                : "\(wide)×\(got["height"] ?? "?") pixels; click(tab, x, y) takes a point in these."
+            return ["content": [["type": "image", "data": got["data"] as? String ?? "", "mimeType": retina ? "image/png" : "image/jpeg"],
+                                ["type": "text", "text": points]], "isError": false]
         },
         McpTool("wait", .read("Wait for Page"),
                 "Wait for a tab to finish loading, or until its text contains `for`.",

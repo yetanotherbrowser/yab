@@ -145,21 +145,20 @@ struct TabGalleryLayer: View {
                 } sheetDrag: { _, _, _ in } about: {} settings: {}
                 .opacity(Double(g.bar * hand))
                 .animation(nil, value: leaving)
-                .position(x: size.width / 2, y: foot.plus.midY)
+                .position(x: SpacesFootBar.capsuleMidX(foot), y: foot.plus.midY)
                 .allowsHitTesting(at && !leaving)
                 .accessibilityHidden(!at || leaving)
                 .accessibilityIdentifier("tabs.spaces")
                 .zIndex(10_000)
                 // Settings at the top left, the computer (the spaces sidebar) at the
                 // top right: where the sidebar's Settings and dots stand.
-                let head = SpacePagesCard.capsuleTop + Metrics.NewTab.highest
+                let sides = app.workspace.sides(ofSurface: size.width)
                 chats(stack, layout: foot, shown: g.phase == .closing ? 0 : g.bar * hand, accessible: at && !leaving, ink: dark ? Ink.onDark : Ink.primary,
-                      rect: CGRect(x: Metrics.NewTab.inset, y: head, width: Metrics.touch, height: Metrics.touch))
+                      rect: SpacePagesCard.headButton(right: false, width: size.width, sides: sides))
                     .animation(nil, value: leaving)
                     .zIndex(10_000)
                 sidebar(stack, shown: g.phase == .closing ? 0 : g.bar, accessible: at && !leaving, ink: dark ? Ink.onDark : Ink.primary,
-                        rect: CGRect(x: size.width - Metrics.NewTab.inset - Metrics.touch, y: head,
-                                     width: Metrics.touch, height: Metrics.touch))
+                        rect: SpacePagesCard.headButton(right: true, width: size.width, sides: sides))
                     .blur(radius: leaveBlur)
                     .opacity(leaveOpacity)
                     .zIndex(10_000)

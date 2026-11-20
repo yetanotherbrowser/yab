@@ -48,7 +48,7 @@ struct StripHost<Content: View>: NSViewRepresentable {
         view.still = context.environment.accessibilityReduceMotion
         view.tone = context.environment.tone
         view.scheme = context.environment.colorScheme
-        view.host.rootView = AnyView(content.environment(\.self, context.environment))
+        view.host.rootView = AnyView(content.hosted(in: context.environment))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: StripView, context: Context) -> CGSize? {

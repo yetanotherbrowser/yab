@@ -4215,7 +4215,7 @@ final class Bench {
                     ?? NSTemporaryDirectory() + "yab-bench-\(Bench.short(tab)).png"
                 let width = request["width"] as? Double
                 if request["inline"] as? Bool == true {
-                    picture(tab.page, width: width, answer)
+                    picture(tab.page, width: width, png: request["png"] as? Bool == true, answer)
                     return
                 }
                 shoot(tab, to: URL(fileURLWithPath: path), width: width, answer)
@@ -4229,7 +4229,7 @@ final class Bench {
                     let width = request["width"] as? Double
                     let image = try await AgentScreenshot.capture(tab, width: width)
                     if request["inline"] as? Bool == true {
-                        picture(image, error: nil, width: width, answer)
+                        picture(image, error: nil, width: width, png: request["png"] as? Bool == true, answer)
                     } else {
                         let path = (request["path"] as? String)
                             ?? NSTemporaryDirectory() + "yab-bench-\(Bench.short(tab)).png"

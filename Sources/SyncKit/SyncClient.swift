@@ -53,7 +53,13 @@ public final class SyncClient: @unchecked Sendable {
     public private(set) var state: State = .off { didSet { if state != oldValue { stateChanged(state) } } }
 
     /// Kept between launches by whoever owns the client (the keychain).
-    public var token: String?
+    /// Written on `queue`, read on main too (SyncCenter, devices): locked.
+    public var token: String? {
+        get { tokenLock.withLock { storedToken } }
+        set { tokenLock.withLock { storedToken = newValue } }
+    }
+    private let tokenLock = NSLock()
+    private var storedToken: String?
     /// What this device says of itself to the others about once a minute
     /// while live (which tab is in front, say), sealed; it is also what
     /// keeps its `lastSeen` fresh on the server. Nil sends nothing.
@@ -93,7 +99,7 @@ public final class SyncClient: @unchecked Sendable {
         self.journal = journal
         self.seal = seal
         self.device = device
-        self.token = token
+        self.storedToken = token
         self.transport = transport ?? WebTransport()
     }
 

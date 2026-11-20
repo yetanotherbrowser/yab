@@ -120,10 +120,14 @@ enum Calc {
         return format
     }
 
-    /// A number in words, the line under a sum's answer.
-    static func spelled(_ value: Double) -> String {
-        guard abs(value) < 1e15 else { return "" }
-        let words = spelling.string(from: NSNumber(value: value)) ?? ""
+    /// A number in words, the line under a sum's answer: the number as the
+    /// card shows it. Spelled from the Double, 100 + 10% was one hundred
+    /// ten point thirteen zeros and a one, every digit the Double keeps: a
+    /// spelling formatter takes no limit on places.
+    static func spelled(_ shown: String) -> String {
+        let number = NSDecimalNumber(string: shown.replacingOccurrences(of: ",", with: ""), locale: Locale(identifier: "en_US"))
+        guard number != .notANumber, abs(number.doubleValue) < 1e15 else { return "" }
+        let words = spelling.string(from: number) ?? ""
         return words.prefix(1).uppercased() + words.dropFirst()
     }
 
@@ -131,7 +135,6 @@ enum Calc {
         let format = NumberFormatter()
         format.locale = Locale(identifier: "en_US")
         format.numberStyle = .spellOut
-        format.maximumFractionDigits = 4
         return format
     }()
 
@@ -175,7 +178,7 @@ enum Calc {
         let question = words.replacingOccurrences(of: "*", with: " × ").replacingOccurrences(of: "/", with: " ÷ ")
             .replacingOccurrences(of: "  ", with: " ")
         return Answer(question: question.trimmingCharacters(in: .whitespaces), questionNote: "Sum",
-                      result: sum.shown, resultNote: spelled(sum.value),
+                      result: sum.shown, resultNote: spelled(sum.shown),
                       copy: sum.shown.replacingOccurrences(of: ",", with: ""))
     }
 
@@ -189,7 +192,7 @@ enum Calc {
             return (1 ..< found.numberOfRanges).compactMap { Range(found.range(at: $0), in: lower).flatMap { Calc.number(String(lower[$0])) } }
         }
         func answer(_ question: String, _ value: Double) -> Answer {
-            Answer(question: question, questionNote: "Percentage", result: shown(value), resultNote: spelled(value),
+            Answer(question: question, questionNote: "Percentage", result: shown(value), resultNote: spelled(shown(value)),
                    copy: shown(value).replacingOccurrences(of: ",", with: ""))
         }
         if let n = match(percents[0]), n.count == 2 {

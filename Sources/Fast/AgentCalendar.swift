@@ -32,17 +32,32 @@ enum AgentCalendar {
         return moment(text).map { Calendar.current.startOfDay(for: $0) }
     }
 
-    /// ISO 8601 with its zone, or without one as local time; seconds optional.
-    static func moment(_ text: String) -> Date? {
-        let text = text.trimmingCharacters(in: .whitespaces)
-        let zoned = ISO8601DateFormatter()
-        zoned.formatOptions = [.withInternetDateTime]
-        if let at = zoned.date(from: text) { return at }
-        let local = DateFormatter()
-        local.locale = Locale(identifier: "en_US_POSIX")
-        for shape in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm"] {
-            local.dateFormat = shape
-            if let at = local.date(from: text) { return at }
+    /// ISO 8601 with its zone, or without one as the time on `zone`'s
+    /// clock (here, unless said). Seconds and their fractions are optional
+    /// either way. The zone is an offset (-06:00, Z) or a name: a space
+    /// before it, or in brackets as RFC 9557 writes it
+    /// (2026-12-03T07:30 America/Mexico_City, 2026-12-03T07:30[America/Bogota]).
+    static func moment(_ text: String, zone: TimeZone = .current) -> Date? {
+        var text = text.trimmingCharacters(in: .whitespaces)
+        var zone = zone
+        if text.hasSuffix("]"), let open = text.lastIndex(of: "[") {
+            guard let named = TimeZone(identifier: String(text[text.index(after: open)..<text.index(before: text.endIndex)])) else { return nil }
+            zone = named
+            text = String(text[..<open])
+        } else if let space = text.lastIndex(of: " "), !text[text.index(after: space)...].contains(":") {
+            // A name after the time (America/Bogota, UTC); a misspelled one is
+            // no time at all, rather than the wrong one.
+            guard let named = TimeZone(identifier: String(text[text.index(after: space)...])) else { return nil }
+            zone = named
+            text = String(text[..<space]).trimmingCharacters(in: .whitespaces)
+        }
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = zone
+        for shape in ["yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX", "yyyy-MM-dd'T'HH:mm:ssXXXXX", "yyyy-MM-dd'T'HH:mmXXXXX",
+                      "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm"] {
+            format.dateFormat = shape
+            if let at = format.date(from: text) { return at }
         }
         return nil
     }
@@ -141,10 +156,10 @@ enum AgentCalendar {
         }
         let title = (request["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return .failure(Failure(text: "calendar_add needs a title")) }
-        guard let start = (request["start"] as? String).flatMap(moment) else {
-            return .failure(Failure(text: "calendar_add needs start as 2026-10-15T09:00 (local) or with its zone"))
+        guard let start = (request["start"] as? String).flatMap({ moment($0) }) else {
+            return .failure(Failure(text: "calendar_add needs start as 2026-10-15T09:00 (local), or with its zone: 2026-10-15T09:00-05:00 or 2026-10-15T09:00 America/Bogota"))
         }
-        let end = (request["end"] as? String).flatMap(moment)
+        let end = (request["end"] as? String).flatMap({ moment($0) })
             ?? start.addingTimeInterval(Double(request["minutes"] as? Int ?? 30) * 60)
         guard end > start else { return .failure(Failure(text: "The end comes before the start")) }
         if let asked = request["account"] as? String, !asked.isEmpty, account(request, accounts: accounts) == nil {

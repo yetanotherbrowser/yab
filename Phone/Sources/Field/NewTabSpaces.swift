@@ -17,8 +17,9 @@ import SyncKit
 final class NewTabPager {
     static let shared = NewTabPager()
 
-    /// The pages' position, fractional while a finger moves them; 0 is Private.
+    /// Position in the card's page order, fractional while the pages scroll.
     var position: CGFloat = 1
+    var pagingByGesture = false
     /// The ordinary space last at rest in the card (kept while on Private).
     var spaceID: Space.ID?
     /// A page the capsule or the eyes asked for; the card scrolls to it.
@@ -185,6 +186,14 @@ struct SpacePagesCard: View {
         let w = min(Metrics.Column.barWidth - Metrics.Column.capsuleInset * 2, free - 2 * (12 + Metrics.touch + 24))
         return CGRect(x: sides.left + (free - w) / 2, y: capsuleTop + Metrics.NewTab.highest, width: w, height: Metrics.Column.barHeight)
     }
+    /// The whole screen's head buttons, Settings at the left and the computer
+    /// (or the dots) at the right, inside what the system reserves at the
+    /// sides: an iPhone Duo's status column takes every touch on it. All Tabs,
+    /// the empty home and the spaces stand them in the same places.
+    static func headButton(right: Bool, width: CGFloat, sides: ChromeGeometry.Sides) -> CGRect {
+        let x = right ? width - sides.right - Metrics.NewTab.inset - Metrics.touch : sides.left + Metrics.NewTab.inset
+        return CGRect(x: x, y: capsuleTop + Metrics.NewTab.highest, width: Metrics.touch, height: Metrics.touch)
+    }
     /// Where a whole screen's page starts, under the capsule.
     static var restHead: CGFloat { capsuleTop + Metrics.NewTab.highest + Metrics.Column.barHeight + 6 }
     /// One content edge for everything in the card, 24 in from its sides: the
@@ -245,7 +254,8 @@ struct SpacePagesCard: View {
                         .opacity(Double(1 - app.field.sidebarBlur))
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, Metrics.NewTab.inset)
+                .padding(.leading, Metrics.NewTab.inset + reserved.left)
+                .padding(.trailing, Metrics.NewTab.inset + reserved.right)
                 .padding(.top, capsuleTopNow)
             } else if showsCapsule {
                 // Search results replace the rows, not the space selector.
@@ -337,7 +347,10 @@ struct SpacePagesCard: View {
             pager.jump = nil
             withAnimation(Motion.space.animation) { page = wanted }
         }
-        .onDisappear { pager.onChats = false; pager.showsArchive = false; pager.spaceFilter = .everything; pager.activeFieldMode = nil }
+        .onDisappear {
+            pager.onChats = false; pager.showsArchive = false; pager.spaceFilter = .everything; pager.activeFieldMode = nil
+            pager.pagingByGesture = false
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("newtab.spaces")
     }
@@ -431,6 +444,7 @@ struct SpacePagesCard: View {
         // A finger on the pages spreads the capsule; 0.28 s after they stop it
         // settles back, as the capsule artifact does. A tap's jump doesn't.
         .onScrollPhaseChange { _, phase in
+            pager.pagingByGesture = phase == .interacting || phase == .decelerating
             if phase == .interacting, !app.field.resting { app.field.putKeyboardAway() }
             switch phase {
             case .tracking, .interacting, .decelerating:
@@ -1321,6 +1335,7 @@ struct CardCapsule: View {
     /// One model for the phone's foot: All Tabs' capsule and the sidebar's are
     /// the same capsule, so nothing moves as one hands over to the other.
     var shared: CardCapsuleDriver?
+    var pagingByGesture = false
     let pick: (Int) -> Void
     let sheetDrag: (CGFloat, Bool, CGFloat) -> Void
     /// Yab's mark on the left, tapped: About Yab.
@@ -1338,6 +1353,7 @@ struct CardCapsule: View {
     var body: some View {
         let pose = driver.pose
         let track = driver.track
+        let capsulePosition = driver.fixedPair && !pagingByGesture ? CGFloat(current) : position
         let h = C.barHeight
         let lens = CGRect(x: pose.lensCenter - pose.lensWidth / 2, y: (h - CapsuleModel.lensHeight) / 2,
                           width: pose.lensWidth, height: CapsuleModel.lensHeight)
@@ -1420,7 +1436,7 @@ struct CardCapsule: View {
         .onAppear { driver.configure(names: names, current: current, width: width, bare: bare) }
         .onChange(of: names) { _, now in driver.configure(names: now, current: current, width: width, bare: bare) }
         .onChange(of: width) { _, now in driver.configure(names: names, current: current, width: now, bare: bare) }
-        .onChange(of: position) { _, now in driver.follow(now, index: current) }
+        .onChange(of: capsulePosition) { _, now in driver.follow(now, index: current, followingPageDrag: pagingByGesture) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("newtab.capsule")
     }
@@ -1479,6 +1495,7 @@ final class CardCapsuleDriver {
     @ObservationIgnored private var lastTicks = 0
 
     var touching: Bool { model.isTouched }
+    var fixedPair: Bool { model.fixedPair }
 
     func configure(names: [String], current: Int, width: CGFloat, bare: Bool = false) {
         guard names != self.names || abs(width - self.width) > 0.5 else { return }
@@ -1489,13 +1506,14 @@ final class CardCapsuleDriver {
                              // At rest it keeps 24 clear of Yab's mark and the gear (12 in, 44 wide);
                              // bare between + and Done, the room between them is all its own.
                              restWidth: bare ? width : min(Metrics.Column.barWidth - Metrics.Column.capsuleInset * 2, width - 2 * (12 + Metrics.touch + 24)),
-                             wideWidth: bare ? width : min(Metrics.Column.barWidth, width - 24), pair: names.count == 2)
+                             wideWidth: bare ? width : min(Metrics.Column.barWidth, width - 24), pair: names.count == 2,
+                             fixedWidth: bare)
         publish()
     }
 
-    func follow(_ position: CGFloat, index: Int) {
+    func follow(_ position: CGFloat, index: Int, followingPageDrag: Bool) {
         guard !model.isTouched else { return }
-        model.follow(position, index: index)
+        model.follow(position, index: index, followingPageDrag: followingPageDrag)
         run()
     }
 

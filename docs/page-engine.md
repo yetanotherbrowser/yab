@@ -35,7 +35,8 @@ Before lazy construction the factory also resolves an exact-host
 WebKit; Chromium remains unavailable in the ordinary WebKit-only factory.
 `Tab.setSiteEngineChoice` applies a live choice through the replacement seam
 below, after the same-space cookie barrier, or records it without waking a
-sleeping tab. Engine selection UI is not implemented yet. See
+sleeping tab. Where Chromium is available, Settings › General has the Default
+engine menu and Engines for Sites (`SettingsEngine.swift`). See
 [`chromium-drm.md`](chromium-drm.md) for precedence and bench acceptance.
 
 `Tab.replaceEngine(with:at:)` is the navigation-boundary switch point. It

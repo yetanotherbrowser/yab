@@ -108,7 +108,7 @@ The whole `swift test` does not finish on a clean Mac yet: its XCTest half passe
 
 ### Driving a running Yab from the shell
 
-Turn on **Settings › General › Let a script drive Yab** in Yab Dev and it listens on a Unix socket in its own folder, readable by your user only. `./bench` speaks it:
+Turn on **Settings › Developers › Let agents use Yab** in Yab Dev and it listens on a Unix socket in its own folder, readable by your user only. `./bench` speaks it:
 
 ```bash
 ./bench --dev open https://example.com

@@ -438,6 +438,8 @@ final class CaptureModel: ObservableObject {
     @Published var busy: String?
     /// The picture's size in points, for which shapes suit it.
     @Published var size = CGSize.zero
+    /// Its view is up in the window's room (CaptureSkyLayer).
+    @Published var up = false
     /// While picking: whether the cookie notice, a chat bubble, anything
     /// fixed over the page is left out.
     var act: (CaptureAction) -> Void = { _ in }
@@ -546,6 +548,7 @@ final class Capture {
             self.view = view
         }
         stage = .picking
+        model.up = true
         chain = []
         level = 0
         model.busy = nil
@@ -1151,6 +1154,7 @@ final class Capture {
         guard stage == .idle || view !== gone else { return }
         gone?.rest()
         guard view === gone else { return }
+        model.up = false
         chain = []
         asking = false
         pending = nil
