@@ -37,5 +37,7 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 	</dict>
+	<key>YabShareKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)dev.serafim.fast.iphone.share</string>
 </dict>
 </plist>

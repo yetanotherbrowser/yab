@@ -73,9 +73,19 @@ enum Entrances {
         }
     }
 
+    static func resumeShared() {
+        guard let app, UIApplication.shared.applicationState == .active else { return }
+        takeShared(in: app)
+    }
+
     private static func takeShared(in app: AppModel) {
-        guard let links = queue?.take(), !links.isEmpty else { return }
-        app.takeShared(links)
+        var local: [SharedLink] = []
+        _ = queue?.take { link in
+            if let imported = app.sync.importShared(link) { return imported }
+            local.append(link)
+            return true
+        }
+        if !local.isEmpty { app.takeShared(local) }
     }
 }
 

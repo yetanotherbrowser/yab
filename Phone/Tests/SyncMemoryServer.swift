@@ -117,6 +117,10 @@ final class SyncMemoryServer: Transport, @unchecked Sendable {
 
     fileprivate func message(_ socket: Socket, _ text: String) {
         lock.lock(); defer { lock.unlock() }
+        // A refused upgrade cannot deliver a frame. Match the real server
+        // even when the sender queues a push before the close callback.
+        guard !down, sockets.contains(where: { $0 === socket }),
+              devices[socket.account]?[socket.device]?.revoked != true else { return }
         guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any], let type = json["t"] as? String else { return }
         let account = socket.account
         devices[account]?[socket.device]?.lastSeen = Date().timeIntervalSince1970 * 1000

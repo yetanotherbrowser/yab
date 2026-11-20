@@ -760,6 +760,26 @@ public final class Journal: @unchecked Sendable {
 
     // MARK: From the server
 
+    /// Local changes made by an extension, with their original stamps.
+    /// Replaying a saved share must neither mint another tab nor overwrite
+    /// edits or removals that arrived while the app was closed.
+    public func importLocal(_ incoming: Record) throws -> Record {
+        try queue.sync {
+            var merged = incoming
+            try transaction {
+                for stamp in incoming.stamps.values { clock.observe(stamp) }
+                if let deleted = incoming.deleted { clock.observe(deleted) }
+                let had = load(incoming.key)
+                merged = had.map { $0.record.merged(with: incoming) } ?? incoming
+                if had?.record != merged {
+                    try save(merged, dirty: true, version: had?.version)
+                }
+                persistClock()
+            }
+            return merged
+        }
+    }
+
     /// Records from elsewhere, merged in. Returns the merged records whose
     /// fields or life changed here, for the mirrors to write into Yab's
     /// own files. A record still dirty here stays dirty: the merge holds
