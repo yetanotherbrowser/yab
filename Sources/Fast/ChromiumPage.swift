@@ -44,6 +44,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     let fileRequests = PageFileRequests()
     let questionRequests = ChromiumQuestionRequests()
     let dragState = ChromiumDragState()
+    var touch = ChromiumTouchSequence()
     var topGrab = false {
         didSet { if !topGrab { topGrabPoint = nil } }
     }
@@ -275,6 +276,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         // as a WebKit link view does. A generic one-stage press cannot Peek.
         pressureConfiguration = NSPressureConfiguration(pressureBehavior: .primaryDeepClick)
         registerForDraggedTypes(Self.draggedTypes)
+        addTouchPan()
         scripts.page = self
         scripts.tab = tab
         wantsLayer = true
@@ -1430,6 +1432,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); updateSurface() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        touchInterrupted()
         if window != nil { recoverPage() }
         if window == nil { hoverLeft(); receiveTooltip("") }
         updateSurface()
@@ -1441,7 +1444,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         if accepted { DispatchQueue.main.async { [weak self] in self?.focusChanged() } }
         return accepted
     }
-    override func viewDidHide() { super.viewDidHide(); hoverLeft(); syncGeometry(); focusChanged() }
+    override func viewDidHide() { super.viewDidHide(); touchInterrupted(); hoverLeft(); syncGeometry(); focusChanged() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); scripts.appearanceChanged() }
     override func viewDidUnhide() { super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon() }
 
@@ -2043,7 +2046,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) { lastInput = ProcessInfo.processInfo.systemUptime }
         if let tab = navigationTab, tab.builtPage === self, tab.deaf != nil,
            let browser = tab.delegate as? Browser { browser.reachedDeaf(tab) }
-        if ["mouseDown", "rightDown", "middleDown", "mouseDrag", "rightDrag", "wheel", "magnify", "smartMagnify", "keyDown", "text"].contains(kind) { pageCopyTurn &+= 1 }
+        if ["mouseDown", "rightDown", "middleDown", "mouseDrag", "rightDrag", "wheel", "touchStart", "touchMove", "magnify", "smartMagnify", "keyDown", "text"].contains(kind) { pageCopyTurn &+= 1 }
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) {
             RelayGuard.felt(self)
             AgentFeed.shared.person(self)
@@ -2084,7 +2087,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                     }
                 }
             }
-        } else if kind == "wheel" || ["mouseDown", "mouseUp", "mouseMove", "mouseDrag", "mouseLeave",
+        } else if kind == "wheel" || ChromiumTouchInput.kinds.contains(kind) || ["mouseDown", "mouseUp", "mouseMove", "mouseDrag", "mouseLeave",
                                      "rightDown", "rightUp", "rightDrag", "middleDown", "middleUp", "middleDrag"].contains(kind) {
             // Preserve wire order, including the original press, without a
             // renderer acknowledgement between every movement. CDP replies
