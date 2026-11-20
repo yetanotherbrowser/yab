@@ -1919,7 +1919,7 @@ struct SideBar: View {
                 if SpaceDrop.shared.track(browser.tabs(in: nest), browser: browser, folder: nest) { return }
                 let want = Double(carried.fromSlot) + Double(nestTravel / step)
                 let deep = Self.deep(from: nest.depth - 1, sideways: value.translation.width)
-                let next = folders.nestLanding(nest, want: want, deep: deep, among: looseTabs, current: carried.landing)
+                let next = folders.nestLanding(nest, want: want, deep: deep, among: looseTabs, joined: !browser.pairs.isEmpty, current: carried.landing)
                 if next != carried.landing {
                     if next.index != carried.index || (next.into != nil) != (carried.into != nil) { tick() }
                     withAnimation(Motion.settle) {
