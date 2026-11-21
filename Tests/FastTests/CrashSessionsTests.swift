@@ -191,4 +191,92 @@ final class CrashSessionsTests: XCTestCase {
         await fulfillment(of: [changed], timeout: 12)
         withExtendedLifetime(watcher) {}
     }
+
+    private func marked(_ ledger: CrashSessionLedger) throws -> CrashSessionLedger.Run {
+        _ = try ledger.pending()
+        return try JSONDecoder().decode(CrashSessionLedger.Run.self, from: Data(contentsOf: ledger.marker))
+    }
+
+    func testAnUnchangedRunIsWrittenOnlyOnceABeat() throws {
+        let (folder, ledger) = try fixture()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let run = makeRun()
+        try ledger.begin(run)
+        let start = run.observed
+        // Looked at again and again with nothing new: the marker stays as written.
+        for seconds in [10.0, 20, 30] {
+            ledger.observe(at: start.addingTimeInterval(seconds)) { $0.uptime += 15; $0.memoryBytes = UInt64(seconds) }
+        }
+        XCTAssertEqual(try marked(ledger).observed, start)
+        // A beat on, it is written whatever: the exit is looked for up to two minutes after.
+        ledger.observe(at: start.addingTimeInterval(CrashSessionLedger.beat)) { _ in }
+        XCTAssertEqual(try marked(ledger).observed, start.addingTimeInterval(CrashSessionLedger.beat))
+        // Something new is written at once.
+        ledger.observe(at: start.addingTimeInterval(CrashSessionLedger.beat + 15)) { $0.tabs = 38 }
+        let now = try marked(ledger)
+        XCTAssertEqual(now.tabs, 38)
+        XCTAssertEqual(now.observed, start.addingTimeInterval(CrashSessionLedger.beat + 15))
+        try ledger.finish()
+    }
+
+    @MainActor func testTheRunIsLookedAtLessWhileYabIsBehind() {
+        XCTAssertEqual(CrashSessions.every(active: true), 15)
+        XCTAssertEqual(CrashSessions.every(active: false), 60)
+        // A slow look a moment early still writes.
+        XCTAssertLessThan(CrashSessionLedger.beat, CrashSessions.every(active: false))
+    }
+
+    @MainActor func testAnExitAfterASkippedLookThenASlowOneIsStillLookedFor() throws {
+        let (folder, ledger) = try fixture()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let run = makeRun()
+        try ledger.begin(run)
+        let start = run.observed
+        // Yab coming forward brought a look to just short of a beat: it skips writing.
+        let skipped = start.addingTimeInterval(CrashSessionLedger.beat - 1)
+        ledger.observe(at: skipped) { _ in }
+        XCTAssertEqual(try marked(ledger).observed, start)
+        // Switched away before it fired, so the next look is the slowest one
+        // later, and the main thread hangs a moment before it.
+        let hang = skipped.addingTimeInterval(CrashSessions.every(active: false) - 1)
+        // The person waits as long as before (one 15 s look, the exit looked
+        // for 120 s after it) before force-quitting.
+        let exit = hang.addingTimeInterval(120 - 15)
+        let through = CrashExitLogs.window(try marked(ledger), now: exit.addingTimeInterval(3600)).through
+        XCTAssertGreaterThanOrEqual(through, exit)
+        try ledger.finish()
+    }
+
+    func testAWriteBetweenBeatsCarriesTheLatestLook() throws {
+        let (folder, ledger) = try fixture()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let run = makeRun()
+        try ledger.begin(run)
+        let start = run.observed
+        ledger.observe(at: start.addingTimeInterval(15)) { $0.uptime += 15; $0.memoryBytes = 300 << 20 }
+        XCTAssertEqual(try marked(ledger).observed, start)
+        // A pressure notice or a helper's death writes the run as last looked
+        // at, not as last written: a jetsam report shows the memory at the end.
+        ledger.update { $0.memoryPressure = "critical" }
+        let pressed = try marked(ledger)
+        XCTAssertEqual(pressed.memoryBytes, 300 << 20)
+        XCTAssertEqual(pressed.observed, start.addingTimeInterval(15))
+        XCTAssertEqual(pressed.memoryPressure, "critical")
+        // A slow climb is still measured from what was written.
+        ledger.observe(at: start.addingTimeInterval(30)) { $0.memoryBytes = 700 << 20 }
+        XCTAssertEqual(try marked(ledger).observed, start.addingTimeInterval(15))
+        ledger.observe(at: start.addingTimeInterval(40)) { $0.memoryBytes = 900 << 20 }
+        XCTAssertEqual(try marked(ledger).memoryBytes, 900 << 20)
+        try ledger.finish()
+    }
+
+    func testAMemoryClimbIsWrittenAtOnce() {
+        var run = makeRun(), climbed = run
+        run.memoryBytes = 3 << 30
+        climbed.memoryBytes = 4 << 30
+        // An out-of-memory exit's marker shows the climb, not memory a beat old.
+        XCTAssertFalse(CrashSessionLedger.same(run, climbed))
+        climbed.memoryBytes = (3 << 30) + (100 << 20)
+        XCTAssertTrue(CrashSessionLedger.same(run, climbed))
+    }
 }

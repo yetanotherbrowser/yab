@@ -404,7 +404,11 @@ final class FeedbackDiagnostics {
     }
 
     /// "Mac15,8": letters, digits and commas, nothing else.
-    nonisolated static func model() -> String {
+    /// Read once: the crash heartbeat asked the kernel for it four times a
+    /// minute, up to half a second each on a busy Mac.
+    nonisolated static func model() -> String { readModel }
+
+    private nonisolated static let readModel: String = {
         var size = 0
         sysctlbyname("hw.model", nil, &size, nil, 0)
         var chars = [CChar](repeating: 0, count: max(size, 1))
@@ -413,7 +417,7 @@ final class FeedbackDiagnostics {
         let fine = !model.isEmpty && model.count <= 32
             && model.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "," }
         return fine ? model : "unknown"
-    }
+    }()
 
     nonisolated static func thermal(_ state: ProcessInfo.ThermalState) -> String {
         switch state {

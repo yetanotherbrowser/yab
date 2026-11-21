@@ -24,6 +24,20 @@ enum MemoryCeiling {
     nonisolated(unsafe) private static var override: UInt64 = 0
     nonisolated(unsafe) private static var pageCount: Int?
     nonisolated(unsafe) private static var latest: Sample?
+    nonisolated(unsafe) private static var agentsWorking = false
+    nonisolated(unsafe) private static var pace: TimeInterval = quick
+
+    /// Every few seconds while an agent works or a page is a quarter of the
+    /// way to the ceiling, two gigabytes at the least; every 15 seconds
+    /// otherwise. A page grows gigabytes a minute, so one far from the
+    /// ceiling can't reach it between two slow looks, and the main thread's
+    /// census of page processes ran every five seconds all day for nothing.
+    static let quick: TimeInterval = 5
+    static let slow: TimeInterval = 15
+
+    static func every(agents: Bool, largest: UInt64, ceiling: UInt64) -> TimeInterval {
+        agents || largest >= ceiling / 4 ? quick : slow
+    }
 
     /// Numbers from the existing watch, with no process or page identifiers.
     struct Sample {
@@ -64,27 +78,41 @@ enum MemoryCeiling {
         let set = Store.settings.double(forKey: "memory.ceiling")
         if set > 0 { override = UInt64(set) << 20 }
         let source = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "memory.ceiling", qos: .utility))
-        source.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
+        source.schedule(deadline: .now() + quick, repeating: quick, leeway: .seconds(1))
         source.setEventHandler { look() }
         source.resume()
         timer = source
         // WebKit's own list of its page processes, read where it may be.
         let names = DispatchSource.makeTimerSource(queue: .main)
-        names.schedule(deadline: .now() + 1, repeating: 5, leeway: .seconds(1))
+        names.schedule(deadline: .now() + 1, repeating: quick, leeway: .seconds(1))
         names.setEventHandler {
-            MainActor.assumeIsolated { publish(PageProcesses.census()?.map(\.pid)) }
+            MainActor.assumeIsolated {
+                let agents = BrowserWindows.shared.browsers.contains { $0.everyTab.contains { $0.worker != nil } }
+                publish(PageProcesses.census()?.map(\.pid), agents: agents)
+            }
         }
         names.resume()
         naming = names
     }
 
     /// The page processes running now, from the main thread.
-    static func publish(_ pids: [Int32]?) {
+    static func publish(_ pids: [Int32]?, agents: Bool = false) {
         var next: [Int32: UInt64] = [:]
         for pid in pids ?? [] { if let born = started(pid) { next[pid] = born } }
         lock.lock()
         pages = next
         pageCount = pids.map { Set($0).count }
+        let was = agentsWorking
+        agentsWorking = agents
+        // An agent seen starting is weighed now, not a slow look on. An
+        // agent's page starts small: a slow look to the census is far
+        // short of what it takes to grow to a quarter of the ceiling.
+        // Under the lock, so a look finishing meanwhile can't put it back.
+        if agents, !was {
+            pace = quick
+            timer?.schedule(deadline: .now(), repeating: quick, leeway: .seconds(1))
+            naming?.schedule(deadline: .now() + quick - 1, repeating: quick, leeway: .milliseconds(500))
+        }
         lock.unlock()
     }
 
@@ -120,6 +148,14 @@ enum MemoryCeiling {
                               webProcessCount: count, footprints: footprints)
         lock.lock()
         latest = measured
+        let next = every(agents: agentsWorking, largest: footprints.max() ?? 0, ceiling: limit)
+        if next != pace {
+            pace = next
+            let leeway = DispatchTimeInterval.seconds(next > quick ? 5 : 1)
+            // The census just ahead of each look, so a page opened since is weighed at it.
+            timer?.schedule(deadline: .now() + next, repeating: next, leeway: leeway)
+            naming?.schedule(deadline: .now() + next - 1, repeating: next, leeway: .milliseconds(500))
+        }
         lock.unlock()
     }
 

@@ -2913,6 +2913,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
     @ObservationIgnored var passedOverSince: TimeInterval?
     /// The next look while memory stays short (`lookAgain`).
     @ObservationIgnored var nextLook: DispatchWorkItem?
+    /// The window is gone (`stopWatching`): a relief under way looks no more.
+    @ObservationIgnored var stoppedWatching = false
     /// The tabs you were last on, the one just left first (Sleep.swift:
     /// the few you go back and forth between are not put to sleep).
     @ObservationIgnored var recent: [Tab.ID] = []
@@ -9409,6 +9411,7 @@ extension Browser {
     /// Reopened, the window comes back from its session file.
     func letGo() {
         fullscreenDeparture.stop()
+        stopWatching()
         for tab in tabs + parkedTabs + outside { tab.close() }
     }
 

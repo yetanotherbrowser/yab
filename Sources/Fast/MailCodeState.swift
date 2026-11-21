@@ -24,9 +24,19 @@ struct MailCodeItem: Identifiable, Equatable {
 
 @MainActor
 final class MailCodeState: ObservableObject {
-    static let shared = MailCodeState()
+    static let shared: MailCodeState = {
+        let state = MailCodeState()
+        // A newer code, or one entered elsewhere, comes with the mail: what
+        // the old one reads changes then, not at a time this side can know.
+        state.mail = MailCenter.shared.$changed.dropFirst().sink { [weak state] _ in state?.revision &+= 1 }
+        return state
+    }()
+    private var mail: AnyCancellable?
     @Published private(set) var revision = 0
+    /// Set for the moment a code read here next reads differently, and only
+    /// then: a clock every second redrew every code on screen all day.
     private(set) var timer: Timer?
+    private var due: Date?
     private var uses = Set<String>()
     private var copiedID: String?
     private var copiedCount: Int?
@@ -35,13 +45,72 @@ final class MailCodeState: ObservableObject {
     private var absent = Set<String>()
     private(set) var copyTimes: [String: Date] = [:]
 
+    /// A page started or stopped waiting for a code (Tab.waitingCode): a
+    /// card's "Fill on" button follows it.
+    static let codeBoxMoved = PassthroughSubject<Void, Never>()
+
+    /// Told on the next turn of the main loop: a page can be built while a view is drawn.
+    static func boxMoved() {
+        DispatchQueue.main.async { codeBoxMoved.send() }
+    }
+    private var boxes: AnyCancellable?
+
     init() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        boxes = Self.codeBoxMoved.sink { [weak self] in self?.revision &+= 1 }
+    }
+
+    /// The sender's next newer code's date per account and message, as of the mail center's last change.
+    private var replaced: [String: Date?] = [:]
+    private var replacedRevision = -1
+
+    private func replacedAt(_ item: MailCodeItem) -> Date? {
+        if replacedRevision != MailCenter.shared.changed {
+            replacedRevision = MailCenter.shared.changed
+            replaced.removeAll()
+        }
+        let key = item.account + "|" + item.message
+        if let known = replaced[key] { return known }
+        let at = MailCenter.shared.engines[item.account]?.store.codeReplacedAt(message: item.message)
+        replaced[key] = .some(at)
+        return at
+    }
+
+    /// When a code reads differently next: its minutes left going down by
+    /// one, its end, or one dated ahead coming due. Nil once used or expired.
+    /// `replacedAt`: the date of the sender's next newer code, which replaces
+    /// this one half a minute before it (MailStore.codeReplaced).
+    nonisolated static func nextChange(_ item: MailCodeItem, state: MailCodes.State, now: Date, replacedAt: Date? = nil) -> Date? {
+        if item.at > now.addingTimeInterval(30) { return item.at.addingTimeInterval(-30) }
+        guard state == .fresh || state == .copied else { return nil }
+        let left = item.expires.timeIntervalSince(now)
+        guard left > 0 else { return nil }
+        let minute = item.expires.addingTimeInterval(-60 * (ceil(left / 60) - 1))
+        guard let replaced = replacedAt?.addingTimeInterval(-30), replaced > now else { return minute }
+        return min(minute, replaced)
+    }
+
+    private func wake(at date: Date) {
+        if let due, due <= date, timer != nil { return }
+        due = date
+        timer?.invalidate()
+        let timer = Timer(fire: date.addingTimeInterval(0.05), interval: 0, repeats: false) { [weak self] _ in
             // Crash #1010 faults in executor lookup, before the tick runs.
             // Foundation calls this timer on the main run loop.
-            AppKitMainThread.sync { self?.revision &+= 1 }
+            AppKitMainThread.sync { self?.tick() }
         }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
+
+    /// Every code drawn reads itself again, and asks for the next wake.
+    private func tick() {
+        timer = nil; due = nil
+        revision &+= 1
+    }
+
+    /// The clipboard no longer holds the code copied: it reads fresh again.
+    func clipboardMoved() { revision &+= 1 }
 
     func item(account: String, thread: String, message: String? = nil) -> MailCodeItem? {
         if cachedRevision != MailCenter.shared.changed {
@@ -72,6 +141,13 @@ final class MailCodeState: ObservableObject {
     }
 
     func state(_ item: MailCodeItem, now: Date = Date()) -> MailCodes.State {
+        let state = reading(item, now: now)
+        let replacedAt = state == .fresh || state == .copied ? replacedAt(item) : nil
+        if let next = Self.nextChange(item, state: state, now: now, replacedAt: replacedAt) { wake(at: next) }
+        return state
+    }
+
+    private func reading(_ item: MailCodeItem, now: Date) -> MailCodes.State {
         let store = MailCenter.shared.engines[item.account]?.store
         if uses.contains(item.id) || store?.codeUse(message: item.message) != nil { return .used }
         if item.at > now.addingTimeInterval(30) || now >= item.expires || store?.codeReplaced(message: item.message, now: now) == true { return .expired }
@@ -119,5 +195,6 @@ final class MailCodeState: ObservableObject {
 extension CodeClip {
     static let shared = CodeClip(onCopy: { MailCodeState.shared.copied($0, count: $1) },
                                  onUse: { MailCodeState.shared.used($0, site: $1) },
-                                 canKeep: { MailCodeState.shared.available($0) })
+                                 canKeep: { MailCodeState.shared.available($0) },
+                                 onForget: { MailCodeState.shared.clipboardMoved() })
 }

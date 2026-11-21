@@ -14,11 +14,12 @@ final class CodeClip {
     private let onCopy: (String, Int) -> Void
     private let onUse: (SentCode, String) -> Void
     private let canKeep: (SentCode) -> Bool
+    private let onForget: () -> Void
 
     init(board: NSPasteboard = .general, onCopy: @escaping (String, Int) -> Void = { _, _ in },
          onUse: @escaping (SentCode, String) -> Void = { _, _ in },
-         canKeep: @escaping (SentCode) -> Bool = { _ in true }) {
-        self.board = board; self.onCopy = onCopy; self.onUse = onUse; self.canKeep = canKeep
+         canKeep: @escaping (SentCode) -> Bool = { _ in true }, onForget: @escaping () -> Void = {}) {
+        self.board = board; self.onCopy = onCopy; self.onUse = onUse; self.canKeep = canKeep; self.onForget = onForget
     }
 
     deinit { timer?.invalidate() }
@@ -62,6 +63,8 @@ final class CodeClip {
 
     private func forget() {
         timer?.invalidate(); timer = nil
+        let held = id != nil
         id = nil; read = nil; count = nil; expires = nil; sent = nil
+        if held { onForget() }
     }
 }
