@@ -102,6 +102,9 @@ final class WebPool: NSObject {
     private(set) var transfers: [UUID: PageDownload] = [:]
     /// Everything downloaded (DownloadStore).
     let downloads: DownloadStore
+    /// The system's transfers, for a file still coming when iOS suspends Yab
+    /// (PageDownload.handOff); nil keeps every file in WebKit (tests).
+    var background: BackgroundDownloads?
     /// A site wants to send a file: nil lets it (tests of the transfer itself).
     var onDownloadAsk: (@MainActor (DownloadAsk, @escaping @MainActor (Bool) -> Void) -> Void)?
     private var pageInteractionsEnabled = true
@@ -2227,7 +2230,8 @@ extension WebPool: WKNavigationDelegate {
             },
             retry: { [weak self] entry, store, request in
                 self?.retryDownload(entry, store, request, page: page, tab: id) ?? false
-            }, ended: { [weak self] token in self?.transfers[token] = nil })
+            }, ended: { [weak self] token in self?.transfers[token] = nil },
+            background: background)
         transfers[job.id] = job
         if appAway { job.leave() }
     }

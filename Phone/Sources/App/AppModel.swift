@@ -87,8 +87,14 @@ final class AppModel {
         if fixturesEnabled { websiteDataStore = WKWebsiteDataStore(forIdentifier: world.dataStoreID) }
         else if let id = profile?.dataStoreID { websiteDataStore = WKWebsiteDataStore(forIdentifier: id) }
         else { websiteDataStore = .nonPersistent() }
+        // Test worlds and profiles keep their files to themselves; only the
+        // app's own store outside tests takes the system's background
+        // transfers (BackgroundDownloads), which write the same shared one.
+        let ownStore = !fixturesEnabled && UserDefaults.standard.string(forKey: "YabProfileDirectory") == nil
+        let system = ownStore && !LaunchOptions.current.isTestRun
         pages = WebPool(dataStore: websiteDataStore, fixturesEnabled: fixturesEnabled,
-                        downloads: fixturesEnabled || UserDefaults.standard.string(forKey: "YabProfileDirectory") != nil ? .temporary() : .standard())
+                        downloads: system ? .shared : ownStore ? .standard() : .temporary())
+        if system { pages.background = BackgroundDownloads.shared }
         siteSettings = SiteSettings(defaults: fixturesEnabled ? nil : .standard)
         pages.siteSettings = siteSettings
         pages.spaceForTab = { [weak self] id in self?.browser.space(holding: id) }

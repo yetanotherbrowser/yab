@@ -8,7 +8,11 @@ import WebKit
 /// A transfer belongs to no page: it goes on when the page navigates, its tab
 /// changes or closes. Yab going to the background doesn't stop it either: a
 /// background task keeps it running, and whatever it came to is said when the
-/// person is back. Only the private tabs ending take a private one with them.
+/// person is back. When that time runs out with the file unfinished, a file
+/// the system can fetch again as it was (BackgroundTransfer) goes on in the
+/// system's background session (BackgroundDownloads) under the same row;
+/// any other (private, blob:, data:, a POST) stays in WebKit for as long as
+/// iOS lets it. Only the private tabs ending take a private one with them.
 @MainActor
 final class PageDownload: NSObject, WKDownloadDelegate {
     enum Phase { case waiting, transferring, ready, failed, cancelled }
@@ -42,15 +46,28 @@ final class PageDownload: NSObject, WKDownloadDelegate {
     /// Yab is in the background: a task keeps the bytes coming.
     private(set) var away = false
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var noBackgroundTime = false
+    /// The system's transfers, for the moment iOS ends Yab's background time.
+    private let background: BackgroundDownloads?
+    /// What the site answered, and the size it said: what decides a hand-off.
+    private var response: URLResponse?
+    private var total: Int64?
+    /// The system's request, made while Yab still has time (the cookies are
+    /// read from WebKit's store asynchronously), sent only when time is up.
+    private(set) var prepared: URLRequest?
+    /// The system took the transfer over: this one leaves the row to it.
+    private(set) var handedOff = false
 
     /// `entry`: the failed row a Retry starts again under, already asked about.
     init(download: WKDownload, source: Source, store: DownloadStore, entry: UUID? = nil,
          ask: @escaping @MainActor (DownloadAsk, @escaping @MainActor (Bool) -> Void) -> Void,
-         retry: @escaping @MainActor (UUID, WKWebsiteDataStore?, URLRequest) -> Bool, ended: @escaping @MainActor (UUID) -> Void) {
+         retry: @escaping @MainActor (UUID, WKWebsiteDataStore?, URLRequest) -> Bool, ended: @escaping @MainActor (UUID) -> Void,
+         background: BackgroundDownloads? = nil) {
         id = entry ?? UUID()
         self.download = download; self.source = source; downloads = store
         approved = entry != nil
         self.ask = ask; self.retry = retry; self.ended = ended
+        self.background = background
         self.store = download.webView?.configuration.websiteDataStore
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("yab-download-\(UUID())", isDirectory: true)
         super.init()
@@ -64,20 +81,60 @@ final class PageDownload: NSObject, WKDownloadDelegate {
         }
     }
 
-    /// Yab goes to the background: the transfer goes on while iOS gives it time.
+    /// Yab goes to the background: the transfer goes on while iOS gives it
+    /// time, and the system's request is made ready for when that ends.
     func leave() {
         guard !removed, !cancelling, !away else { return }
         away = true
         guard phase == .transferring, backgroundTask == .invalid else { return }
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Download") { [weak self] in
-            MainActor.assumeIsolated { self?.endBackgroundTask() }
+            MainActor.assumeIsolated {
+                self?.handOff()
+                self?.endBackgroundTask()
+            }
         }
+        noBackgroundTime = backgroundTask == .invalid
+        prepareHandOff()
     }
 
     func comeBack() {
         guard away, !removed else { return }
         away = false
+        noBackgroundTime = false
+        prepared = nil
         endBackgroundTask()
+    }
+
+    /// Only an anonymous file from a persistent, non-private website store.
+    private func prepareHandOff() {
+        guard background != nil, prepared == nil, let store, store.isPersistent,
+              let url = BackgroundTransfer.eligibleURL(original: download.originalRequest, response: response,
+                                                       isPrivate: source.isPrivate) else { return }
+        let original = download.originalRequest, page = source.host
+        store.httpCookieStore.getAllCookies { [weak self] cookies in
+            guard let self, self.away, self.phase == .transferring, !self.cancelling, !self.removed else { return }
+            self.prepared = BackgroundTransfer.request(for: url, original: original, page: page, cookies: cookies)
+            // iOS gave no time at all: hand it over now.
+            if self.noBackgroundTime { self.handOff() }
+        }
+    }
+
+    /// Time is up: the system starts the file again under the same row, and
+    /// WebKit's writer is closed without touching it.
+    func handOff() {
+        guard UIApplication.shared.applicationState == .background,
+              let background, let request = prepared, away, phase == .transferring, !cancelling, !removed,
+              let name = destination?.lastPathComponent else { return }
+        prepared = nil
+        background.start(request, record: .init(id: id, name: name, host: source.host, total: total))
+        handedOff = true
+        cancelling = true; progressWatch = nil
+        download.cancel { [self] _ in
+            endBackgroundTask()
+            phase = .cancelled; download.delegate = nil
+            try? FileManager.default.removeItem(at: directory)
+            removed = true; ended(id)
+        }
     }
 
     private func endBackgroundTask() {
@@ -139,6 +196,7 @@ final class PageDownload: NSObject, WKDownloadDelegate {
         guard self.download === download, phase == .waiting, !cancelling, !answerTaken else { completionHandler(nil); cancel(); return }
         answerTaken = true
         destinationAnswer = completionHandler
+        self.response = response
         let name = Self.filename(suggestedFilename)
         let total = response.expectedContentLength > 0 ? response.expectedContentLength : nil
         let go: @MainActor (Bool) -> Void = { [weak self] yes in
@@ -157,6 +215,7 @@ final class PageDownload: NSObject, WKDownloadDelegate {
             guard !FileManager.default.fileExists(atPath: target.path) else { cancel(); return }
             phase = .transferring
             destination = target
+            self.total = total
             downloads.begin(id, name: name, host: source.host, total: total, isPrivate: source.isPrivate,
                         control: .init(stop: { [weak self] in self?.cancel() }, retry: nil))
             if away { away = false; leave() }
