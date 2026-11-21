@@ -104,7 +104,7 @@ Set your own team under Signing & Capabilities (the project names the maintainer
 
 The pre-commit hook (`.githooks/pre-commit`) runs the last two on every commit. CI runs the same checks on your pull request with `--base`, against the branch you are merging into.
 
-The whole `swift test` does not finish on a clean Mac yet: its XCTest half passes (302 tests, one known failure in `QuietSitesTests`), then the swift-testing half stalls after about 170 of 4,300 tests. Until that is fixed, run the suites for what you changed, as CI does. Two suites also fail outside the maintainers' machines today: `TuneWatchLifecycleTests` expects their test environment, and `MailSlotsTests.zonesAsPeopleWriteThem` depends on the Mac's time zone names. Mention them in your pull request only if your change touches them.
+The whole `swift test` does not finish on a clean Mac yet: its XCTest half passes (302 tests, one known failure in `QuietSitesTests`), then the swift-testing half stalls after about 170 of 4,300 tests. Until that is fixed, run the suites for what you changed, as CI does. The `TuneWatchLifecycleTests` suite expects the maintainers' test environment. Mention that in your pull request only if your change touches it.
 
 ### Driving a running Yab from the shell
 
