@@ -24,6 +24,10 @@ final class ChromiumCloseBatch {
             .object(["tab": .string(remote), "owner": .string(owner),
                      "document": .string(document ?? ""), "token": .string(token ?? "")])
         }
+        func beginCommit() {
+            committing = true
+            if live { page.touchInterrupted() }
+        }
     }
     static var active: [ObjectIdentifier: Entry] = [:]
     /// lifecycle.inc's words when the SDK has no patch 0039.
@@ -181,9 +185,14 @@ final class ChromiumCloseBatch {
         // refusal by nobody is not a person's Stay. The pages close the plain
         // way. Only this falls through; a real Stay or a question up holds.
         if unavailable { finish(true); return true }
+        guard valid, entries.allSatisfy(\.live), ChromiumProcess.shared.isCurrent(core) else {
+            await cancelNative(); finish(false); return false
+        }
         // The helper validates every exact native document tree in one UI
         // task, marks all closing and commits without an event-loop yield.
-        entries.forEach { $0.committing = true }
+        // Send each reset before the batch uses the same socket. Its gesture
+        // number also rejects steps still waiting if native close retains the tab.
+        entries.forEach { $0.beginCommit() }
         let reply = try? await core.request("tabs.close.commit", params: ["approvals": .array(entries.map(\.wire))], timeout: 300)
         let outcome = reply.flatMap { ChromiumCloseOutcome($0, requested: Set(entries.map(\.remote))) }
         let allClosed = outcome?.allClosed == true

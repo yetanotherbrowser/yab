@@ -18,7 +18,7 @@ public actor YabCoreClient {
     }
     public nonisolated let events: AsyncStream<YabCoreEvent>
     private nonisolated let eventFlow: EventFlow
-    private let socket: Socket
+    private nonisolated let socket: Socket
     private let diagnosticObservation: Bool
     private let diagnosticImagePinned: Bool
     private var originalDiagnosticHello: JSONValue?
@@ -286,6 +286,14 @@ public actor YabCoreClient {
     /// `submitted` fires exactly once, including failure before submission.
     public func sendInput(_ params: [String: JSONValue], submitted: @escaping @Sendable () -> Void) async throws -> JSONValue {
         try await request("input.send", params: params, timeout: 20, submitted: submitted)
+    }
+    /// Retire a view's touch gesture. Queue the frame immediately
+    /// on the same socket, even when ordinary requests are waiting for slots.
+    /// The helper's acknowledgement has no waiter.
+    public nonisolated func resetTouch(tab: String, through gesture: Int) {
+        let request = Request(id: UUID().uuidString, method: "input.resetTouch",
+                              params: ["tab": .string(tab), "gesture": .number(Double(gesture))])
+        if let data = try? JSONEncoder().encode(request) { socket.sendTouchReset(data, tab: tab, through: gesture) }
     }
     /// Any request the same way: what is sent after `submitted` reaches the
     /// helper after it (a page's picture before its hide).

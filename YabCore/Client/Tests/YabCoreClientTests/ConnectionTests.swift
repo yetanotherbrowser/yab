@@ -7,7 +7,8 @@ private final class Stub: @unchecked Sendable {
     let path: String
     private let listener: Int32
     private let queue = DispatchQueue(label: "YabCoreClientTests.stub")
-    init(mode: String) throws {
+    init(mode: String, readGate: DispatchSemaphore? = nil,
+         onTouchReset: (@Sendable (Int, String?, Int?) -> Void)? = nil) throws {
         path = "/tmp/yc-test-\(UUID().uuidString).sock"
         var addr = sockaddr_un(); addr.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8) + [0]
@@ -27,6 +28,7 @@ private final class Stub: @unchecked Sendable {
             var yes: Int32 = 1
             setsockopt(peer, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout.size(ofValue: yes)))
             var input = Data(), held: String?
+            var heldCount = 0
             var buffer = [UInt8](repeating: 0, count: 4096)
             func send(_ object: [String: Any]) {
                 guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
@@ -45,14 +47,30 @@ private final class Stub: @unchecked Sendable {
             while true {
                 let n = Darwin.read(peer, &buffer, buffer.count)
                 if n <= 0 { return }
+                var scanned = input.count
                 input.append(contentsOf: buffer.prefix(n))
-                while let newline = input.firstIndex(of: 10) {
+                while let newline = input.dropFirst(scanned).firstIndex(of: 10) {
                     let data = Data(input[..<newline]); input.removeSubrange(...newline)
+                    scanned = 0
                     let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                     if object?["flow"] != nil { continue } // event credit: the wire's own frame
                     guard let request = object, let id = request["id"] as? String else { return }
                     if request["method"] as? String == "hello" {
                         send(["v": 1, "id": id, "result": ["version": 1, "eventFlow": 1]])
+                        readGate?.wait()
+                    } else if let onTouchReset {
+                        if request["method"] as? String == "input.resetTouch" {
+                            let params = request["params"] as? [String: Any]
+                            onTouchReset(heldCount, params?["tab"] as? String, params?["gesture"] as? Int)
+                            send(["v": 1, "id": id, "result": [:]])
+                        } else {
+                            heldCount += 1
+                            if readGate != nil {
+                                let result: Any = request["method"] as? String == "echo"
+                                    ? request["params"] ?? NSNull() : heldCount
+                                send(["v": 1, "id": id, "result": result])
+                            }
+                        }
                     } else if mode.hasPrefix("readiness") {
                         let params = request["params"] as! [String: Any]
                         send(["v": 1, "id": id, "result": ["ready": true, "devToolsReady": true,
@@ -83,6 +101,85 @@ private final class Stub: @unchecked Sendable {
     deinit { Darwin.close(listener); unlink(path) }
 }
 final class ConnectionTests: XCTestCase {
+    func testTouchResetReachesHelperWithEveryRequestSlotOccupied() async throws {
+        let reset = expectation(description: "Reset received before any input reply")
+        let stub = try Stub(mode: "timeout") { heldCount, tab, gesture in
+            XCTAssertEqual(heldCount, 128)
+            XCTAssertEqual(tab, "page")
+            XCTAssertEqual(gesture, 2)
+            reset.fulfill()
+        }
+        let client = try await YabCoreClient.connect(path: stub.path)
+        let submitted = expectation(description: "All 128 requests submitted")
+        submitted.expectedFulfillmentCount = 128
+        let requests = (0..<128).map { _ in
+            Task { try await client.sendInput(["kind": .string("mouseMove")], submitted: { submitted.fulfill() }) }
+        }
+        await fulfillment(of: [submitted], timeout: 5)
+        client.resetTouch(tab: "page", through: 2)
+        await fulfillment(of: [reset], timeout: 2)
+        await client.disconnect()
+        for request in requests { _ = try? await request.value }
+    }
+
+    func testStalledPeerKeepsOnlyTheLatestUnwrittenTouchResetPerTab() async throws {
+        let resumeReads = DispatchSemaphore(value: 0)
+        defer { resumeReads.signal() }
+        let largeTab = String(repeating: "r", count: 3 * 1024 * 1024)
+        let resets = expectation(description: "The partial reset and one unwritten reset per tab arrive in wire order")
+        resets.expectedFulfillmentCount = 3
+        resets.assertForOverFulfill = true
+        let stub = try Stub(mode: "timeout", readGate: resumeReads) { heldCount, tab, gesture in
+            if heldCount == 0 {
+                XCTAssertTrue(tab == largeTab)
+                XCTAssertEqual(gesture, 1)
+            } else if heldCount == 2 {
+                XCTAssertEqual(tab, "page")
+                XCTAssertEqual(gesture, 1_000)
+            } else {
+                XCTAssertEqual(heldCount, 4)
+                XCTAssertEqual(tab, "other")
+                XCTAssertEqual(gesture, 7)
+            }
+            resets.fulfill()
+        }
+        let client = try await YabCoreClient.connect(path: stub.path)
+        let socket = await client.socketForTests
+        defer { socket.close() }
+        // The reset exceeds the socket buffer, and the peer is still stalled.
+        // Its unwritten tail is in output once the first bytes are on the wire.
+        client.resetTouch(tab: largeTab, through: 1)
+        let partial = await socket.flowSnapshot()
+        XCTAssertEqual(partial["parked"], 0)
+        XCTAssertGreaterThan(partial["output"] ?? 0, 0)
+
+        let submitted = expectation(description: "Echo queued immediately after the reset")
+        let marker: JSONValue = .object(["text": .string("ordinary frame\n日本語"), "value": .number(42)])
+        let echo = Task {
+            try await client.request("echo", params: ["marker": marker], timeout: 20, submitted: { submitted.fulfill() })
+        }
+        await fulfillment(of: [submitted], timeout: 2)
+        let params: [String: JSONValue] = ["padding": .string(String(repeating: "x", count: 3 * 1024 * 1024))]
+        let frames = try (1...3).map { index in
+            try JSONEncoder().encode(Request(id: "filler-\(index)", method: "filler", params: params))
+        }
+        socket.send(frames[0])
+        client.resetTouch(tab: "page", through: 1)
+        socket.send(frames[1])
+        socket.send(frames[2])
+        client.resetTouch(tab: "other", through: 7)
+        for gesture in 2...1_000 { client.resetTouch(tab: "page", through: gesture) }
+        let held = await socket.flowSnapshot()
+        XCTAssertEqual(held["parked"], 4, "Two ordinary frames and one unwritten reset per tab")
+        resumeReads.signal()
+        let after = try await client.request("after", timeout: 20)
+        XCTAssertEqual(after, .number(5))
+        let echoed = try await echo.value
+        XCTAssertEqual(echoed, .object(["marker": marker]))
+        await fulfillment(of: [resets], timeout: 2)
+        await client.disconnect()
+    }
+
     func testWheelSubmissionDoesNotWaitForThePreviousNativeReply() async throws {
         // This server deliberately withholds the first reply until the second
         // request arrives. Waiting for the first reply would deadlock input.
