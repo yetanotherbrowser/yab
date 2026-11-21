@@ -891,6 +891,19 @@ launch, records the journal has and the rows never drew
 brings them again unchanged. A journal from before this has no `shown`
 yet: its first save measures from the journal, as before, and sets it.
 
+The memory folder is told the same way (`SyncShapes.reconcileMemory`). The
+folder is not a full copy of what came: a page held for review after a
+clear here (`ContextPrivacy.mayTakeSync`) never reaches it, and the
+two-way save removed the other Mac's pages and sent this Mac's old briefs
+over newer ones. Pages the folder holds but doesn't send (from mail,
+unreadable, 48,000 bytes or more) are out of reach (`within`), and so is a
+page that says nothing (`Memory.meaningful`) unless the folder said
+something there before: the empty briefs `Memory.prepare` seeds are no
+edit, so a Mac joining no longer replaces the account's `USER.md` and
+`MEMORY.md` with them by a stamp of now (register 3060; `SyncShapesTests`).
+As with the rows, the folder is read back right after a delivery writes it,
+so a page that just came and is forgotten right after still goes.
+
 ## Testing
 
 - `swift test --filter 'Sync'`: merging (300 random runs of three

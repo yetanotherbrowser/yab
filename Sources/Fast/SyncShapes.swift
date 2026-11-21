@@ -116,26 +116,54 @@ enum SyncShapes {
     /// noted on the same day adds up instead of one day's file beating the
     /// other's. A page or an entry written from mail stays on its Mac
     /// (Memory.fromMail, docs/casa.md).
-    static func memory(in folder: URL) -> Collection {
-        var out: Collection = [:]
+    static func memory(in folder: URL) -> Collection { memoryFolder(folder).pages }
+
+    /// The pages, and the paths of the pages here that don't go up: written
+    /// from mail, unreadable, or too large for a record.
+    private static func memoryFolder(_ folder: URL) -> (pages: Collection, held: Set<String>) {
+        var out: Collection = [:], held: Set<String> = []
         // Both sides without symlinks: /var is /private/var, and a path
         // cut at the wrong length names a page that isn't there.
         let root = folder.resolvingSymlinksInPath().path + "/"
-        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return out }
+        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return (out, held) }
         for case let url as URL in walker where url.pathExtension == "md" {
             let full = url.resolvingSymlinksInPath().path
             guard full.hasPrefix(root) else { continue }
             let path = String(full.dropFirst(root.count))
-            guard let text = try? String(contentsOf: url, encoding: .utf8), text.utf8.count < 48_000 else { continue }
+            guard let text = try? String(contentsOf: url, encoding: .utf8), text.utf8.count < 48_000 else { held.insert(path); continue }
             if path.hasPrefix("episodic/") {
                 for entry in entries(text) where !Memory.fromMail(entry) {
                     out[path + "#" + digest(entry)] = ["day": .string(path), "text": .string(entry)]
                 }
             } else if !Memory.fromMail(text) {
                 out[path] = ["text": .string(text)]
+            } else {
+                held.insert(path)
             }
         }
-        return out
+        return (out, held)
+    }
+
+    /// The memory folder, told to the journal three-way, as the rows are
+    /// (Journal.reconcile's `shown`, register 2589): only what the folder
+    /// changed since it was last read goes up. A page from another Mac the
+    /// folder never took in (held for review after a clear here,
+    /// ContextPrivacy.mayTakeSync) is no removal, and a page still as this
+    /// Mac last read it is no edit over a newer one (register 3060). A page
+    /// here that doesn't go up is out of reach: it neither goes nor takes
+    /// the account's copy away. So is a page that says nothing, as the
+    /// briefs Memory.prepare seeds, unless these files said something there
+    /// before: a Mac joining no longer sends its empty briefs over the
+    /// account's by a stamp of now.
+    static func reconcileMemory(_ journal: Journal, in folder: URL) throws {
+        var (pages, held) = memoryFolder(folder)
+        let said = journal.shown(SyncShapes.memory)
+        let empty = pages.filter { path, fields in
+            !path.hasPrefix("episodic/") && !Memory.meaningful(fields["text"]?.string ?? "")
+                && !Memory.meaningful(said[path]?["text"]?.string ?? "")
+        }.keys
+        for path in empty { pages[path] = nil; held.insert(path) }
+        try journal.reconcile(SyncShapes.memory, pages, within: { !held.contains($0.fields["day"]?.string ?? $0.id) }, shown: true)
     }
 
     /// A day's entries: each "## " heading and what follows it.

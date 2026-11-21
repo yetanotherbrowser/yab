@@ -222,6 +222,103 @@ struct SyncShapesTests {
         #expect(day.range(of: "## 09:00 Morning on A")!.lowerBound < day.range(of: "## 11:30 Noon on B")!.lowerBound)
     }
 
+    /// A Mac joining with only the empty briefs Memory.prepare seeds doesn't
+    /// send them over the account's by a stamp of now (register 3060).
+    @Test func aJoiningMacsEmptyBriefsDontReplaceTheAccounts() throws {
+        let a = try memoryFolder(), b = try memoryFolder()
+        defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+        let sam = "# User Briefing\n\nSam likes short answers.\n"
+        try sam.write(to: a.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8)
+        try Seeds.user.write(to: b.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8)
+        try Seeds.operating.write(to: b.appendingPathComponent("MEMORY.md"), atomically: true, encoding: .utf8)
+        let ja = try Journal(path: nil, device: "a"), jb = try Journal(path: nil, device: "b")
+        try SyncShapes.reconcileMemory(ja, in: a)
+        // B's first flush, before its first hello, comes after A wrote its brief.
+        try SyncShapes.reconcileMemory(jb, in: b)
+        _ = try jb.receive(ja.pending().map { ($0.record, 1) })
+        _ = try ja.receive(jb.pending().map { ($0.record, 2) })
+        #expect(SyncShapes.memoryFiles(from: ja.all(SyncShapes.memory))["USER.md"] == sam)
+        #expect(SyncShapes.memoryFiles(from: jb.all(SyncShapes.memory))["USER.md"] == sam)
+    }
+
+    /// A page from another Mac that this folder never took in (held for
+    /// review after a clear here, ContextPrivacy.mayTakeSync) is no removal,
+    /// and a brief still as this Mac last read it is no edit over a newer
+    /// one: the next flush sends nothing back (register 3060).
+    @Test func memoryThisFolderNeverTookInIsNoEdit() throws {
+        let a = try memoryFolder(), b = try memoryFolder()
+        defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+        let first = "# User Briefing\n\nSam likes short answers.\n"
+        for folder in [a, b] { try first.write(to: folder.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8) }
+        let ja = try Journal(path: nil, device: "a"), jb = try Journal(path: nil, device: "b")
+        try SyncShapes.reconcileMemory(ja, in: a)
+        _ = try jb.receive(ja.pending().map { ($0.record, 1) })
+        try SyncShapes.reconcileMemory(jb, in: b)
+        // A writes a page and a newer brief; B's journal takes them, its folder doesn't.
+        let newer = first + "Lives in Pune.\n", jane = "# Jane Doe\n\nWorks with Sam.\n"
+        try newer.write(to: a.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: a.appendingPathComponent("people"), withIntermediateDirectories: true)
+        try jane.write(to: a.appendingPathComponent("people/jane-doe.md"), atomically: true, encoding: .utf8)
+        try SyncShapes.reconcileMemory(ja, in: a)
+        _ = try jb.receive(ja.pending().map { ($0.record, 2) })
+        try SyncShapes.reconcileMemory(jb, in: b)
+        #expect(jb.pending().isEmpty)
+        let files = SyncShapes.memoryFiles(from: jb.all(SyncShapes.memory))
+        #expect(files["USER.md"] == newer)
+        #expect(files["people/jane-doe.md"] == jane)
+    }
+
+    /// What this Mac changes still goes: a page removed here, and a brief
+    /// emptied here after it said something. A page grown past what sync
+    /// carries stays on the other Macs as it was, not removed.
+    @Test func memoryChangedHereStillGoes() throws {
+        let a = try memoryFolder()
+        defer { try? FileManager.default.removeItem(at: a) }
+        try FileManager.default.createDirectory(at: a.appendingPathComponent("people"), withIntermediateDirectories: true)
+        try "# User Briefing\n\nSam likes short answers.\n".write(to: a.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8)
+        try "# Jane Doe\n\nWorks with Sam.\n".write(to: a.appendingPathComponent("people/jane-doe.md"), atomically: true, encoding: .utf8)
+        try "# Sam\n\nLikes short answers.\n".write(to: a.appendingPathComponent("people/sam.md"), atomically: true, encoding: .utf8)
+        let ja = try Journal(path: nil, device: "a")
+        try SyncShapes.reconcileMemory(ja, in: a)
+        try ja.sent(ja.pending().map { ($0.record, 1) })
+        try FileManager.default.removeItem(at: a.appendingPathComponent("people/jane-doe.md"))
+        try Seeds.user.write(to: a.appendingPathComponent("USER.md"), atomically: true, encoding: .utf8)
+        try ("# Sam\n\n" + String(repeating: "Likes short answers. ", count: 2_500)).write(to: a.appendingPathComponent("people/sam.md"), atomically: true, encoding: .utf8)
+        try SyncShapes.reconcileMemory(ja, in: a)
+        let sent = Dictionary(uniqueKeysWithValues: ja.pending().map { ($0.record.id, $0.record) })
+        #expect(sent["people/jane-doe.md"]?.alive() == false)
+        #expect(sent["USER.md"]?["text"]?.string == Seeds.user)
+        #expect(sent["people/sam.md"] == nil)
+        #expect(ja.record(.init(collection: SyncShapes.memory, id: "people/sam.md"))?.alive() == true)
+    }
+
+    /// A page that just came, read back as the app does right after a
+    /// delivery, and forgotten here still goes.
+    @Test func aPageThatJustCameAndIsForgottenStillGoes() throws {
+        let a = try memoryFolder(), b = try memoryFolder()
+        defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+        let ja = try Journal(path: nil, device: "a"), jb = try Journal(path: nil, device: "b")
+        try SyncShapes.reconcileMemory(jb, in: b)
+        let jane = "# Jane Doe\n\nWorks with Sam.\n"
+        for folder in [a, b] { try FileManager.default.createDirectory(at: folder.appendingPathComponent("people"), withIntermediateDirectories: true) }
+        try jane.write(to: a.appendingPathComponent("people/jane-doe.md"), atomically: true, encoding: .utf8)
+        try SyncShapes.reconcileMemory(ja, in: a)
+        _ = try jb.receive(ja.pending().map { ($0.record, 1) })
+        try jane.write(to: b.appendingPathComponent("people/jane-doe.md"), atomically: true, encoding: .utf8)
+        try SyncShapes.reconcileMemory(jb, in: b)
+        #expect(jb.pending().isEmpty)
+        try FileManager.default.removeItem(at: b.appendingPathComponent("people/jane-doe.md"))
+        try SyncShapes.reconcileMemory(jb, in: b)
+        #expect(jb.pending().map { $0.record.id } == ["people/jane-doe.md"])
+        #expect(jb.record(.init(collection: SyncShapes.memory, id: "people/jane-doe.md"))?.alive() == false)
+    }
+
+    private func memoryFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mem-\(UUID())")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("episodic"), withIntermediateDirectories: true)
+        return folder
+    }
+
     @Test func aRoutineRunsOnOneMacAndKeepsItsRunsThere() throws {
         var routine = Routine(id: "r1", when: "daily 9:00", prompt: "Check the news", last: Date(), said: "Nothing new")
         routine.chat = "abc123"

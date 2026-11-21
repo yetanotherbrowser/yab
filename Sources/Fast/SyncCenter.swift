@@ -1201,7 +1201,7 @@ final class SyncCenter: ObservableObject {
         if let now = read.now { try SyncNow.reconcile(journal, now, device: read.device) }
         if read.failed != nil { return }
         if collections.contains(SyncShapes.memory) {
-            try journal.reconcile(SyncShapes.memory, SyncShapes.memory(in: Memory.folder))
+            try SyncShapes.reconcileMemory(journal, in: Memory.folder)
         }
         if collections.contains(SyncShapes.file) {
             try journal.reconcile(SyncShapes.file, SyncShapes.files(in: Store.folder))
@@ -1852,7 +1852,11 @@ final class SyncCenter: ObservableObject {
                 }
             }
         }
-
+            // The folder as written now is read back at once, as the rows
+            // are, so it is what the next difference is measured from
+            // (Journal's `shown`): a page that just came and is forgotten
+            // right after still goes.
+            DispatchQueue.main.async { [weak self] in self?.changed(SyncShapes.memory) }
         }
 
         // A place gone from the two weeks, or from a Mac that stopped
