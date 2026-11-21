@@ -38,4 +38,12 @@ struct ChromiumExtensionPackagesTests {
             #expect(!FileManager.default.fileExists(atPath: root.path))
         }
     }
+
+    @Test func theStoreIsAskedAsThePinnedEngine() throws {
+        let fetch = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/cef/fetch.sh")
+        let script = try String(contentsOf: fetch, encoding: .utf8)
+        let pin = try #require(script.firstMatch(of: #/VERSION = '[^']*chromium-([0-9.]+)'/#))
+        #expect(ChromiumExtensionPackages.engineVersion == String(pin.1))
+    }
 }

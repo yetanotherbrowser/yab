@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import YabCoreClient
 @testable import Fast
 
 @MainActor
@@ -37,5 +38,13 @@ struct ChromiumTabGroupsTests {
         groups.start()
         await turn()
         #expect(groups.scans == before + 1, "A new helper must receive the groups again")
+    }
+
+    @Test func onlyAHelperThatSaysSoHasNoNativeGroups() {
+        #expect(ChromiumTabGroups.helperLacksGroups(.number(0)), "A helper built on stock CEF")
+        #expect(ChromiumTabGroups.helperLacksGroups(.bool(false)))
+        for capability in [nil, .null, .number(1), .bool(true), .string("false")] as [JSONValue?] {
+            #expect(!ChromiumTabGroups.helperLacksGroups(capability), "The patched helper, or one from before the hook")
+        }
     }
 }

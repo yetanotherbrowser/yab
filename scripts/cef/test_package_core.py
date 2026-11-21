@@ -2,6 +2,7 @@
 """Filesystem contracts used by CEF loading and native-messaging caller validation."""
 import importlib.util
 from pathlib import Path
+import platform
 import plistlib
 import tempfile
 import os
@@ -104,6 +105,53 @@ class CoreBundleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module.package(self.app)
         self.assertEqual(self.legacy.read_bytes(), b'first executable')
+
+
+@unittest.skipUnless(platform.machine() == 'arm64', 'the CEF payload is arm64-only')
+class AdHocEmbedTests(unittest.TestCase):
+    """A contributor without a certificate: build.sh hands embed.sh `-`."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.cef = root / 'cef'
+        framework = self.cef / 'Release/Chromium Embedded Framework.framework'
+        (framework / 'Resources').mkdir(parents=True)
+        (framework / 'Resources/Info.plist').write_bytes(plistlib.dumps(dict(
+            CFBundleExecutable='Chromium Embedded Framework', CFBundleIdentifier='org.cef.framework',
+            CFBundlePackageType='FMWK', CFBundleInfoDictionaryVersion='6.0')))
+        (self.cef / 'include').mkdir()
+        (self.cef / 'include/cef_version.h').write_text('#define CEF_VERSION_MAJOR 156\n')
+        (self.cef / 'LICENSE.txt').write_text('license\n')
+        self.compile(root, 'int cef_version_info(int entry) { return entry == 0 ? 156 : 0; }\n',
+                     framework / 'Chromium Embedded Framework', '-dynamiclib')
+        self.app = root / 'Yab.app'
+        (self.app / 'Contents/MacOS').mkdir(parents=True)
+        (self.app / 'Contents/Info.plist').write_bytes(plistlib.dumps(dict(
+            CFBundleIdentifier='dev.serafim.fast.dev', CFBundleExecutable='yab', CFBundlePackageType='APPL',
+            CFBundleVersion='202611151200', CFBundleShortVersionString='0.47.19', LSMinimumSystemVersion='15.4')))
+        self.compile(root, 'int main(void) { return 0; }\n', self.app / 'Contents/MacOS/yab')
+        self.stub = root / 'stub'
+        subprocess.run(['xcrun', 'clang', '-arch', 'arm64', str(Path(__file__).with_name('helper-stub.c')),
+                        '-o', str(self.stub)], check=True)
+
+    @staticmethod
+    def compile(root, source, output, *flags):
+        path = root / (output.name + '.c')
+        path.write_text(source)
+        subprocess.run(['xcrun', 'clang', '-arch', 'arm64', *flags, str(path), '-o', str(output)], check=True)
+
+    def test_every_helper_loads_the_framework(self):
+        embed = Path(__file__).with_name('embed.sh')
+        subprocess.run(['bash', str(embed), str(self.app), str(self.cef), str(self.stub), '-'],
+                       check=True, capture_output=True)
+        helpers = sorted((self.app / 'Contents/Frameworks').glob('YabCore Helper*.app'))
+        self.assertEqual(len(helpers), 5)
+        for helper in helpers:
+            run = subprocess.run([str(helper / 'Contents/MacOS' / helper.stem)], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, f'{helper.stem}: {run.stderr}')
+            self.assertIn('CEF 156 loaded', run.stdout)
 
 
 if __name__ == '__main__':

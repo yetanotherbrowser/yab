@@ -11,7 +11,7 @@ struct PageMenu {
 };
 static std::map<std::string, PageMenu> pageMenus;
 
-// chrome/app/chrome_command_ids.h, Chromium 156.0.8078.48.
+// chrome/app/chrome_command_ids.h, Chromium 156.0.8078.96.
 static const int kExtensionCommandFirst = 49000, kExtensionCommandLast = 49999;
 static const int kChromeCommandCopy = 50150, kChromeCommandCut = 50151, kChromeCommandPaste = 50152;
 static const int kChromeCommandSelectAll = 50156;

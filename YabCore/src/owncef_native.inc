@@ -234,6 +234,7 @@ static NSDictionary* NativeHookCapabilities() {
            @"sidePanelOptions": @(YABCORE_EXTENSION_SURFACES),
            @"nativeExternalPages": @(YABCORE_NATIVE_PAGE),
            @"nativeTabModel": @(YABCORE_NATIVE_TAB_MODEL),
+           @"nativeTabGroups": @(YABCORE_TAB_GROUP),
            @"nativeDiscard": @(YABCORE_DISCARD),
            @"extensionConsent": @(YABCORE_EXTENSION_CONSENT != 0),
            // Chromium checks each WebAuthn request, then hands it to the

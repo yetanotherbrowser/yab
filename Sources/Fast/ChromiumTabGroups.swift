@@ -58,9 +58,18 @@ final class ChromiumTabGroups {
         try await task.value
     }
 
+    /// A helper built on stock CEF has no tabs.group (it needs Yab's CEF
+    /// patch), so its pages stay windows of their own, as before the helper
+    /// connects. Only an explicit denial says so: YabCore boxes its
+    /// compile-time macros as 0/1, and a helper from before the hook groups.
+    static func helperLacksGroups(_ capability: JSONValue?) -> Bool {
+        capability == .bool(false) || capability == .number(0)
+    }
+
     private func publish() async throws {
         scans += 1
-        guard let core = ChromiumProcess.shared.connectedClient else {
+        guard let core = ChromiumProcess.shared.connectedClient,
+              !Self.helperLacksGroups(await core.nativeHooks["nativeTabGroups"]) else {
             sent = [:]
             return
         }

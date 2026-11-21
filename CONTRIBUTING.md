@@ -96,7 +96,6 @@ Set your own team under Signing & Capabilities (the project names the maintainer
 
 | Command | What it checks | Needs |
 |---|---|---|
-| `swift test --filter "$(scripts/runs/tests_for.py)"` | The suites that cover the files you changed (picked by name) | A logged-in Mac |
 | `swift test --filter SomeSuiteTests` | One suite | A logged-in Mac. Tests that show windows skip themselves when no screen is free (`Tests/FastTests/TestScreen.swift`). |
 | `swift test --filter MailCoreTests` | The mail engine alone, without the app (144 tests, 4 minutes from clean) | Nothing |
 | `./design-check --head` | Lines you added in `Sources/` keep to the design system (`Sources/YabDesign`) | Python 3 |
@@ -104,7 +103,7 @@ Set your own team under Signing & Capabilities (the project names the maintainer
 
 The pre-commit hook (`.githooks/pre-commit`) runs the last two on every commit. CI runs the same checks on your pull request with `--base`, against the branch you are merging into.
 
-The whole `swift test` does not finish on a clean Mac yet: its XCTest half passes (302 tests, one known failure in `QuietSitesTests`), then the swift-testing half stalls after about 170 of 4,300 tests. Until that is fixed, run the suites for what you changed, as CI does. Two suites also fail outside the maintainers' machines today: `TuneWatchLifecycleTests` expects their test environment, and `MailSlotsTests.zonesAsPeopleWriteThem` depends on the Mac's time zone names. Mention them in your pull request only if your change touches them.
+The whole `swift test` does not finish on a clean Mac yet: its XCTest half passes (302 tests, one known failure in `QuietSitesTests`), then the swift-testing half stalls after about 170 of 4,300 tests. Until that is fixed, run the suites for what you changed. `--filter` takes a regular expression, so one run covers several (`swift test --filter 'SiteEngineTests|TabEngineTests'`), and `grep -rl SomeType Tests` finds the suites that use a type. Two suites also fail outside the maintainers' machines today: `TuneWatchLifecycleTests` expects their test environment, and `MailSlotsTests.zonesAsPeopleWriteThem` depends on the Mac's time zone names. Mention them in your pull request only if your change touches them.
 
 ### Driving a running Yab from the shell
 

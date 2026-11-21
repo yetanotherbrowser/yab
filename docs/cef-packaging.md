@@ -15,10 +15,10 @@ Run builds through the farm:
 ```
 
 `scripts/cef/fetch.sh` obtains the pinned official macOS arm64 minimal
-`156.0.14+g4fa4ab5+chromium-156.0.8078.48` distribution from
+`156.0.30+g6028375+chromium-156.0.8078.96` distribution from
 [the publisher's index](https://cef-builds.spotifycdn.com/index.json).
 It verifies the published archive SHA-1 before extraction and again on cache
-reuse: `7359a9d293dd5c480bec3f18b762731b483b0e13`. A file lock serializes
+reuse: `6393d8a838d3b29f6b6939b970b5931dde2082aa`. A file lock serializes
 fetches. Archives and verified extractions live in
 `~/.local/state/yab-spike-cef`, overridden by `YAB_CEF_CACHE`.
 
@@ -53,7 +53,7 @@ Executable names match their apps. Bundle ids derive from the parent:
 Versions and minimum macOS version come from the parent. The real YabCore host
 configures these subprocess paths explicitly; the main executable remains `yab`.
 All helpers declare both `LSUIElement` and `LSBackgroundOnly`: they are subprocess bundles, not launchable browser copies. Alerts also carries `NSUserNotificationAlertStyle=alert`,
-following Chromium's [alert plist](https://chromium.googlesource.com/chromium/src/+/156.0.8078.48/chrome/app/helper-alerts-Info.plist).
+following Chromium's [alert plist](https://chromium.googlesource.com/chromium/src/+/156.0.8078.96/chrome/app/helper-alerts-Info.plist).
 
 The helpers are built as Chromium's are (`YabCore/CMakeLists.txt`). The plain
 helper, GPU and Plugin are `YabCore/src/helper_lean.c`: a C main that enters
@@ -71,11 +71,13 @@ through a file or a socket. The browser counts a message only from its own
 child running the Alerts helper.
 
 Signing proceeds inside out: framework Mach-O leaves, framework, helpers,
-existing Dock tile plug-in, updater, parent. Every signature enables hardened
-runtime; Developer ID signatures request a timestamp. GPU and Renderer receive
+existing Dock tile plug-in, updater, parent. Developer ID signatures enable
+hardened runtime and request a timestamp. Ad hoc signatures (`-`) do neither,
+as `build.sh` signs its plain ad hoc builds: ad hoc code has no Team ID, so
+library validation would refuse the ad hoc framework. GPU and Renderer receive
 only `com.apple.security.cs.allow-jit`, matching the pinned Chromium
-[GPU](https://chromium.googlesource.com/chromium/src/+/156.0.8078.48/chrome/app/helper-gpu-entitlements.plist)
-and [renderer](https://chromium.googlesource.com/chromium/src/+/156.0.8078.48/chrome/app/helper-renderer-entitlements.plist)
+[GPU](https://chromium.googlesource.com/chromium/src/+/156.0.8078.96/chrome/app/helper-gpu-entitlements.plist)
+and [renderer](https://chromium.googlesource.com/chromium/src/+/156.0.8078.96/chrome/app/helper-renderer-entitlements.plist)
 entitlements. Other helpers have empty entitlements. No helper inherits the
 parent's restricted entitlements or receives `disable-library-validation`.
 `--deep` is used only for verification, never signing. Embedding replaces only

@@ -86,8 +86,11 @@ for suffix, identifier in [('', ''), (' (GPU)', '.gpu'), (' (Renderer)', '.rende
     (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps(info, sort_keys=False))
     (bundle / 'Contents/PkgInfo').write_bytes(b'APPL????')
 PY
-SIGN=(--force --options runtime --sign "$IDENTITY")
-if [ "$IDENTITY" = - ]; then SIGN+=(--timestamp=none); else SIGN+=(--timestamp); fi
+SIGN=(--force --sign "$IDENTITY")
+# Ad hoc code has no Team ID, so the hardened runtime's library validation
+# refuses the ad hoc framework in every helper. build.sh's own ad hoc path
+# signs without the runtime too.
+if [ "$IDENTITY" = - ]; then SIGN+=(--timestamp=none); else SIGN+=(--options runtime --timestamp); fi
 if [ -n "${YAB_SIGN_KEYCHAIN:-}" ]; then SIGN+=(--keychain "$YAB_SIGN_KEYCHAIN"); fi
 # Sign every Mach-O leaf first, including framework dylibs and crashpad_handler.
 # Materialize the list so an enumeration failure cannot disappear inside a pipe.
