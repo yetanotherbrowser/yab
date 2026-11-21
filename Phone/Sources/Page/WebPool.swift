@@ -89,8 +89,13 @@ final class WebPool: NSObject {
         let origin: DownloadOrigin
         let document: UUID?
         let navigation: WKNavigation?
+        /// A document the tab was opening, for the system's viewer (PageDocument).
+        var opens = false
     }
     private var downloadConversions: [Tab.ID: DownloadConversion] = [:]
+    /// Where a link was last held, in the window, and when (uptime): Download
+    /// Linked File flies from there.
+    private var heldLink: (tab: Tab.ID, at: CGPoint, time: TimeInterval)?
     /// Tabs whose main frame was just sent on to an app's link and refused.
     private var appLinks: Set<Tab.ID> = []
     /// When the person last touched each tab's page (uptime), as Yab's own
@@ -104,6 +109,8 @@ final class WebPool: NSObject {
     let downloads: DownloadStore
     /// A site wants to send a file: nil lets it (tests of the transfer itself).
     var onDownloadAsk: (@MainActor (DownloadAsk, @escaping @MainActor (Bool) -> Void) -> Void)?
+    /// A document a tab opened is whole (PageDocument): the system's viewer shows it.
+    var onViewDownload: (@MainActor (Tab.ID, UUID) -> Void)?
     private var pageInteractionsEnabled = true
     /// Yab is in the background (or inactive on its way there).
     private var appAway = false
@@ -180,6 +187,8 @@ final class WebPool: NSObject {
     var onImageSaved: (@MainActor (PageImage.Outcome) -> Void)?
     /// Open in New Tab or Open in Background Tab on a held link (PageLinkMenu).
     var onOpenLink: ((URL, Tab.ID, PageLinkMenu.Opening) -> Void)?
+    /// Whether a link held on this page may open beside it, in a split.
+    var canOpenLinkBeside: ((Tab.ID) -> Bool)?
     /// The ad blocker: each page's lists, for the site it is heading to.
     var shield: Shield?
 
@@ -219,7 +228,7 @@ final class WebPool: NSObject {
         // WebKit's player offers Picture in Picture, inline video too, and a
         // playing video goes on in it with Yab away (PagePlayback).
         configuration.allowsPictureInPictureMediaPlayback = true
-        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        configuration.defaultWebpagePreferences.preferredContentMode = Self.defaultContentMode
         // Every page zooms with two fingers, paying no mind to a page's
         // user-scalable=no or maximum-scale: Google Images'
         // viewer says both, so its picture could not be pinched larger.
@@ -2094,7 +2103,7 @@ extension WebPool: WKNavigationDelegate {
         let policy = await decidePolicy(webView, for: action)
         // Request Desktop Site, remembered per site (SiteSettings).
         if policy == .allow, action.targetFrame?.isMainFrame == true, let id = tabsByView[ObjectIdentifier(webView)] {
-            preferences.preferredContentMode = desktop(id, url: action.request.url) ? .desktop : .mobile
+            preferences.preferredContentMode = contentMode(id, url: action.request.url)
             // And the blocker, on or off for where it is going.
             fitShield(webView.configuration.userContentController, for: id, url: action.request.url)
         }
@@ -2159,14 +2168,20 @@ extension WebPool: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse) async -> WKNavigationResponsePolicy {
         let attachment = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("attachment") == true
-        guard attachment || !response.canShowMIMEType else { return .allow }
+        // A PDF or another document opens as a file, in the system's viewer,
+        // which saves and shares it; WebKit's own view of it has neither.
+        let opens = !attachment && response.isForMainFrame && PageDocument.opensInViewer(response.response.mimeType)
+        guard attachment || opens || !response.canShowMIMEType else { return .allow }
         guard !fixturesEnabled, response.isForMainFrame, let id = tabsByView[ObjectIdentifier(webView)],
               canInteract(id, in: webView), downloadOrigins[id] != nil else {
+            // A tab out of sight never opens the viewer over another: it shows
+            // the document as WebKit does.
+            if opens { return .allow }
             if response.isForMainFrame, let id = tabsByView[ObjectIdentifier(webView)] { restoreDownloadSource(id, in: webView) }
             return .cancel
         }
         if let origin = downloadOrigins[id] {
-            downloadConversions[id] = DownloadConversion(origin: origin, document: documents[id], navigation: activeNavigations[id])
+            downloadConversions[id] = DownloadConversion(origin: origin, document: documents[id], navigation: activeNavigations[id], opens: opens)
         }
         return .download
     }
@@ -2204,30 +2219,52 @@ extension WebPool: WKNavigationDelegate {
               download.originalRequest?.url == conversion.origin.requestURL,
               download.originatingFrame.request.url == conversion.origin.frameURL,
               download.originatingFrame.isMainFrame, download.webView === view,
-              let origin = restoreDownloadSource(id, in: view) else { download.cancel(nil); return }
+              case let fresh = committedURLs[id] == nil,
+              let origin = fresh ? releaseFreshSource(id, in: view) : restoreDownloadSource(id, in: view) else { download.cancel(nil); return }
         downloadConversions[id] = nil
-        presentDownload(download, tab: id, in: view, origin: origin)
+        presentDownload(download, tab: id, in: view, origin: origin, opens: conversion.opens)
+        // A page's new window that was only ever this file has nothing to
+        // show: it goes, as window.close() would, back to its opener.
+        if fresh, let opener = popupOpeners.removeValue(forKey: id) {
+            onCloseWindowFrom?(id, opener)
+            forget(id)
+        }
     }
 
-    private func presentDownload(_ download: WKDownload, tab id: Tab.ID, in view: WKWebView, origin: DownloadOrigin) {
+    /// A tab that had shown nothing yet when its first load became a file:
+    /// no page to put back, only the load to end.
+    private func releaseFreshSource(_ id: Tab.ID, in view: WKWebView) -> DownloadOrigin? {
+        guard live[id] === view, committedURLs[id] == nil, let origin = downloadOrigins[id],
+              origin.store == ObjectIdentifier(view.configuration.websiteDataStore),
+              origin.privateSession == (privateTabs.contains(id) ? privateSession : nil) else { return nil }
+        downloadOrigins[id] = nil
+        if let active = activeNavigations.removeValue(forKey: id) { retiredNavigations.add(active) }
+        requestedURLs[id] = nil; actionTypes[id] = nil; pendingIndex[id] = nil
+        endRefresh(id, in: view)
+        publishState(id)
+        return origin
+    }
+
+    private func presentDownload(_ download: WKDownload, tab id: Tab.ID, in view: WKWebView, origin: DownloadOrigin, opens: Bool) {
         guard canInteract(id, in: view) else { download.cancel(nil); return }
-        adopt(download, tab: id, page: origin.url)
+        adopt(download, tab: id, page: committedURLs[id] == nil ? nil : origin.url, opens: opens)
     }
 
     /// The WKDownload is ours from here. Its source goes by the page it came
     /// from, as the page said it then: its tab may be long gone by Retry.
-    private func adopt(_ download: WKDownload, tab id: Tab.ID, page: URL?, entry: UUID? = nil) {
+    private func adopt(_ download: WKDownload, tab id: Tab.ID, page: URL?, entry: UUID? = nil, from: CGPoint? = nil, opens: Bool = false) {
         let site = siteOf?(id, page)
-        let source = PageDownload.Source(tab: id, host: site?.host ?? page?.host() ?? "",
+        let source = PageDownload.Source(tab: id, host: site?.host ?? page?.host() ?? download.originalRequest?.url?.host() ?? "",
                                          isPrivate: site?.isPrivate ?? privateTabs.contains(id))
-        let job = PageDownload(download: download, source: source, store: downloads, entry: entry,
+        let job = PageDownload(download: download, source: source, store: downloads, entry: entry, from: from, opens: opens,
             ask: { [weak self] question, answer in
                 guard let ask = self?.onDownloadAsk else { answer(true); return }
                 ask(question, answer)
             },
             retry: { [weak self] entry, store, request in
                 self?.retryDownload(entry, store, request, page: page, tab: id) ?? false
-            }, ended: { [weak self] token in self?.transfers[token] = nil })
+            }, ended: { [weak self] token in self?.transfers[token] = nil },
+            viewed: { [weak self] entry in self?.onViewDownload?(id, entry) })
         transfers[job.id] = job
         if appAway { job.leave() }
     }
@@ -2237,8 +2274,10 @@ extension WebPool: WKNavigationDelegate {
     func downloadLinked(_ url: URL, from id: Tab.ID) {
         guard let view = live[id], canInteract(id, in: view), allowsDownloadOf(url) else { return }
         let page = committedURLs[id] ?? view.url
+        let held = heldLink.flatMap { $0.tab == id && ProcessInfo.processInfo.systemUptime - $0.time < PageLinkMenu.heldFreshness ? $0.at : nil }
+        heldLink = nil
         view.startDownload(using: URLRequest(url: url)) { [weak self] download in
-            self?.adopt(download, tab: id, page: page)
+            self?.adopt(download, tab: id, page: page, from: held)
         }
     }
 
@@ -2333,6 +2372,7 @@ extension WebPool: WKUIDelegate {
                  completionHandler: @escaping @MainActor (UIContextMenuConfiguration?) -> Void) {
         guard let url = elementInfo.linkURL, opensAsTab(url), let id = tabsByView[ObjectIdentifier(webView)],
               canInteract(id, in: webView) else { completionHandler(nil); return }
+        if let at = PageLinkMenu.pressPoint(in: webView) { heldLink = (id, at, ProcessInfo.processInfo.systemUptime) }
         Task { @MainActor [weak self, weak webView] in
             guard let self, let webView, self.live[id] === webView else { completionHandler(nil); return }
             let held = await PageImage.held(in: webView)
@@ -2340,6 +2380,7 @@ extension WebPool: WKUIDelegate {
                 PageImage.actions(held, in: webView) { [weak self] outcome in self?.onImageSaved?(outcome) }
             } ?? []
             completionHandler(PageLinkMenu.configuration(for: url, from: webView, canDownload: self.allowsDownloadOf(url), image: image,
+                beside: self.canOpenLinkBeside?(id) == true,
                 open: { [weak self, weak webView] opening in
                     guard let self, let webView, self.live[id] === webView else { return }
                     self.onOpenLink?(url, id, opening)

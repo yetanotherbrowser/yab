@@ -277,6 +277,7 @@ struct TabletOmnibox: View {
         case .ask: "Ask"
         case .task: "Send"
         case .settings: "Open Settings"
+        case .command: "Do"
         case .findOnPage: "Find"
         }
     }

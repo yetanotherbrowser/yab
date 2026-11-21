@@ -266,7 +266,7 @@ final class SyncBridgeTests: XCTestCase {
         let keys = SyncKeychain.testing(folder: folder.appendingPathComponent("keys"))
         let id = keys.deviceID
         server.revoke(id)
-        let told = await until { app.sync.phase == .refused("This iPhone was removed from Sync.") }
+        let told = await until { app.sync.phase == .refused("This \(DeviceWord.name) was removed from Sync.") }
         XCTAssertTrue(told, "\(app.sync.phase)")
         XCTAssertTrue(app.sync.showsJoin)
         app.sync.joinAgain()
@@ -925,7 +925,7 @@ final class SyncBridgeTests: XCTestCase {
     func testJoinAgainAfterRemovalAddsNoSpaceAndLosesNoTab() async throws {
         try await leavesAndJoinsAgain { app, server in
             server.revoke(SyncKeychain.testing(folder: self.folder.appendingPathComponent("keys")).deviceID)
-            let told = await self.until { app.sync.phase == .refused("This iPhone was removed from Sync.") }
+            let told = await self.until { app.sync.phase == .refused("This \(DeviceWord.name) was removed from Sync.") }
             XCTAssertTrue(told, "\(app.sync.phase)")
             app.sync.joinAgain()
         }

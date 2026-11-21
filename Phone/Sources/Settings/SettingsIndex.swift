@@ -163,7 +163,7 @@ enum SettingsIndex {
         case .search: "Search the web, or ask a question from the address field."
         case .spaces: "Sets of tabs, each with its pins, its color and whose sign-ins."
         case .sync: "Your spaces, tabs and chats on your devices, encrypted so only they can read them."
-        case .ai: "Answers on this iPhone, and Claude or ChatGPT on your Mac."
+        case .ai: "Answers on this \(DeviceWord.name), and Claude or ChatGPT on your Mac."
         case .passwords: "Passwords and passkeys from your configured iOS provider."
         case .autofill: "Information offered by iOS on supported webpage fields."
         case .privacy: "Ads and trackers, private tabs, approval and Lock Screen details."

@@ -107,7 +107,7 @@ struct ChatDetails: View {
                 .accessibilityIdentifier("chat.info.line")
             HStack(spacing: 6) {
                 Glyph(onMac ? .macbook : .phone, size: 15, color: Ink.primary)
-                Text(onMac ? "on your Mac" : "on this iPhone")
+                Text(onMac ? "on your Mac" : "on this \(DeviceWord.name)")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Ink.primary)
             }

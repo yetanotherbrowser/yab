@@ -254,7 +254,7 @@ final class TabClearCoordinator {
             }
         }
         persist()
-        message = "Cleared \(ids.count) on this iPhone" + (unknown > 0 ? " · other tabs protected" : "")
+        message = "Cleared \(ids.count) on this \(DeviceWord.name)" + (unknown > 0 ? " · other tabs protected" : "")
         // Offer Undo after the durable public write, rather than displaying an
         // unusable Undo during that await; its six seconds start once its
         // toast is on screen (seen).

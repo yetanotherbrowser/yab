@@ -160,6 +160,7 @@ final class AppModel {
             return self.browser.tab(tab.id)
         }
         pages.onOpenLink = { [weak self] url, source, opening in self?.openHeldLink(url, from: source, as: opening) }
+        pages.canOpenLinkBeside = { [weak self] source in self?.canOpenLinkBeside(source) ?? false }
         pages.onCloseWindowFrom = { [weak self] id, source in
             guard let self, self.browser.tab(id) != nil else { return }
             // A background completion never takes focus from another page.

@@ -150,7 +150,7 @@ final class SyncTests: XCTestCase {
         let app = launch(["-YabState", "join.5", "-YabNoAnim", "YES"])
         let words = element(app, "join.words")
         XCTAssertTrue(words.waitForExistence(timeout: 15))
-        XCTAssertEqual(words.label, "This iPhone was removed from Sync.")
+        XCTAssertEqual(words.label, "This \(Atlas.deviceWord) was removed from Sync.")
         element(app, "join.again").tap()
         XCTAssertTrue(element(app, "join.code").waitForExistence(timeout: 5), "joining again starts with a new code")
     }

@@ -78,6 +78,11 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertNil(window.rootViewController?.presentedViewController, "nothing covers the page: no alert, no share sheet")
         return try XCTUnwrap(store.entries.first)
     }
+    /// WKWebView.url can still name the file for a moment after it is whole,
+    /// then reads the source again with no navigation: wait that moment out.
+    private func settles(_ view: WKWebView, at url: URL) async throws {
+        try await require({ view.url == url }, "the source's address did not come back")
+    }
     private func bytes(_ entry: DownloadEntry) throws -> Data { try Data(contentsOf: try XCTUnwrap(store.url(of: entry))) }
     private func failed() async throws -> DownloadEntry {
         try await require { self.store.entries.first?.state == .failed && self.pages.transfers.isEmpty }
@@ -130,7 +135,7 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertEqual(file.name, "Owned.txt")
         XCTAssertEqual(file.host, "127.0.0.1")
         XCTAssertEqual(file.size, Int64(DownloadSite.bytes.count))
-        XCTAssertEqual(view.url, site.url("/second")); XCTAssertTrue(view.configuration.websiteDataStore === store)
+        try await settles(view, at: site.url("/second")); XCTAssertTrue(view.configuration.websiteDataStore === store)
         XCTAssertEqual(pages.front, source.id)
         XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
         XCTAssertEqual(pages.navigationState(for: source.id)?.index, before.index)
@@ -238,7 +243,7 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertTrue(request.header.contains("private-only=owned")); XCTAssertFalse(request.header.contains("public-only=owned"))
         XCTAssertTrue(view.configuration.websiteDataStore === store); XCTAssertFalse(store.isPersistent)
         XCTAssertFalse(store === publicView.configuration.websiteDataStore)
-        XCTAssertEqual(view.url, site.url("/page")); XCTAssertEqual(pages.front, privateTab.id); XCTAssertTrue(exported.isEmpty)
+        try await settles(view, at: site.url("/page")); XCTAssertEqual(pages.front, privateTab.id); XCTAssertTrue(exported.isEmpty)
         // The private tabs close: their file goes.
         let url = try XCTUnwrap(self.store.url(of: file))
         pages.setPageInteractionsEnabled(false); pages.renewPrivateStore()
@@ -260,7 +265,7 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertEqual(before.entries.map(\.url), [site.url("/page").absoluteString, destination.absoluteString])
         try await click(view)
         _ = try await completed()
-        XCTAssertEqual(view.url, destination)
+        try await settles(view, at: destination)
         XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
         XCTAssertEqual(pages.navigationState(for: source.id)?.index, before.index)
     }
@@ -271,7 +276,7 @@ final class PageDownloadTests: XCTestCase {
         let _: Any = try await view.evaluateJavaScript("const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['Owned blob café+tea'],{type:'text/plain'}));a.download='Blob.txt';document.body.appendChild(a);a.click();true")
         let file = try await completed()
         XCTAssertEqual(String(data: try bytes(file), encoding: .utf8), "Owned blob café+tea")
-        XCTAssertEqual(view.url, site.url("/page")); XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
+        try await settles(view, at: site.url("/page")); XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
     }
 
     func testATransferOutlivesItsPageItsTabAndAViewGone() async throws {
@@ -318,7 +323,7 @@ final class PageDownloadTests: XCTestCase {
         let broken = try await failed()
         XCTAssertEqual(store.flash, broken.id, "the line says Failed for a moment")
         XCTAssertEqual(store.nowItem(isPrivate: false)?.subtitle, "Failed")
-        XCTAssertEqual(view.url, site.url("/page"))
+        try await settles(view, at: site.url("/page"))
         XCTAssertNil(broken.file)
         XCTAssertTrue(store.canRetry(broken.id))
         site.allowFiles(); store.retry(broken.id)
@@ -327,7 +332,7 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertEqual(store.entries.count, 1)
         XCTAssertEqual(site.requests.filter { $0.target == "/file" }.count, 2)
         XCTAssertEqual(try bytes(file), DownloadSite.bytes)
-        XCTAssertEqual(view.url, site.url("/page")); XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), [site.url("/page").absoluteString])
+        try await settles(view, at: site.url("/page")); XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), [site.url("/page").absoluteString])
         let _: Any = try await view.evaluateJavaScript("document.getElementById('touch').click();true")
         let action = try await view.evaluateJavaScript("document.getElementById('result').textContent") as? String
         XCTAssertEqual(action, "Page action 1")
@@ -376,8 +381,43 @@ final class PageDownloadTests: XCTestCase {
         XCTAssertEqual(file.host, "127.0.0.1", "the site is the page's")
         XCTAssertEqual(try bytes(file), DownloadSite.bytes)
         XCTAssertTrue(try XCTUnwrap(site.requests.last { $0.target == "/file" }).header.contains("linked=owned"))
-        XCTAssertEqual(view.url, site.url("/page"))
+        try await settles(view, at: site.url("/page"))
         XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
+    }
+
+    /// A PDF the page opens inline is a file for the system's viewer: kept
+    /// in Downloads without asking, handed to the viewer once whole, and the
+    /// page it came from stays as it was.
+    func testAPDFOpensAsAFileForTheViewerAndKeepsTheSource() async throws {
+        var asked = 0, viewed: [(Tab.ID, UUID)] = []
+        pages.onDownloadAsk = { _, answer in asked += 1; answer(true) }
+        pages.onViewDownload = { viewed.append(($0, $1)) }
+        let source = tab("download.pdf"), view = try await ready(source)
+        let before = try XCTUnwrap(pages.navigationState(for: source.id))
+        try await click(view, "pdf")
+        let file = try await completed()
+        XCTAssertEqual(asked, 0, "viewing a document is not the site sending a file")
+        XCTAssertEqual(file.name, "doc.pdf")
+        XCTAssertEqual(try bytes(file), DownloadSite.pdf)
+        try await require { viewed.count == 1 }
+        XCTAssertEqual(viewed.first?.0, source.id)
+        XCTAssertEqual(viewed.first?.1, file.id)
+        try await settles(view, at: site.url("/page"))
+        XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), before.entries.map(\.url))
+    }
+
+    /// A tab whose first load is a PDF had no page to put back: the file
+    /// still opens, rather than being dropped.
+    func testAPDFAsATabsFirstLoadStillOpens() async throws {
+        var viewed: [UUID] = []
+        pages.onViewDownload = { viewed.append($1) }
+        let fresh = tab("download.pdf.fresh", "/doc.pdf")
+        show(pages.activate(fresh))
+        let file = try await completed()
+        XCTAssertEqual(file.name, "doc.pdf")
+        XCTAssertEqual(file.host, "127.0.0.1", "the site is the file's own")
+        try await require { viewed == [file.id] }
+        try await require { !self.pages.state(for: fresh.id).isLoading }
     }
 
     func testNativeRequestDownloadReportsItsAPIFrameWithoutNavigatingTheActualDocument() async throws {
@@ -434,7 +474,7 @@ final class PageDownloadTests: XCTestCase {
         try await require { self.site.requests.filter { $0.target == "/file" }.count == 2 }
         XCTAssertTrue(pages.transfers.isEmpty)
         XCTAssertTrue(store.entries.isEmpty)
-        XCTAssertEqual(view.url, site.url("/page")); XCTAssertEqual(pages.front, selected.id)
+        try await settles(view, at: site.url("/page")); XCTAssertEqual(pages.front, selected.id)
     }
 
     // MARK: - with Yab in the background
@@ -459,7 +499,7 @@ final class PageDownloadTests: XCTestCase {
         pages.appDidBecomeActive()
         try await require { self.store.flash == job.id }
         XCTAssertEqual(store.nowItem(isPrivate: false)?.subtitle, "Open")
-        XCTAssertEqual(view.url, site.url("/page"))
+        try await settles(view, at: site.url("/page"))
     }
 
     func testComingBackWhileItStillGoesKeepsTheLine() async throws {
@@ -490,6 +530,8 @@ final class PageDownloadTests: XCTestCase {
 private final class DownloadSite: @unchecked Sendable {
     struct Request { let target: String; let header: String }
     static let bytes = Data("Owned actual download café+tea\n".utf8)
+    /// A PDF the page shows inline, no attachment: one empty page.
+    static let pdf = Data("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n".utf8)
     private let listener: NWListener
     private let queue = DispatchQueue(label: "owned.download.site")
     private var connections: [ObjectIdentifier:NWConnection] = [:]
@@ -545,6 +587,12 @@ private final class DownloadSite: @unchecked Sendable {
             }
             let target = header.components(separatedBy: " ").dropFirst().first ?? "/"
             self.received.append(Request(target: target, header: header))
+            if target == "/doc.pdf" {
+                let body = Self.pdf
+                let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                self.send(headers + body, connection)
+                return
+            }
             if target == "/file" {
                 let body = Self.bytes
                 let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"Owned.txt\"\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
@@ -554,7 +602,7 @@ private final class DownloadSite: @unchecked Sendable {
                 } else { self.send(headers + (self.fails ? Data(body.prefix(2)) : body), connection) }
                 return
             }
-            let body = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><link rel=icon href=data:,><title>Owned download source</title><style>body{font:20px system-ui;padding:70px 20px;background:#ddf4ff}a,button{display:block;padding:16px;margin:16px 0}</style><h1 id=part>Owned actual source</h1><a id=fragment href=#part>Actual fragment</a><a id=file href=/file>Download actual file</a><button id=touch onclick=\"window.actions=(window.actions||0)+1;document.getElementById('result').textContent='Page action '+window.actions\">Page action</button><output id=result>Ready</output>"
+            let body = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><link rel=icon href=data:,><title>Owned download source</title><style>body{font:20px system-ui;padding:70px 20px;background:#ddf4ff}a,button{display:block;padding:16px;margin:16px 0}</style><h1 id=part>Owned actual source</h1><a id=fragment href=#part>Actual fragment</a><a id=file href=/file>Download actual file</a><a id=pdf href=/doc.pdf>Actual PDF</a><button id=touch onclick=\"window.actions=(window.actions||0)+1;document.getElementById('result').textContent='Page action '+window.actions\">Page action</button><output id=result>Ready</output>"
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
             self.send(Data(response.utf8), connection)
         }

@@ -712,7 +712,7 @@ struct PageMenuMorph: View, Animatable {
     private func listRow(_ row: ListRow) -> some View {
         switch row {
         case .beside, .fullSpread, .closePage:
-            let title = row == .beside ? "Open Beside" : row == .fullSpread ? "Full Spread" : "Close Page"
+            let title = row == .beside ? "Split View" : row == .fullSpread ? "Separate Split View" : "Close Split"
             Button {
                 closeThen {
                     switch row {

@@ -60,6 +60,9 @@ final class BrowserWorkspace {
     private(set) var secondFocused = false
     private(set) var expanded = false
     var paneFrame = CGRect.zero
+    /// The iPad's downloads button in sight, by its id, in the window:
+    /// where a file flies to (TabletDownloadFlights).
+    @ObservationIgnored var downloadsLandings: [String: CGRect] = [:]
     var windowSize = CGSize.zero
     var tabletControls = false
     var regularWidth = false
@@ -83,6 +86,8 @@ final class BrowserWorkspace {
     }
     /// All Tabs lays three cards whole across an unfolded Duo on its side.
     var galleryAcross: Bool { unfolded && windowSize.width > windowSize.height }
+    /// The iPad's page card, where All Tabs' cards leave from and land.
+    var galleryPageFrame: CGRect? { tabletControls && !paneFrame.isEmpty ? paneFrame : nil }
     /// What the system reserves from a surface this wide at the window's left:
     /// the column beside a page reaches only that edge.
     func sides(ofSurface width: CGFloat) -> ChromeGeometry.Sides {

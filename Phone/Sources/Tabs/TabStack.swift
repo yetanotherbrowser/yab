@@ -485,7 +485,7 @@ final class TabStack {
         TabGalleryLayout(screen: screen, count: cards(of: gallery).count,
                          verticalControls: app.workspace.galleryVerticalControls, leadingRail: app.workspace.leadingRail,
                          circle: app.workspace.statusColumn ? stackGeometry.circle : nil,
-                         across: app.workspace.galleryAcross)
+                         across: app.workspace.galleryAcross, pageFrame: app.workspace.galleryPageFrame)
     }
     var stackGeometry: TabStackGeometry {
         TabStackGeometry(button: ChromeGeometry(size: screen, folded: false, hasNow: app.nowItem != nil,
@@ -644,7 +644,7 @@ final class TabStack {
         // Pages warming up go now; one for the card tapped comes in front.
         warmup.stop(keeping: id)
         let layout = layout(next)
-        let plan = TabGalleryMotion.Closing(count: cards.count, chosen: chosen)
+        let plan = TabGalleryMotion.Closing(count: cards.count, chosen: chosen, stack: !app.workspace.tabletControls)
         var from: [Tab.ID: TabCardPose] = [:]
         for (i, tab) in cards.enumerated() { from[tab.id] = pose(i, of: tab, in: next, layout: layout) }
         next.barFrom = next.bar

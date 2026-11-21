@@ -184,7 +184,7 @@ struct SettingsContent {
     /// With no Mac yet, the agent has nowhere to run: it says so, as
     /// Everything else does.
     var agentValue: String { context.hasMac ? "\(store.agent.name) · on your Mac" : "Needs your Mac" }
-    var pageAnswersValue: String { store.pageAnswers == .iPhone ? "This iPhone" : "Your Mac" }
+    var pageAnswersValue: String { store.pageAnswers == .iPhone ? "This \(DeviceWord.name)" : "Your Mac" }
     var everythingElseValue: String { context.hasMac ? store.agent.name : "Needs your Mac" }
     var defaultBrowserValue: String {
         switch context.yabIsDefaultBrowser {
@@ -193,7 +193,7 @@ struct SettingsContent {
         case nil: ""
         }
     }
-    var todayValue: String { "This iPhone’s own" }
+    var todayValue: String { "This \(DeviceWord.name)’s own" }
     var faceIDValue: String { store.faceIDForYes ? "On" : "Off" }
     var lockScreenValue: String { Self.words(store.lockScreen) }
     var privateTabsValue: String { "Not kept" }
@@ -275,8 +275,8 @@ struct SettingsContent {
                 mac,
                 row("agent", .face, "Agent", agentValue, .page(.agent)),
             ], footer: context.hasMac
-                ? "Tasks run in Yab on your Mac, with your sign-ins. The iPhone sends codes and the yes signed by Face ID."
-                : "Join Yab on your Mac and tasks run there, with your sign-ins. The iPhone sends codes and the yes signed by Face ID."),
+                ? "Tasks run in Yab on your Mac, with your sign-ins. The \(DeviceWord.name) sends codes and the yes signed by Face ID."
+                : "Join Yab on your Mac and tasks run there, with your sign-ins. The \(DeviceWord.name) sends codes and the yes signed by Face ID."),
             SettingsSectionModel(id: "answers", title: "Answers", rows: [
                 row("aboutPage", .glyph(.sparkle), "About a page", pageAnswersValue, .page(.aboutPage)),
                 row("everythingElse", .face, "Everything else", everythingElseValue, .page(.everythingElse)),
@@ -284,7 +284,7 @@ struct SettingsContent {
             SettingsSectionModel(id: "tabs", title: "Tabs", rows: [
                 row("defaultBrowser", .glyph(.globe), "Default Browser", defaultBrowserValue, .page(.defaultBrowser)),
                 row("today", .glyph(.squareBehindSquare1), "Today", todayValue, .page(.today)),
-            ], footer: "Spaces, pins and kept tabs are the same on your Mac; Today is this iPhone’s own. Mail stays in Yab on your Mac."),
+            ], footer: "Spaces, pins and kept tabs are the same on your Mac; Today is this \(DeviceWord.name)’s own. Mail stays in Yab on your Mac."),
             SettingsSectionModel(id: "privacy", title: "Privacy", rows: [
                 row("faceID", .glyph(.faceId), "Face ID for Pay and Post", faceIDValue, .page(.faceID)),
                 row("lockScreen", .glyph(.lock), "Lock Screen Details", lockScreenValue, .page(.lockScreen)),
@@ -321,7 +321,7 @@ struct SettingsContent {
             return [SettingsSectionModel(id: "search", title: "Search Engine", rows: store.searchEngines.map { engine in
                 let name = engine == .custom ? store.customSearchSelection.name : engine.title
                 return choice("search.engine.\(engine.rawValue)", name, selection.engine == engine) { store.chooseSearchEngine(engine) }
-            }, footer: selection.fallbackNote ?? "Type a web address to open a page, or words to search \(selection.name). This choice is kept on this iPhone; your Mac's setting is unchanged."),
+            }, footer: selection.fallbackNote ?? "Type a web address to open a page, or words to search \(selection.name). This choice is kept on this \(DeviceWord.name); your Mac's setting is unchanged."),
             SettingsSectionModel(id: "search.return", title: "Return", rows: [
                 SettingsRowModel(id: "search.guessesFromWords", icon: .glyph(.sparkle), title: "Guess from Your Words", value: nil,
                                  kind: .toggle(Binding(get: { store.guessesFromWords }, set: { store.guessesFromWords = $0 }))),
@@ -374,7 +374,7 @@ struct SettingsContent {
             let history = SettingsSectionModel(id: "sync.history", title: nil, rows: [
                 SettingsRowModel(id: "sync.history", icon: .glyph(.history), title: "History", value: nil,
                                  kind: .toggle(Binding(get: { store.syncHistory }, set: { store.syncHistory = $0 }))),
-            ], footer: "Pages you open on this iPhone go to History on your Mac for two weeks. Private tabs never do.")
+            ], footer: "Pages you open on this \(DeviceWord.name) go to History on your Mac for two weeks. Private tabs never do.")
             // The Recovery Key's page stays reachable (Settings' search finds
             // it); out of sync it says to join first.
             let recovery = SettingsSectionModel(id: "sync.recovery", title: nil, rows: [
@@ -383,9 +383,9 @@ struct SettingsContent {
             guard context.inSync else { return [devices, history, recovery] }
             return [devices, history, recovery,
                     SettingsSectionModel(id: "sync.off", title: nil, rows: [
-                        SettingsRowModel(id: "sync.off", icon: nil, title: "Turn Off Sync on This iPhone", value: nil,
+                        SettingsRowModel(id: "sync.off", icon: nil, title: "Turn Off Sync on This \(DeviceWord.name)", value: nil,
                                          kind: .action(askSyncOff), danger: true),
-                    ], footer: "Your Mac and your other devices go on syncing. What is on this iPhone stays as it is.")]
+                    ], footer: "Your Mac and your other devices go on syncing. What is on this \(DeviceWord.name) stays as it is.")]
         case .recoveryKey:
             guard let key = context.recoveryKey else {
                 return [SettingsSectionModel(id: "recovery", title: nil, rows: [
@@ -403,12 +403,12 @@ struct SettingsContent {
             return [SettingsSectionModel(id: "passwords", title: nil, rows: [
                 SettingsRowModel(id: "passwords.provider", icon: .glyph(.key1), title: "Passwords and Passkeys", value: "Managed by iOS", kind: .info),
                 SettingsRowModel(id: "passwords.settings", icon: nil, title: "Open iOS Settings", value: nil, kind: .action(openSystemSettings)),
-            ], footer: "Use your configured iOS AutoFill provider on supported sign-in fields. Passwords are not stored in a Yab vault on this iPhone.")]
+            ], footer: "Use your configured iOS AutoFill provider on supported sign-in fields. Passwords are not stored in a Yab vault on this \(DeviceWord.name).")]
         case .autofill:
             return [SettingsSectionModel(id: "autofill", title: nil, rows: [
                 SettingsRowModel(id: "autofill.provider", icon: .glyph(.creditCard1), title: "AutoFill", value: "Managed by iOS", kind: .info),
                 SettingsRowModel(id: "autofill.settings", icon: nil, title: "Open iOS Settings", value: nil, kind: .action(openSystemSettings)),
-            ], footer: "Use the iOS keyboard's offered information on supported fields. A saved profile for filling whole forms is not available on this iPhone yet.")]
+            ], footer: "Use the iOS keyboard's offered information on supported fields. A saved profile for filling whole forms is not available on this \(DeviceWord.name) yet.")]
         case .privacy:
             // The blocker first, as on the Mac: one switch; the site that
             // breaks is turned off in its own Site Settings.
@@ -429,7 +429,7 @@ struct SettingsContent {
             SettingsSectionModel(id: "privacy.data", title: nil, rows: [
                 SettingsRowModel(id: "privacy.clearData", icon: nil, title: "Clear History and Website Data", value: nil,
                                  kind: .action(askClearData)),
-            ], footer: "History, cookies and other website data on this iPhone. Your tabs and what syncs with your Mac stay.")]
+            ], footer: "History, cookies and other website data on this \(DeviceWord.name). Your tabs and what syncs with your Mac stay.")]
         case .extensions:
             let host = ExtensionHost.shared
             let rows = host.installed.map { item in
@@ -466,9 +466,9 @@ struct SettingsContent {
         case .aboutPage:
             return [
                 SettingsSectionModel(id: "aboutPage", title: nil, rows: [
-                    choice("aboutPage.iPhone", "This iPhone", store.pageAnswers == .iPhone) { store.pageAnswers = .iPhone },
+                    choice("aboutPage.iPhone", "This \(DeviceWord.name)", store.pageAnswers == .iPhone) { store.pageAnswers = .iPhone },
                     choice("aboutPage.mac", "Your Mac", store.pageAnswers == .mac) { store.pageAnswers = .mac },
-                ], footer: "On this iPhone, a question about a page is answered at once, and the page stays here. On your Mac, \(store.agent.name) answers with your sign-ins."),
+                ], footer: "On this \(DeviceWord.name), a question about a page is answered at once, and the page stays here. On your Mac, \(store.agent.name) answers with your sign-ins."),
             ]
         case .everythingElse:
             return [
@@ -497,18 +497,18 @@ struct SettingsContent {
                     SettingsRowModel(id: "today.state", icon: .glyph(.squareBehindSquare1), title: "Today", value: todayValue, kind: .info),
                     SettingsRowModel(id: "today.autoClear", icon: .glyph(.broom), title: "Clear after 12 hours", value: nil,
                                      kind: .toggle(Binding(get: { store.autoClearToday }, set: { store.autoClearToday = $0 }))),
-                ], footer: "Clear removes only inactive tabs created on this iPhone with verified safe pages. The page in front, pins, kept tabs, drafts, media, tasks, shared and unverified pages stay. Undo is available for 6 seconds. Automatic Clear checks actual activity after 12 hours when Yab returns or you change spaces; it does not clear unknown Mac tabs."),
+                ], footer: "Clear removes only inactive tabs created on this \(DeviceWord.name) with verified safe pages. The page in front, pins, kept tabs, drafts, media, tasks, shared and unverified pages stay. Undo is available for 6 seconds. Automatic Clear checks actual activity after 12 hours when Yab returns or you change spaces; it does not clear unknown Mac tabs."),
                 SettingsSectionModel(id: "today.mac", title: nil, rows: [
                     SettingsRowModel(id: "today.macTabs", icon: .glyph(.macbook), title: "Your Mac’s Tabs", value: nil,
                                      kind: .toggle(Binding(get: { store.macTabs }, set: { store.macTabs = $0 }))),
-                ], footer: "See what is open on \(context.macName) and open it here. Your Today stays this iPhone’s own."),
+                ], footer: "See what is open on \(context.macName) and open it here. Your Today stays this \(DeviceWord.name)’s own."),
             ]
         case .faceID:
             return [
                 SettingsSectionModel(id: "faceID", title: nil, rows: [
                     SettingsRowModel(id: "faceID.toggle", icon: .glyph(.faceId), title: "Face ID for Pay and Post", value: nil,
                                      kind: .toggle(Binding(get: { store.faceIDForYes }, set: { store.faceIDForYes = $0 }))),
-                ], footer: "Paying, posting and canceling wait for your yes, signed on this iPhone. Your Mac checks the signature, then presses the site’s own button; Claude can’t press it. Off, the yes takes your passcode."),
+                ], footer: "Paying, posting and canceling wait for your yes, signed on this \(DeviceWord.name). Your Mac checks the signature, then presses the site’s own button; Claude can’t press it. Off, the yes takes your passcode."),
             ]
         case .lockScreen:
             return [
@@ -520,7 +520,7 @@ struct SettingsContent {
             return [
                 SettingsSectionModel(id: "privateTabs", title: nil, rows: [
                     SettingsRowModel(id: "privateTabs.state", icon: .glyph(.incognito), title: "Private Tabs", value: privateTabsValue, kind: .info),
-                ], footer: "Private tabs stay in memory on this iPhone, with no history or sync."),
+                ], footer: "Private tabs stay in memory on this \(DeviceWord.name), with no history or sync."),
             ]
         case .notifications:
             return [
@@ -532,7 +532,7 @@ struct SettingsContent {
             var sections = [
                 SettingsSectionModel(id: "appearance", title: nil, rows: SettingsStore.Appearance.allCases.map { look in
                     choice("appearance.\(look.rawValue)", Self.words(look), store.appearance == look) { store.appearance = look }
-                }, footer: "System follows your \(context.isPad ? "iPad" : "iPhone"), light by day and dark at night if it is set so."),
+                }, footer: "System follows your \(DeviceWord.name), light by day and dark at night if it is set so."),
                 SettingsSectionModel(id: "websites", title: "Websites", rows: [
                     SettingsRowModel(id: "appearance.darkenWebsites", icon: .glyph(.moon), title: "Darken Websites", value: nil,
                                      kind: .toggle(Binding(get: { store.darkenWebsites }, set: { store.darkenWebsites = $0 }))),
@@ -543,7 +543,9 @@ struct SettingsContent {
                 sections.append(SettingsSectionModel(id: "appearance.browser", title: "Browser", rows: [
                     SettingsRowModel(id: "appearance.sidebar", icon: nil, title: "Show Sidebar", value: nil,
                                      kind: .toggle(Binding(get: { layout.sidebarShown }, set: { layout.sidebarShown = $0 }))),
-                    SettingsRowModel(id: "appearance.addressBars", icon: nil, title: "Show Address Bars", value: nil,
+                    SettingsRowModel(id: "appearance.tabsInSidebar", icon: nil, title: "Show Tabs in Sidebar", value: nil,
+                                     kind: .toggle(Binding(get: { layout.tabsInSidebar }, set: { layout.tabsInSidebar = $0 }))),
+                    SettingsRowModel(id: "appearance.addressBars", icon: nil, title: "Show Address Bar", value: nil,
                                      kind: .toggle(Binding(get: { layout.addressBars }, set: { layout.addressBars = $0 }))),
                     SettingsRowModel(id: "appearance.pageFrame", icon: nil, title: "Frame Page with Sidebar", value: nil,
                                      kind: .toggle(Binding(get: { layout.framed }, set: { layout.framed = $0 }))),
@@ -583,8 +585,8 @@ struct SettingsContent {
     // MARK: - what Yab sends
 
     /// The Mac's words for its switches, with iOS and the iPhone in them.
-    nonisolated static let crashesFooter = "What crashed and why, where Yab stopped responding, the versions of Yab and iOS and the iPhone model. Never pages or anything you typed. When off, Yab asks after a new crash."
-    nonisolated static let activityFooter = "A random ID for this installation counts the days Yab is active on this iPhone. No pages, searches or browsing history."
+    nonisolated static let crashesFooter = "What crashed and why, where Yab stopped responding, the versions of Yab and iOS and the \(DeviceWord.name) model. Never pages or anything you typed. When off, Yab asks after a new crash."
+    nonisolated static let activityFooter = "A random ID for this installation counts the days Yab is active on this \(DeviceWord.name). No pages, searches or browsing history."
     /// Privacy says what goes at all, and where it is turned off.
     nonisolated static let sentFooter = "Yab sends no pages, searches or browsing history. A daily count with a random ID for this installation, and crash reports only if you say yes: both in About."
 
@@ -594,7 +596,7 @@ struct SettingsContent {
     nonisolated static func footer(_ lock: SettingsStore.LockScreen) -> String {
         switch lock {
         case .afterFaceID:
-            "A locked iPhone shows a task by its name, never an amount or who it goes to. After Face ID, the Lock Screen and the Dynamic Island show them; its buttons work after Face ID too."
+            "A locked \(DeviceWord.name) shows a task by its name, never an amount or who it goes to. After Face ID, the Lock Screen and the Dynamic Island show them; its buttons work after Face ID too."
         case .never:
             "The Lock Screen and the Dynamic Island show a task by its name only, never an amount or who it goes to, even after Face ID. Open Yab to see them."
         }

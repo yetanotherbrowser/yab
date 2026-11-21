@@ -107,7 +107,7 @@ struct SettingsSpacePage: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Its tabs close on this iPhone and on your other devices.")
+                Text("Its tabs close on this \(DeviceWord.name) and on your other devices.")
             }
             .accessibilityIdentifier("settings.space.page")
     }

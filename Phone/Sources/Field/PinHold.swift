@@ -75,7 +75,7 @@ struct PinHold: UIViewControllerRepresentable {
         }
         var page: [UIMenuElement] = []
         if app.workspace.canSplit, !tab.isPrivate, !tab.isMail, tab.id != app.browser.tab?.id, app.browser.space.tab(tab.id) != nil {
-            page.append(item("Open Beside", .yabSplitPlus) { app.openTabBeside(tab) })
+            page.append(item("Split View", .yabSplitPlus) { app.openTabBeside(tab) })
         }
         page.append(item("Copy Link", .link) { app.copyLink(of: tab) })
         page.append(item("Share", .yabShare) { app.share(tab) })
@@ -88,10 +88,10 @@ struct PinHold: UIViewControllerRepresentable {
         if !tab.isPrivate {
             var own: [UIMenuElement] = []
             if !tab.isMail, let space = app.browser.space(holding: tab.id) {
-                own.append(item("Rename…", .pencil) { app.tabEdits.begin(.tab(space.id, tab)) })
+                own.append(item("Rename Tab…", .pencil) { app.tabEdits.begin(.tab(space.id, tab)) })
                 if let folderMenu = TabEdits.folderMenu(tab, app: app) { own.append(folderMenu) }
             }
-            if !tab.isMail { own.append(item("Unpin", .pinSlash) { column.unpin(tab.id) }) }
+            if !tab.isMail { own.append(item("Unpin Tab", .pinSlash) { column.unpin(tab.id) }) }
             let home = app.browser.space(holding: tab.id)?.id
             let others = app.browser.spaces.filter { !$0.isPrivate && $0.id != home }
             if !others.isEmpty {

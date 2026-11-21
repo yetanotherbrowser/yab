@@ -105,6 +105,64 @@ final class DownloadStoreTests: XCTestCase {
         XCTAssertEqual(first.entries.map(\.name), ["open.pdf"])
     }
 
+    /// The iPad's button: a file pressed for flies from where it was held,
+    /// only where something draws the flight; one with no place only bumps.
+    func testAFileFliesFromWhereItWasHeldOnlyWhereFlightsAreDrawn() {
+        let store = store()
+        let at = CGPoint(x: 120, y: 340)
+        store.begin(UUID(), name: "a.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init(), from: at)
+        XCTAssertTrue(store.flights.isEmpty, "the phone's Now line says it instead")
+        XCTAssertEqual(store.bumps, 1)
+        store.flies = true
+        let thrown = UUID()
+        store.begin(thrown, name: "b.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init(), from: at)
+        XCTAssertEqual(store.flights, [DownloadStore.Flight(id: thrown, from: at, name: "b.pdf")])
+        XCTAssertEqual(store.bumps, 1, "no bump until it lands")
+        store.landed(thrown)
+        XCTAssertTrue(store.flights.isEmpty)
+        XCTAssertEqual(store.bumps, 2)
+        store.begin(UUID(), name: "c.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init())
+        XCTAssertTrue(store.flights.isEmpty, "no place held: the button only gives")
+        XCTAssertEqual(store.bumps, 3)
+    }
+
+    /// The last file's icon waits on the button, with no timer, until the
+    /// list or the file opens, or the file goes.
+    func testTheLastFileWaitsUntilSeen() throws {
+        let store = store()
+        let first = try finished(store, "one.pdf")
+        XCTAssertEqual(store.waiting, first)
+        let second = try finished(store, "two.pdf")
+        XCTAssertEqual(store.waiting, second, "the newest one")
+        store.seen(first)
+        XCTAssertEqual(store.waiting, second, "opening another file leaves it")
+        store.seen(second)
+        XCTAssertNil(store.waiting)
+        let third = try finished(store, "three.pdf")
+        store.seen()
+        XCTAssertNil(store.waiting, "the list opened")
+        let fourth = try finished(store, "four.pdf")
+        store.delete(fourth)
+        XCTAssertNil(store.waiting)
+        _ = third
+        let secret = try finished(store, "secret.pdf", isPrivate: true)
+        XCTAssertEqual(store.waiting, secret)
+        store.forgetPrivate()
+        XCTAssertNil(store.waiting, "gone with the private tabs")
+    }
+
+    /// Documents open as files; pages, pictures and text stay pages.
+    func testWhichTypesOpenInTheViewer() {
+        for type in ["application/pdf", "Application/PDF; charset=binary", "text/pdf",
+                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.apple.keynote"] {
+            XCTAssertTrue(PageDocument.opensInViewer(type), type)
+        }
+        for type in ["text/html", "image/png", "video/mp4", "text/plain", "application/json", ""] {
+            XCTAssertFalse(PageDocument.opensInViewer(type), type)
+        }
+        XCTAssertFalse(PageDocument.opensInViewer(nil))
+    }
+
     func testALaunchClearsWhatAKilledPrivateSessionLeft() throws {
         try FileManager.default.createDirectory(at: privateFolder, withIntermediateDirectories: true)
         try Data("x".utf8).write(to: privateFolder.appendingPathComponent("left.pdf"))

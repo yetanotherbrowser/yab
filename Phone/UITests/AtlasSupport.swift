@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// What the atlas, accessibility, perf and film tests share: the app launched
@@ -26,6 +27,7 @@ enum Atlas {
 
     static var world: String { environment["YAB_WORLD"].flatMap { $0.isEmpty ? nil : $0 } ?? "mira" }
     static var model: String { environment["YAB_MODEL"].flatMap { $0.isEmpty ? nil : $0 } ?? "pro" }
+    static var deviceWord: String { UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone" }
 
     /// A fresh folder for ready markers, so an old marker never counts.
     static func readyFolder() -> URL {

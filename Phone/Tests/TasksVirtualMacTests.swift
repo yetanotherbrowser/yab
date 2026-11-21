@@ -49,7 +49,7 @@ final class TasksVirtualMacTests: XCTestCase {
         mac.send(TaskOrder(id: "lisbon", words: "book the tap 18:35 to lisbon, window seat"))
         await wait("the code") { if case .needsCode = $0 { true } else { false } }
         guard case let .needsCode(_, code)? = events.last else { return XCTFail("the code comes last: \(events)") }
-        XCTAssertEqual(code.title, "TAP sent a code to this iPhone")
+        XCTAssertEqual(code.title, "TAP sent a code to this \(DeviceWord.name)")
         XCTAssertEqual(code.line(task: "Lisbon flights"), "Your Mac is signing in to flytap.com for Lisbon flights")
         mac.giveCode("lisbon", code: "482 913")
         await wait("the yes") { if case .needsYes = $0 { true } else { false } }
@@ -75,8 +75,8 @@ final class TasksVirtualMacTests: XCTestCase {
             }
         }
         XCTAssertEqual(order, ["taken", "step 0", "step 1", "step 2", "code", "step 2", "step 3", "yes", "paying", "done"])
-        XCTAssertTrue(mac.diary.contains("Signed in to flytap.com with the code from your iPhone"), "\(mac.diary)")
-        XCTAssertTrue(mac.diary.contains("Checked the Face ID signature from the iPhone"), "\(mac.diary)")
+        XCTAssertTrue(mac.diary.contains("Signed in to flytap.com with the code from your \(DeviceWord.name)"), "\(mac.diary)")
+        XCTAssertTrue(mac.diary.contains("Checked the Face ID signature from the \(DeviceWord.name)"), "\(mac.diary)")
     }
 
     func testAWrongCodeIsAskedForAgain() async throws {

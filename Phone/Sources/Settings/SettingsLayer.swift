@@ -27,9 +27,12 @@ struct SettingsLayer: View {
                     Color.black
                         .opacity(Metrics.Settings.dim * ui.sheet.presence(height: size.height))
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .allowsHitTesting(false)
+                        // On iPad the sheet is a card: a tap beside it closes it, as a form sheet does.
+                        .contentShape(Rectangle())
+                        .onTapGesture { if tablet, !ui.join.presented { app.surfaces.closeSettings() } }
+                        .allowsHitTesting(tablet)
                         .accessibilityHidden(true)
-                    SettingsViewport(app: app, size: size, top: tablet ? 0 : SettingsLayer.statusBar, keyboardOffset: origin.y, column: column)
+                    SettingsViewport(app: app, size: size, top: tablet ? Metrics.Settings.cardTop : SettingsLayer.statusBar, keyboardOffset: origin.y, column: column)
                         .frame(width: size.width, height: size.height)
                         .clipShape(RoundedRectangle(cornerRadius: tablet ? 22 : 0))
                         // Corners while it moves; at rest none, the screen's own glass rounds it.

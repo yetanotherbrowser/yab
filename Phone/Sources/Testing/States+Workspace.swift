@@ -26,6 +26,15 @@ extension StateCatalog {
             _ = app.pages.activate(second)
         },
         NamedState("workspace.single", "Full spread", "Opening a wide window does not create a second page.") { _ in },
+        NamedState("tablet.strip", "iPad: tabs across the top", "Show Tabs in Sidebar off: the Mac's tab bar under the status bar, the address band on the page.") { app in
+            app.workspace.preferences.tabsInSidebar = false
+        },
+        NamedState("tablet.band", "iPad: address bar on", "Show Address Bar on: the band over the page card holds Back, Forward and Reload; the sidebar's header only its door.") { app in
+            app.workspace.preferences.addressBars = true
+        },
+        NamedState("tablet.hidden", "iPad: sidebar hidden", "The sidebar away: the band holds its door, the page's doors, + and All Tabs.") { app in
+            app.workspace.preferences.sidebarShown = false
+        },
         NamedState("workspace.two", "Two pages", "Two real pooled pages; the second one owns the controls.") { app in
             guard let current = app.browser.tab,
                   let other = app.browser.space.allTabs.first(where: { $0.id != current.id && !$0.isMail }) else { return }

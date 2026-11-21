@@ -16,6 +16,14 @@ extension AppModel {
             guard let self else { answer(false); return }
             self.askDownload(question, answer: answer)
         }
+        // A document a tab opened (a PDF) is whole: it shows in the system's
+        // viewer while that tab, or the page that opened it, is still in front.
+        pages.onViewDownload = { [weak self] tab, entry in
+            guard let self, let file = downloads.entry(entry),
+                  browser.tab?.id == tab || browser.tab(tab) == nil else { return }
+            downloads.flashTaken()
+            openDownload(file)
+        }
         pages.onImageSaved = { [weak self] outcome in
             switch outcome {
             case .saved: self?.say("Saved to Photos", glyph: .checkCircle2)
@@ -97,6 +105,7 @@ extension AppModel {
 
     func openDownload(_ file: DownloadEntry) {
         guard let url = downloads.url(of: file) else { return }
+        downloads.seen(file.id)
         FilePreview.show(url)
     }
 
@@ -107,7 +116,7 @@ extension AppModel {
             guard let root = Self.topController() else { return }
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
             sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
+            sheet.popoverPresentationController?.sourceRect = Self.shareAnchor(in: root.view)
             root.present(sheet, animated: !Motion.disabled)
         }
     }

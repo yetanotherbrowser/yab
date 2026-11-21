@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import WebKit
 
 /// What Yab remembers about a site, as the Mac's Site Controls do: its page
@@ -50,6 +51,9 @@ final class SiteSettings {
     struct Site: Codable, Equatable, Sendable {
         var zoom: Double = 1
         var desktop = false
+        /// Request Mobile Website, said on an iPad, where every site is
+        /// asked for as a desktop one otherwise; nil for nothing said.
+        var mobile: Bool?
         var permissions: [Permission: Decision] = [:]
         /// Block Ads and Trackers for this site, said here; nil follows
         /// the Mac's sites and the switch in Settings (Shield).
@@ -58,7 +62,9 @@ final class SiteSettings {
         /// "pt") are translated as they load (Page/PageTranslation).
         var translates: String?
 
-        var isEmpty: Bool { abs(zoom - 1) < 0.001 && !desktop && permissions.isEmpty && blocksAds == nil && translates == nil }
+        var isEmpty: Bool {
+            abs(zoom - 1) < 0.001 && !desktop && mobile == nil && permissions.isEmpty && blocksAds == nil && translates == nil
+        }
     }
 
     /// The prototype's steps: 10 % at a time up to 200 %, then larger.
@@ -69,9 +75,14 @@ final class SiteSettings {
     private let defaults: UserDefaults?
     private static let key = "yab.siteSettings"
 
+    /// Safari's default: an iPad asks every site for its desktop version, an
+    /// iPhone for its mobile one. A site's own choice turns it the other way.
+    var prefersDesktop: Bool
+
     /// `defaults` nil: nothing outlives the app (test worlds).
-    init(defaults: UserDefaults? = .standard) {
+    init(defaults: UserDefaults? = .standard, prefersDesktop: Bool? = nil) {
         self.defaults = defaults
+        self.prefersDesktop = prefersDesktop ?? (UIDevice.current.userInterfaceIdiom == .pad)
         if let data = defaults?.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode([String: Site].self, from: data) {
             sites = saved
@@ -124,10 +135,28 @@ final class SiteSettings {
 
     // MARK: - desktop site
 
-    func desktop(_ host: String?, isPrivate: Bool) -> Bool { site(host, isPrivate: isPrivate).desktop }
+    func desktop(_ host: String?, isPrivate: Bool) -> Bool {
+        let site = site(host, isPrivate: isPrivate)
+        return prefersDesktop ? site.mobile != true : site.desktop
+    }
 
     func setDesktop(_ desktop: Bool, for host: String?, isPrivate: Bool) {
-        edit(host, isPrivate: isPrivate) { $0.desktop = desktop }
+        edit(host, isPrivate: isPrivate) { site in
+            if prefersDesktop {
+                site.mobile = desktop ? nil : true
+                if !desktop { site.desktop = false }
+            } else {
+                site.desktop = desktop
+            }
+        }
+    }
+
+    /// What WebKit is asked for. An iPad left alone gets Safari's own
+    /// choice, `.recommended`: desktop at full width, mobile in a narrow window.
+    func contentMode(_ host: String?, isPrivate: Bool) -> WKWebpagePreferences.ContentMode {
+        let site = site(host, isPrivate: isPrivate)
+        if prefersDesktop { return site.mobile == true ? .mobile : site.desktop ? .desktop : .recommended }
+        return site.desktop ? .desktop : .mobile
     }
 
     // MARK: - the ad blocker

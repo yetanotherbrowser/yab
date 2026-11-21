@@ -647,6 +647,13 @@ final class TabStackTests: XCTestCase {
         XCTAssertNil(alone.front)
         XCTAssertTrue(alone.rises)
         XCTAssertEqual(alone.seated, [])
+        // The iPad has no circle: nothing flies, sits or rises; the others fade in place.
+        for chosen in 0..<6 {
+            let flat = Closing(count: 6, chosen: chosen, stack: false)
+            XCTAssertEqual(flat.roles, (0..<6).map { $0 == chosen ? Role.chosen : .other })
+            XCTAssertEqual(flat.seated, [])
+            XCTAssertFalse(flat.rises)
+        }
         // The stack's cards are what TabRecency shows after the chosen tab comes first.
         for count in 1...6 {
             for chosen in 0..<count {
@@ -764,14 +771,15 @@ final class TabStackTests: XCTestCase {
         XCTAssertEqual(app.surfaces.chromeOpacity, Double(1 - TabGalleryTiming.barProgress(0.1)), accuracy: 0.0001)
         stack.choose("work-figma-onb", heldAt: 0.1)
         XCTAssertEqual(stack.gallery?.phase, .closing)
-        // The top card: nothing flies; GitHub and HN come up with the circle.
+        // The top card: nothing flies. The iPad has no circle on its page, so
+        // GitHub and HN fade where they are rather than coming up with one.
         XCTAssertEqual(stack.gallery?.roles["work-gh-pr"], .other)
         XCTAssertEqual(stack.gallery?.roles["work-hn"], .other)
-        XCTAssertEqual(stack.gallery?.seated, [TabStack.Gallery.Seated(id: "work-gh-pr", place: .front), TabStack.Gallery.Seated(id: "work-hn", place: .back)])
-        XCTAssertEqual(stack.gallery?.rises, true)
+        XCTAssertEqual(stack.gallery?.seated, [])
+        XCTAssertEqual(stack.gallery?.rises, false)
         let gallery = try XCTUnwrap(stack.gallery)
-        XCTAssertEqual(stack.circleOffset(gallery), TabGalleryMotion.rise(true, t: 0.1), accuracy: 0.001)
-        XCTAssertEqual(stack.seatedCards(gallery, layout: stack.layout(gallery)).map(\.tab.id), ["work-gh-pr", "work-hn"])
+        XCTAssertEqual(stack.circleOffset(gallery), 0, accuracy: 0.001)
+        XCTAssertEqual(stack.seatedCards(gallery, layout: stack.layout(gallery)).map(\.tab.id), [])
         XCTAssertEqual(stack.contents().front?.id, "work-gh-pr", "what the stack shows once All Tabs is gone")
         XCTAssertEqual(stack.contents().back?.id, "work-hn")
         stack.dismissGallery()

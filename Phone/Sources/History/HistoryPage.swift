@@ -97,7 +97,7 @@ struct HistoryPage: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Pages go from History on this iPhone. History on your Mac stays as it is.")
+            Text("Pages go from History on this \(DeviceWord.name). History on your Mac stays as it is.")
         }
     }
 
@@ -122,7 +122,7 @@ struct HistoryPage: View {
             Text("No History")
                 .font(.headline)
                 .foregroundStyle(SettingsInk.text)
-            Text("Pages you open on this iPhone and on your Mac show here.")
+            Text("Pages you open on this \(DeviceWord.name) and on your Mac show here.")
                 .font(.footnote)
                 .foregroundStyle(SettingsInk.footer)
                 .multilineTextAlignment(.center)

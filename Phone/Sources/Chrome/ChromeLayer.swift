@@ -219,7 +219,8 @@ private struct ChromeLayerContent: View {
             let menuOpen = app.surfaces.menu == .plate
             let layout = ChromeGeometry(size: geo.size, folded: sourceFolded, hasNow: app.nowItem != nil,
                                         chipWidth: app.nowItem?.chipWidth(screen: geo.size.width), verticalControls: app.workspace.verticalControls, leadingRail: app.workspace.leadingRail)
-            let question = app.downloads.asking(isPrivate: app.pageIsPrivate)
+            // The iPad's toolbar layout asks from its downloads button (TabletDownloads).
+            let question = app.workspace.tabletControls ? nil : app.downloads.asking(isPrivate: app.pageIsPrivate)
             ZStack(alignment: .topLeading) {
                 if let question {
                     let card = DownloadAskCard.frame(in: ChromeGeometry(size: geo.size, folded: false, hasNow: true))

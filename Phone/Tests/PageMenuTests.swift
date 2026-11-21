@@ -61,6 +61,7 @@ final class PageMenuTests: XCTestCase {
     }
 
     func testRequestDesktopSiteTogglesForTheSite() throws {
+        app.siteSettings.prefersDesktop = false
         XCTAssertFalse(app.pageIsDesktop)
         app.pageMenuDesktop()
         XCTAssertTrue(app.pageIsDesktop)
@@ -68,6 +69,25 @@ final class PageMenuTests: XCTestCase {
         app.pageMenuDesktop()
         XCTAssertFalse(app.pageIsDesktop, "Request Mobile Site takes it back")
         XCTAssertFalse(app.siteSettings.desktop("figma.com", isPrivate: false))
+    }
+
+    /// As Safari on iPad: desktop sites unless a site is asked for as a mobile one.
+    func testAnIPadAsksForDesktopSitesUnlessTold() throws {
+        let settings = SiteSettings(defaults: nil, prefersDesktop: true)
+        XCTAssertTrue(settings.desktop("google.com", isPrivate: false))
+        XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .recommended)
+        settings.setDesktop(false, for: "google.com", isPrivate: false)
+        XCTAssertFalse(settings.desktop("google.com", isPrivate: false))
+        XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .mobile)
+        XCTAssertTrue(settings.desktop("figma.com", isPrivate: false), "only that site")
+        settings.setDesktop(true, for: "google.com", isPrivate: false)
+        XCTAssertTrue(settings.desktop("google.com", isPrivate: false))
+        XCTAssertTrue(settings.site("google.com", isPrivate: false).isEmpty, "back to the default, nothing kept")
+
+        let phone = SiteSettings(defaults: nil, prefersDesktop: false)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .mobile)
+        phone.setDesktop(true, for: "google.com", isPrivate: false)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .desktop)
     }
 
     func testWhatASiteAskedForIsSaidInAWordAndForgotten() {

@@ -23,7 +23,7 @@ final class SyncDevicesTests: PhoneLinkTestCase {
             SyncDevice(id: "phone", name: "Mira’s iPhone", model: "iPhone18,1", lastSeen: now),
         ], own: "phone", now: now)
         XCTAssertEqual(words.map(\.id), ["phone", "mac", "old"], "this iPhone first")
-        XCTAssertEqual(words[0].words, "This iPhone")
+        XCTAssertEqual(words[0].words, "This \(DeviceWord.name)")
         XCTAssertTrue(words[0].isPhone && words[0].isThis)
         XCTAssertEqual(words[1].words, "Syncing now")
         XCTAssertFalse(words[1].isPhone)
@@ -45,14 +45,14 @@ final class SyncDevicesTests: PhoneLinkTestCase {
         XCTAssertEqual(sections.map(\.id), ["sync", "sync.history", "sync.recovery", "sync.off"])
         XCTAssertEqual(sections[0].title, "Devices")
         XCTAssertEqual(sections[0].rows.map(\.id), ["sync.device.phone", "sync.device.mac", "sync"])
-        XCTAssertEqual(sections[0].rows[0].value, "This iPhone")
+        XCTAssertEqual(sections[0].rows[0].value, "This \(DeviceWord.name)")
         XCTAssertEqual(sections[0].rows[1].value, "Syncing now")
         guard case .glyph(.phone)? = sections[0].rows[0].icon, case .glyph(.macbook)? = sections[0].rows[1].icon else {
             return XCTFail("an iPhone's and a Mac's glyph")
         }
         guard case .page(.recoveryKey) = sections[2].rows[0].kind else { return XCTFail("the Recovery Key's page") }
         let off = sections[3].rows[0]
-        XCTAssertEqual(off.title, "Turn Off Sync on This iPhone")
+        XCTAssertEqual(off.title, "Turn Off Sync on This \(DeviceWord.name)")
         XCTAssertTrue(off.danger)
         guard case .action = off.kind else { return XCTFail("an action, asked first") }
         // Not in sync (a test world): the Mac's row as before, and no Turn Off.
@@ -96,7 +96,7 @@ final class SyncDevicesTests: PhoneLinkTestCase {
         let listed = await until { Set(app.sync.devices.map(\.name)) == ["MacBook Pro", "Test iPhone"] }
         XCTAssertTrue(listed, "\(app.sync.devices)")
         let words = SettingsDevice.list(app.sync.devices, own: app.sync.ownDevice, now: Date())
-        XCTAssertEqual(words.first?.words, "This iPhone")
+        XCTAssertEqual(words.first?.words, "This \(DeviceWord.name)")
         XCTAssertEqual(words.first?.isPhone, true)
     }
 

@@ -327,7 +327,7 @@ enum ExtensionShim {
             return ["openPanelOnActionClick": false]
         default:
             ExtensionHost.shared.log(id, "missing " + api)
-            throw Unsupported(what: "\(api) is not available on iPhone")
+            throw Unsupported(what: "\(api) is not available on \(DeviceWord.name)")
         }
     }
 

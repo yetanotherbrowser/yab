@@ -65,6 +65,8 @@ extension AppModel {
             row.subtitle = "Search \(name) · " + (field.place.replacesTab && field.pageIsToday ? "in this tab" : "new tab")
             return row
         }
+        // Yab's own menu actions, as the Mac's field finds them.
+        rows = Words.withCommands(rows, typed: field.words, commands: commandCandidates)
         // The engine's completions, under the search for the words themselves.
         let phrases = SearchSuggest.shared.phrases(for: field.words)
         if !phrases.isEmpty {
@@ -180,6 +182,13 @@ extension AppModel {
             startTask(for: words)
         case .settings:
             Motion.sheetGrow.run { surfaces.openSettings() }
+        case let .command(token):
+            guard let key = BrowserKey(token: token) else { return }
+            closeFieldAfterChoice()
+            // Once the field is gone: the keys stay the field's while it is up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + (Motion.disabled ? 0 : Motion.fieldClose.duration)) { [weak self] in
+                self?.use(key)
+            }
         case .findOnPage:
             let id = browser.tab?.id
             closeFieldAfterChoice()
@@ -393,7 +402,7 @@ extension AppModel {
             // On iPad it is a popover, and UIKit throws without an anchor
             // (register 1142), as PageDownload's share does.
             sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
+            sheet.popoverPresentationController?.sourceRect = Self.shareAnchor(in: root.view)
             root.present(sheet, animated: !Motion.disabled)
         }
     }
@@ -401,8 +410,20 @@ extension AppModel {
     static func topController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         var top = scene?.windows.first { $0.isKeyWindow }?.rootViewController ?? scene?.windows.first?.rootViewController
-        while let next = top?.presentedViewController { top = next }
+        // A popover on its way out (Site Controls closing for Share) can't present.
+        while let next = top?.presentedViewController, !next.isBeingDismissed { top = next }
         return top
+    }
+
+    /// Where a share sheet's popover points on iPad: under the toolbar, where
+    /// Site Controls and the downloads button are, or over the phone's plate.
+    static func shareAnchor(in view: UIView) -> CGRect {
+        let traits = view.traitCollection
+        if TabletWorkspaceGeometry.usesToolbar(size: view.bounds.size, regular: traits.horizontalSizeClass == .regular,
+                                               idiom: traits.userInterfaceIdiom) {
+            return CGRect(x: view.bounds.midX, y: view.safeAreaInsets.top + TabletWorkspaceGeometry.toolbar, width: 1, height: 1)
+        }
+        return CGRect(x: view.bounds.midX, y: view.bounds.maxY - 44, width: 1, height: 1)
     }
 
     /// The screen the app draws on.

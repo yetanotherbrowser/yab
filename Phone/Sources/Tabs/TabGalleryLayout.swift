@@ -19,6 +19,10 @@ struct TabGalleryLayout: Equatable {
     var circle: CGRect? = nil
     /// Three cards whole across an unfolded Duo, side by side, none over another.
     var across = false
+    /// Where the page stands when it isn't the whole window: the iPad's
+    /// page card, beside its sidebar and under its toolbar. Cards grow out
+    /// of it and back into it, so the workspace never jumps when they go.
+    var pageFrame: CGRect? = nil
 
     private typealias G = Metrics.TabGallery
 
@@ -30,10 +34,11 @@ struct TabGalleryLayout: Equatable {
 
     /// The page as a card shows it whole: the whole screen, the bar floating
     /// over its foot as it does over the live page.
-    var page: CGRect { CGRect(x: 0, y: 0, width: screen.width, height: screen.height) }
+    var page: CGRect { pageFrame ?? CGRect(x: 0, y: 0, width: screen.width, height: screen.height) }
 
-    /// The share of a page's picture above its content area.
-    var contentTop: CGFloat { screen.height > 0 ? Metrics.statusBar / screen.height : 0 }
+    /// The share of a page's picture above its content area: none where the
+    /// page starts under a toolbar rather than under the status bar.
+    var contentTop: CGFloat { pageFrame != nil ? 0 : screen.height > 0 ? Metrics.statusBar / screen.height : 0 }
 
     /// How wide a card's kept picture is, in points (TabPictures): as wide as
     /// the widest card at rest, the tab in front's beside the focus.
@@ -283,8 +288,10 @@ enum TabGalleryMotion {
         /// Nothing lay on the chosen card: the circle rises with its cards.
         var rises: Bool
 
-        init(count: Int, chosen: Int) {
-            let after = (0..<count).reversed().filter { $0 != chosen }
+        /// `stack`: a circle to fly into (the phone's). Without one (iPad)
+        /// the others only fade where they are.
+        init(count: Int, chosen: Int, stack: Bool = true) {
+            let after = stack ? (0..<count).reversed().filter { $0 != chosen } : []
             let front = after.first, back = after.dropFirst().first
             roles = (0..<count).map { i in
                 if i == chosen { return .chosen }
@@ -294,7 +301,7 @@ enum TabGalleryMotion {
             }
             self.front = front
             self.back = back
-            rises = chosen == count - 1
+            rises = stack && chosen == count - 1
         }
 
         /// The stack's cards that don't fly (they lay under the chosen one),

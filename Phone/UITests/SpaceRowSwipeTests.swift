@@ -158,10 +158,10 @@ final class SpaceRowSwipeTests: XCTestCase {
         try save("pinned")
         pin.press(forDuration: 1)
         try save("pin-hold")
-        XCTAssertTrue(app.buttons["Unpin"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Unpin Tab"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Launch notes'")).firstMatch.exists,
                       "the held pin must own its menu")
-        app.buttons["Unpin"].tap()
+        app.buttons["Unpin Tab"].tap()
         try save("after-unpin")
         XCTAssertTrue(row.waitForExistence(timeout: 4))
         XCTAssertFalse(pin.exists)
@@ -197,7 +197,7 @@ final class SpaceRowSwipeTests: XCTestCase {
         app.terminate(); launch()
         row.press(forDuration: 1)
         XCTAssertTrue(app.buttons["Copy Link"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Pin"].exists)
+        XCTAssertTrue(app.buttons["Pin Tab"].exists)
         try save("tab-hold")
     }
 

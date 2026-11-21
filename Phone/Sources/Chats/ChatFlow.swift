@@ -742,7 +742,7 @@ extension AppModel {
     /// What Delete Chat asks first: where the chat goes from.
     func deleteQuestion(_ id: Chat.ID) -> (title: String, detail: String?) {
         if canControl(id) { return ("Delete this chat on your Mac too?", nil) }
-        if LocalChatProfile.isRemoteID(id) { return ("Delete this chat from this iPhone?", "It stays on \(macName).") }
+        if LocalChatProfile.isRemoteID(id) { return ("Delete this chat from this \(DeviceWord.name)?", "It stays on \(macName).") }
         return ("Delete this chat?", nil)
     }
 
