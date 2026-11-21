@@ -101,7 +101,10 @@ final class HistoryModel {
     /// Places another device went to, as they come.
     func syncedChanged(_ places: [SyncedPlace]) {
         guard !places.isEmpty else { return }
-        for place in places where place.last >= (synced[place.key]?.last ?? 0) || place.title != synced[place.key]?.title {
+        // Two records can be one place (an older Yab's key without the
+        // port, and a newer one's): the newer visit is the row, as in
+        // adoptSynced. A record's own `last` never goes back.
+        for place in places where place.last >= (synced[place.key]?.last ?? 0) {
             synced[place.key] = place
         }
         revision += 1

@@ -7433,7 +7433,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         // for all of it: ⌘T, then whatever you meant.
         let openMatches = MainBudget.chunk("field.open") { openPageMatches(matching: typed) }
         let open = openMatches.rows
-        let already = Set(open.filter { automaticOpenPage($0) }.compactMap { $0.url.map { Address.pretty($0).lowercased() } })
+        let already = Set(open.filter { automaticOpenPage($0) }.compactMap { $0.url.map(History.key(for:)) })
         // Bookmarks among the places, as browsers' address fields
         // offer them: read again only after they change.
         history.keep(bookmarks: bookmarks.roots, revision: bookmarks.revision)
@@ -7618,7 +7618,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         for remote in openElsewhere {
             if asked == .tab, FieldUnder.shared.tabs, let url = remote.url {
                 let key = History.key(for: url)
-                if !already.contains(Address.pretty(url).lowercased()), remoteDestinations.insert(key).inserted {
+                if !already.contains(key), remoteDestinations.insert(key).inserted {
                     var destination = places.first { $0.url.map(History.key(for:)) == key }
                         ?? Suggestion(key: key, title: remote.key, url: url, kind: .known)
                     destination.opensHere = true
@@ -7685,14 +7685,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
                   // only its address begun means navigation. A title match
                   // ("google" in Play Console) stays under the words searched.
                   let kept = (openHere + remoteCopies + saved).first(where: {
-                      $0.url.map { Address.pretty($0).lowercased().hasPrefix(text.lowercased()) } == true
+                      $0.url.map { History.key(for: $0).hasPrefix(text.lowercased()) } == true
                   }), let row = list.firstIndex(of: kept) {
             lead = row
         } else if let ending {
             // Finishing the address of a page that is already open: Return
             // goes back to it rather than opening it again.
             let whole = (typed + ending).lowercased()
-            lead = list.firstIndex { automaticOpenPage($0) && $0.url.map { Address.pretty($0).lowercased() } == whole }
+            lead = list.firstIndex { automaticOpenPage($0) && $0.url.map(History.key(for:)) == whole }
                 ?? list.firstIndex { $0.isPlace && $0.key == whole }
         } else if let quickName = quick.first(where: { $0.name.lowercased() == text.lowercased() }),
                   let quickRow = list.firstIndex(where: { $0.kind == .quickAction(quickName.id) }) {

@@ -50,18 +50,48 @@ enum SyncShapes {
         }
     }
 
+    /// This Mac's places and those it deleted by hand, told to the journal
+    /// (SyncCenter's flush). Deleted by hand: marked first, then removed, so
+    /// the other devices tell it from a place that only left the two weeks.
+    static func tellVisits(_ list: [Visit], cuts: [String: Date], into journal: Journal) throws {
+        let now = visits(list)
+        let ours = removable(keeping: now)
+        let marked = cut(cuts, in: journal, keeping: now)
+        if !marked.isEmpty { try journal.reconcile(visit, now.merging(marked) { mine, _ in mine }, within: ours) }
+        try journal.reconcile(visit, now, within: ours)
+    }
+
+    /// Which records a flush may remove for being missing from `now`. A Yab
+    /// from before ports were part of the key names a server's page without
+    /// its port (`localhost/blog` for localhost:3000/blog), so its record's
+    /// id is never in `now`. Removed, that device would write it back at its
+    /// next flush, and again after each. Such a record stays while this Mac
+    /// has its place, under the key with the port, and goes when the place does.
+    static func removable(keeping now: Collection) -> (SyncKit.Record) -> Bool {
+        { record in
+            guard let place = SyncVisit.key(of: record), place != record.id else { return true }
+            return now[place] == nil
+        }
+    }
+
     /// The places deleted here by hand (History.cuts) that sync holds,
     /// marked with when, for the flush to tell before it removes them: a
     /// removal alone also means a place left the two weeks or this Mac
     /// stopped syncing history, which the other devices must not follow.
-    /// Only places no longer in `now` and still alive in the journal.
+    /// Only places no longer in `now` and still alive in the journal. A
+    /// server's page is also cut under the key an older Yab gives it,
+    /// without the port, when that record is of the same page, so the
+    /// older device lets it go too.
     static func cut(_ cuts: [String: Date], in journal: Journal, keeping now: Collection) -> Collection {
         var out: Collection = [:]
         for (key, at) in cuts where now[key] == nil {
-            guard let record = journal.record(.init(collection: visit, id: key)), record.alive() else { continue }
-            var fields = record.visible
-            fields["cut"] = .number(at.timeIntervalSince1970.rounded(.down))
-            out[key] = fields
+            for id in [key, SyncVisit.portless(key)].compactMap({ $0 }) {
+                guard let record = journal.record(.init(collection: visit, id: id)), record.alive(),
+                      id == key || SyncVisit.key(of: record) == key else { continue }
+                var fields = record.visible
+                fields["cut"] = .number(at.timeIntervalSince1970.rounded(.down))
+                out[id] = fields
+            }
         }
         return out
     }
@@ -69,11 +99,13 @@ enum SyncShapes {
     /// Places deleted by hand on another device, by key and when: a removed
     /// record whose last change before the removal was its cut. One cut
     /// once, visited again since and gone out of the two weeks, is not.
+    /// Keyed by the record's address, so a cut from an older Yab, whose ids
+    /// leave out a server's port, takes the place with the port here.
     static func cutVisits(from records: [SyncKit.Record]) -> [(key: String, at: Date)] {
         records.compactMap { record in
             guard !record.alive(), let at = record.fields["cut"]?.number, let stamp = record.stamps["cut"],
                   !record.stamps.contains(where: { $0.key != "cut" && $0.value > stamp }) else { return nil }
-            return (record.id, Date(timeIntervalSince1970: at))
+            return (SyncVisit.key(of: record) ?? record.id, Date(timeIntervalSince1970: at))
         }
     }
 

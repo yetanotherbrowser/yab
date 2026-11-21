@@ -1190,14 +1190,7 @@ final class SyncCenter: ObservableObject {
         }
         if let routines = read.routines { try SyncShapes.reconcileRoutines(journal, routines, device: read.device) }
         if let projects = read.projects { try journal.reconcile(SyncShapes.project, SyncShapes.projects(projects)) }
-        if let visits = read.visits {
-            let now = SyncShapes.visits(visits)
-            // Deleted by hand: marked first, then removed, so the other
-            // devices tell it from a place that only left the two weeks.
-            let cut = SyncShapes.cut(read.cuts, in: journal, keeping: now)
-            if !cut.isEmpty { try journal.reconcile(SyncShapes.visit, now.merging(cut) { mine, _ in mine }) }
-            try journal.reconcile(SyncShapes.visit, now)
-        }
+        if let visits = read.visits { try SyncShapes.tellVisits(visits, cuts: read.cuts, into: journal) }
         if let now = read.now { try SyncNow.reconcile(journal, now, device: read.device) }
         if read.failed != nil { return }
         if collections.contains(SyncShapes.memory) {

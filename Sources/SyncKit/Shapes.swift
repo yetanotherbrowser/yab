@@ -470,15 +470,43 @@ public struct SyncVisit: Equatable, Sendable, Identifiable {
     /// Whether history keeps a place of this kind at all.
     public static func keeps(_ url: URL) -> Bool { url.scheme == "http" || url.scheme == "https" }
 
-    /// The Mac's history key: `Address.pretty(url).lowercased()`, the host
-    /// without www., an IPv6 address in brackets, and the path unless it is
-    /// empty or "/". No port, query or fragment.
+    /// The Mac's history key (`History.key(for:)`): the host without www.,
+    /// an IPv6 address in brackets, a port that isn't the scheme's own
+    /// (localhost:3000 and localhost:4000 are two places), and the path
+    /// unless it is empty or "/". No query or fragment.
     public static func key(_ url: URL) -> String {
         guard let host = url.host() else { return url.absoluteString.lowercased() }
         var bare = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         if bare.contains(":") { bare = "[\(bare)]" }
+        if let port = url.port, port != (url.scheme?.lowercased() == "https" ? 443 : url.scheme?.lowercased() == "http" ? 80 : -1) {
+            bare += ":\(port)"
+        }
         let path = url.path()
         return (path.isEmpty || path == "/" ? bare : bare + path).lowercased()
+    }
+
+    /// The key a record's place has now, read from its address, a removed
+    /// record's too. A Yab from before ports were part of the key still
+    /// names a server's page without its port (`localhost/blog` for
+    /// http://localhost:3000/blog), so its records' ids can differ from
+    /// this. Nil without an address.
+    public static func key(of record: Record) -> String? {
+        guard let address = record.fields["url"]?.string, let url = URL(string: address) else { return nil }
+        return key(url)
+    }
+
+    /// The place's key read from its address (`key(of:)`): the same for an
+    /// older device's record of a page and a newer one's.
+    public var place: String { URL(string: url).map(SyncVisit.key) ?? id }
+
+    /// The key a Yab from before ports were part of it gives a place:
+    /// `localhost/blog` for `localhost:3000/blog`, `[fd00::1]` for
+    /// `[fd00::1]:3000`. Nil for a key without a port.
+    public static func portless(_ key: String) -> String? {
+        let site = String(key.prefix { $0 != "/" })
+        let host = site.hasPrefix("[") ? String(site.prefix { $0 != "]" }) + "]" : String(site.prefix { $0 != ":" })
+        guard host.count < site.count else { return nil }
+        return host + String(key.dropFirst(site.count))
     }
 }
 

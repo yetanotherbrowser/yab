@@ -2562,9 +2562,11 @@ final class SyncBridge {
 
     // MARK: - history
 
-    /// A place in sync as History takes it.
+    /// A place in sync as History takes it, keyed by its address rather than
+    /// the record's id: a Mac on an older Yab names a server's page without
+    /// its port, and the same page from it and from a newer Mac is one place.
     nonisolated static func place(_ item: (visit: SyncVisit, device: String?)) -> SyncedPlace {
-        SyncedPlace(key: item.visit.id, url: item.visit.url, title: item.visit.title, last: item.visit.last,
+        SyncedPlace(key: item.visit.place, url: item.visit.url, title: item.visit.title, last: item.visit.last,
                     typed: item.visit.typed, device: item.device)
     }
 

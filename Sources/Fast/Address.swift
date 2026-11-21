@@ -177,8 +177,8 @@ enum Address {
     }
 
     /// What the tab says before the page has told us its title: the address,
-    /// with the parts nobody reads taken off. History is kept under it too,
-    /// so the port stays off unless asked for.
+    /// with the parts nobody reads taken off, the port too unless asked for.
+    /// History keeps a port that isn't the scheme's own (History.key).
     static func pretty(_ url: URL) -> String { pretty(url, port: false) }
 
     static func pretty(_ url: URL, port: Bool, keepingWWW: Bool = false) -> String {

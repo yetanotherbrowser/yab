@@ -1854,8 +1854,8 @@ extension Browser {
         // good; ⌘ or ⇧ picks more rows for one Delete (PlacePicks).
         out.append(FieldAction(id: "delete", title: "Delete from History", keys: Keymap.shared.text(.fieldDelete), symbol: "yab.page.trash", group: 3, danger: true) {
             Diary.shared.forget(keys: [key]) { [weak self] in self?.askHistory() }
-            // The address field's history keeps a page by its pretty address.
-            self.history.forget(Address.pretty(url).lowercased())
+            // The address field's history keeps a page by its key.
+            self.history.forget(History.key(for: url))
         })
         if let host = url.host() {
             out.append(FieldAction(id: "forgetsite", title: "Delete All from \(Browser.site(host))…", symbol: "yab.globe.trash", group: 3, danger: true) {
@@ -1869,7 +1869,7 @@ extension Browser {
                     guard yes else { return }
                     // From the address field's suggestions too, page by page.
                     Diary.shared.forget(host: host) { [weak self] urls in
-                        urls.forEach { self?.history.forget(Address.pretty($0).lowercased()) }
+                        urls.forEach { self?.history.forget(History.key(for: $0)) }
                     }
                 }
             })
