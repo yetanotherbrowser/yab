@@ -262,6 +262,13 @@ final class SettingsStore {
         set { withMutation(keyPath: \.shareDailyActivity) { values.shareDailyActivity = newValue }; write(newValue, Key.shareDailyActivity) }
     }
 
+    /// Whether Siri, Shortcuts and Spotlight may use Yab's App Intents. On
+    /// unless turned off, so the Shortcuts people already made keep working.
+    var siriAppIntents: Bool {
+        get { access(keyPath: \.siriAppIntents); return values.siriAppIntents }
+        set { withMutation(keyPath: \.siriAppIntents) { values.siriAppIntents = newValue }; write(newValue, Key.siriAppIntents) }
+    }
+
     /// The values themselves; the properties above say when they are read
     /// and changed, and write each change through to the defaults.
     private struct Values {
@@ -283,6 +290,7 @@ final class SettingsStore {
         var openKeyboardAtLaunch: Bool
         var sendCrashReports: Bool
         var shareDailyActivity: Bool
+        var siriAppIntents: Bool
     }
 
     enum Key {
@@ -311,6 +319,7 @@ final class SettingsStore {
         /// The Mac's keys, read where the reports are made.
         static let sendCrashReports = CrashReports.key
         static let shareDailyActivity = DailyActivity.key
+        static let siriAppIntents = "settings.siriAppIntents"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -363,7 +372,8 @@ final class SettingsStore {
             swipeAnywhere: flag(Key.swipeAnywhere, true),
             openKeyboardAtLaunch: flag(Key.openKeyboardAtLaunch, true),
             sendCrashReports: flag(Key.sendCrashReports, false),
-            shareDailyActivity: flag(Key.shareDailyActivity, true))
+            shareDailyActivity: flag(Key.shareDailyActivity, true),
+            siriAppIntents: flag(Key.siriAppIntents, true))
     }
 
     private func write(_ value: Any, _ key: String) {

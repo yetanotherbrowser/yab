@@ -24,6 +24,7 @@ struct OpenURLInYabIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        try YabIntentsGuard.checkEnabled()
         guard SharedItems.isWeb(url) else { throw YabIntentError.notWeb }
         Entrances.perform(.open(url))
         return .result()
@@ -49,6 +50,7 @@ struct SearchInYabIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        try YabIntentsGuard.checkEnabled()
         Entrances.perform(.search(text))
         return .result()
     }
@@ -63,17 +65,28 @@ struct NewPrivateTabIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        try YabIntentsGuard.checkEnabled()
         Entrances.perform(.route(.privateTab))
         return .result()
     }
 }
 
-enum YabIntentError: Error, CustomLocalizedStringResourceConvertible {
+/// Siri, Shortcuts and Spotlight reach Yab only while Settings allows it.
+enum YabIntentsGuard {
+    @MainActor
+    static func checkEnabled(in store: SettingsStore = .shared) throws {
+        guard store.siriAppIntents else { throw YabIntentError.disabled }
+    }
+}
+
+enum YabIntentError: Error, Equatable, CustomLocalizedStringResourceConvertible {
     case notWeb
+    case disabled
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .notWeb: "Yab opens web pages: links that start with http or https."
+        case .disabled: "Siri & App Intents are off in Yab Settings, under General."
         }
     }
 }
