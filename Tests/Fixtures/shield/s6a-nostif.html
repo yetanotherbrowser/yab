@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>s6a-nostif</title>
+<!-- rule: fixture.test##+js(nostif, popunderTick) -->
+<!-- rule: fixture.test##+js(nostif, rangeTick, 0-30) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s6a-nostif",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+const fired={};
+setTimeout(function popunderTick(){fired.pop=1},10);
+setTimeout(function fineTick(){fired.fine=1},10);
+setTimeout(function rangeTick(){fired.rangeFast=1},10);
+setTimeout(function rangeTick(){fired.rangeSlow=1},60);
+const id=setTimeout(function popunderTick(){},10);
+F.kept.returnsTimerId=(typeof id==="number");
+setTimeout(()=>{
+ F.effect.matchedCallbackDefused=!fired.pop;
+ F.effect.delayRangeDefused=!fired.rangeFast;
+ F.kept.unmatchedCallbackRuns=!!fired.fine;
+ F.kept.outOfRangeDelayRuns=!!fired.rangeSlow;
+ finish()},300);</script>

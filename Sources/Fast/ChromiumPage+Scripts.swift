@@ -48,6 +48,12 @@ final class ChromiumScripts {
         """
     }
     private var installedYouTubePolicy: YouTubePolicy?
+    private var installedScriptlets: ShieldScriptlets.ChromiumPolicy?
+    /// Shield's scriptlets as registered no longer match its table or switches.
+    var scriptletsChanged: Bool {
+        guard installed != nil, let tab else { return false }
+        return installedScriptlets != ShieldScriptlets.chromiumPolicy(for: tab, host: arming?.host)
+    }
     private var addons = ChromiumAddons()
     /// Dark pages' ground for the renderer, and what each helper tab was
     /// last told (ChromiumPage+Dark.swift).
@@ -65,7 +71,7 @@ final class ChromiumScripts {
         let changed = arming.map { $0.host != host || $0.css != css } ?? true
         arming = PageScripts.Arming(host: host, css: css)
         tab?.skipsAds = Shield.shared.skips(on: host)
-        if installed != nil, changed || installedVeils != Curtain.shared.styles || installedYouTubePolicy != YouTubePolicy() || addons.look != ChromiumAddons.look(for: tab) {
+        if installed != nil, changed || installedVeils != Curtain.shared.styles || installedYouTubePolicy != YouTubePolicy() || scriptletsChanged || addons.look != ChromiumAddons.look(for: tab) {
             page?.refreshFeatureScripts(to: url)
         }
     }
@@ -92,6 +98,7 @@ final class ChromiumScripts {
         installed = nil
         installedVeils = [:]
         installedYouTubePolicy = nil
+        installedScriptlets = nil
         applied = [:]
         // A tab with no URL has no DevTools agent until its first navigation:
         // the helper brings it up with a blank document and holds this
@@ -136,7 +143,8 @@ final class ChromiumScripts {
         }
         if LinkGap.cut("docstart") { registrations.removeAll { !$0.atEnd } }
         if LinkGap.cut("docend") { registrations.removeAll { $0.atEnd } }
-        guard registrations != installed else { installedYouTubePolicy = youtube; installedVeils = hidden; return }
+        let scriptlets = ShieldScriptlets.chromiumPolicy(for: owner, host: host)
+        guard registrations != installed else { installedYouTubePolicy = youtube; installedVeils = hidden; installedScriptlets = scriptlets; return }
         let agent = Self.world(.agent)
         var definitions = registrations.map { registration in
             JSONValue.object(["world": .string(Self.world(registration.world)), "source": .string(registration.source),
@@ -184,6 +192,7 @@ final class ChromiumScripts {
         installed = registrations
         installedVeils = hidden
         installedYouTubePolicy = youtube
+        installedScriptlets = scriptlets
         darkBound = dark
     }
 

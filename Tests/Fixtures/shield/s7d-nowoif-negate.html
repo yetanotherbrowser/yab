@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>s7d-nowoif-negate</title>
+<!-- rule: fixture.test##+js(nowoif, !ok.example) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s7d-nowoif-negate",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+let bad=window.open("https://ads.example/x"),good=window.open("https://ok.example/y");
+F.effect.matchingUrlBlocked=(bad===null);
+F.kept.nonMatchingUrlOpens=(good!==null);
+try{bad&&bad.close()}catch(_){}
+try{good&&good.close()}catch(_){}
+finish();</script>

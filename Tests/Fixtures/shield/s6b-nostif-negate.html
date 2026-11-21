@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>s6b-nostif-negate</title>
+<!-- rule: fixture.test##+js(nostif, !allowedTick) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s6b-nostif-negate",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+const fired={};
+setTimeout(function allowedTick(){fired.ok=1},10);
+setTimeout(function otherTick(){fired.other=1},10);
+const done=setInterval(()=>{clearInterval(done);F.effect.nonMatchingDefused=!fired.other;F.kept.negatedMatchRuns=!!fired.ok;finish()},200);</script>

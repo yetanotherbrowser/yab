@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>s1-aopr</title>
+<!-- rule: fixture.test##+js(aopr, probeA.inner.value) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s1-aopr",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+window.probeA={inner:{value:1}};F.kept.writeIgnored=true;
+</script><script>
+let threw=null;try{void probeA.inner.value}catch(e){threw=e.name}
+F.effect.readThrowsReferenceError=(threw==="ReferenceError");
+F.kept.siblingPropertyReadable=(()=>{try{return probeA.inner!==undefined}catch(_){return false}})();
+F.kept.unrelatedGlobalReadable=(()=>{try{void window.probeB;return true}catch(_){return false}})();
+finish();</script>

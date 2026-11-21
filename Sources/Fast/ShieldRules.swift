@@ -85,6 +85,8 @@ enum ShieldRules {
     static func site(_ filter: String) -> String? {
         guard filter.hasPrefix(host), filter.hasSuffix("[/:]") else { return nil }
         let name = filter.dropFirst(host.count).dropLast(4)
+        // An entity (Filters.onEntity) is a pattern, not a site the helper can look up.
+        guard !name.contains("[") else { return nil }
         return name.replacingOccurrences(of: "\\", with: "")
     }
 

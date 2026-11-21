@@ -134,6 +134,9 @@ enum PageScripts {
         // page at its first lines.
         if #available(macOS 15.4, *), !tab.shy { list += ExtensionExternal.shared.scripts }
         if tab.skipsAds { list.append(YouTube.user) }
+        // Shield's scriptlets: one object for every tab and site while the
+        // lists stay the same; each frame picks its site's (ShieldScriptlets).
+        if let scriptlets = ShieldScriptlets.webKit(for: tab, host: arming.host) { list.append(scriptlets) }
         // An extension asked that WebRTC go nowhere outside its proxy
         // (ExtensionProxy, Proton VPN's "WebRTC leak protection").
         if ExtensionProxy.relayOnly { list.append(webrtcRelay) }
@@ -409,7 +412,9 @@ extension PageScripts {
         let hidden = hiddenCSS ?? Curtain.shared.styles
         let veils = left.contains("all") || hidden.isEmpty ? [] : [PageScriptRegistration(
             source: Veiling.styles(hidden), world: .yab, atEnd: false, mainOnly: true)]
+        let scriptlets = ShieldScriptlets.chromiumPolicy(for: tab, host: arming.host).flatMap(ShieldScriptlets.chromium)
         return (omits("chromium-tips") ? [] : [tips]) + chosen
+            + (scriptlets.map { [$0] } ?? [])
             + veils
             + (omits("window") ? [] : [windows])
             + (tab.shy || omits("chromium-push") ? [] : [PageScriptRegistration(source: PushRelay.chromiumPage, world: .page, atEnd: false, mainOnly: false)])

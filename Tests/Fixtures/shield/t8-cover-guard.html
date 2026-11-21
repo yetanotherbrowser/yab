@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>t8-cover-guard</title>
+<!-- the click guard, on a site the lists name for any scriptlet (the test gives the rule) -->
+<style>.drawn::before{content:"";position:absolute;left:0;top:0;right:0;bottom:0;background:#c00}.worded::after{content:"Shop the sale"}</style>
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t8-cover-guard",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function link(href,css){const a=document.createElement("a");a.href=href;a.target="_blank";a.style.cssText=css;document.body.appendChild(a);return a}
+function clickedKept(a){let seen=false;a.addEventListener("click",e=>{seen=true;e.preventDefault()});a.click();const kept=seen&&a.isConnected&&a.hasAttribute("href");a.remove();return kept}
+const whole="position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647";
+function run(){if(ran)return;ran=true;
+ const cover=link("https://ads.example/landing",whole);
+ cover.click();
+ F.effect.coverStopped=!cover.isConnected&&!cover.hasAttribute("href");
+ F.kept.cardLink=clickedKept(link("https://news.example/story","position:fixed;left:0;top:0;width:100vw;height:40vh"));
+ F.kept.visibleLink=clickedKept(link("https://shop.example/","display:block;"+whole+";background:#fff"));
+ F.kept.noBlueLink=clickedKept(link("https://shop.example/deal","display:block;"+whole+";background:rgb(255,160,0)"));
+ F.kept.halfSeenLink=clickedKept(link("https://shop.example/half","display:block;"+whole+";background:rgba(0,0,0,0.5)"));
+ F.kept.ownSiteCover=clickedKept(link("/next",whole));
+ const drawn=link("https://shop.example/hero",whole);drawn.className="drawn";F.kept.drawnBefore=clickedKept(drawn);
+ const worded=link("https://shop.example/sale",whole);worded.className="worded";F.kept.wordedAfter=clickedKept(worded);
+ finish()}
+setTimeout(run,100);
+</script>

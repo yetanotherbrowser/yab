@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>t4b-iframe-frames</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t4b-iframe-frames",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function pop(open){let w=null;
+ try{w=open("");if(w){w.document.open();w.document.writeln("<script>window.location=\"ad-landing.html\"<\/script>");w.document.close()}}catch(e){F.detail=String(e)}
+ return w}
+const box=document.createElement("div");document.body.appendChild(box);
+box.innerHTML='<iframe style="position:absolute;top:-1000px;visibility:hidden"></iframe>';
+const viaFrames=pop(window.frames[0].open.bind(window.frames[0]));
+document.body.insertAdjacentHTML("beforeend",'<iframe style="position:absolute;top:-1000px;visibility:hidden"></iframe>');
+const viaIndex=pop(window[1].open.bind(window[1]));
+F.effect.framesOpenBlocked=(viaFrames===null);
+F.effect.indexOpenBlocked=(viaIndex===null);
+F.kept.pageStillAlive=true;finish();
+</script>

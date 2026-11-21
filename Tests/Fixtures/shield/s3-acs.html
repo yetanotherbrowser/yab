@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><title>s3-acs</title>
+<!-- rule: fixture.test##+js(acs, Math.random, /MARKER_(ONE|TWO)/) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s3-acs",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+Math.random(); window.__afterOne=true; // MARKER_ONE
+</script><script>
+Math.random(); window.__afterTwo=true; // MARKER_TWO
+</script><script>
+Math.random(); window.__afterPlain=true;
+</script><script>
+F.effect.markerOneAborted=!window.__afterOne;
+F.effect.markerTwoAborted=!window.__afterTwo;
+F.kept.unmatchedScriptRuns=!!window.__afterPlain;
+finish();</script>

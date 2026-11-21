@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>t4-iframe-open</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t4-iframe-open",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function pop(open){let w=null;
+ try{w=open("");if(w){w.document.open();w.document.writeln("<script>window.location=\"ad-landing.html\"<\/script>");w.document.close()}}catch(e){F.detail=String(e)}
+ return w}
+const native=Function.prototype.toString.call(window.open).includes("[native code]");
+const f=document.createElement("iframe");f.width=0;f.height=0;f.style.cssText="position:absolute;top:-1000px;left:-1000px;visibility:hidden";document.body.appendChild(f);
+const hidden=f.contentWindow.open.bind(f.contentWindow);
+function run(){if(ran)return;ran=true;const w=pop(hidden);
+ F.detail=(F.detail||"")+" topOpenNative="+native;
+ F.effect.iframeOpenBlocked=(w===null);F.kept.pageStillAlive=true;finish()}
+document.addEventListener("click",run);setTimeout(run,200);
+</script>

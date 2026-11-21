@@ -121,12 +121,15 @@ struct QuietSites: Codable, Equatable {
         return "[" + rules.joined(separator: ",") + "]"
     }
 
-    /// Whether `host` or a domain above it has hiding rules of its own.
+    /// Whether `host` or a domain above it has hiding rules of its own, by
+    /// its name or as an entity: "name.*" reaches name and one more label,
+    /// as Filters.onEntity matches it.
     static func hides(_ host: String, in sites: Set<String>) -> Bool {
         var rest = Substring(host)
         while true {
             if sites.contains(String(rest)) { return true }
             guard let dot = rest.firstIndex(of: ".") else { return false }
+            if let last = rest.lastIndex(of: "."), sites.contains(rest[..<last] + ".*") { return true }
             rest = rest[rest.index(after: dot)...]
         }
     }

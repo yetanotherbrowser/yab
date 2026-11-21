@@ -11,16 +11,22 @@ extension Filters {
     /// only say of a whole rule, and so is one that names no kind at all:
     /// every kind but the page, and pages in frames.
     static func network(_ line: String) -> [(Rule, Place)]? {
+        var why: String?
+        return network(line, why: &why)
+    }
+
+    /// The same, and when nil, why (Drop).
+    static func network(_ line: String, why: inout String?) -> [(Rule, Place)]? {
         var pattern = Substring(line)
         let exception = pattern.hasPrefix("@@")
         if exception { pattern = pattern.dropFirst(2) }
         // /regex/: WebKit's grammar is too small to carry one faithfully.
-        if pattern.hasPrefix("/"), pattern.count > 2, pattern.hasSuffix("/") || pattern.contains("/$") { return nil }
+        if pattern.hasPrefix("/"), pattern.count > 2, pattern.hasSuffix("/") || pattern.contains("/$") { why = Drop.regex; return nil }
 
         var options: [(name: String, value: String?)] = []
         if let dollar = optionsStart(pattern) {
             for token in pattern[pattern.index(after: dollar)...].split(separator: ",", omittingEmptySubsequences: false) {
-                guard !token.isEmpty else { return nil }
+                guard !token.isEmpty else { why = Drop.badOption; return nil }
                 if let equals = token.firstIndex(of: "=") {
                     options.append((token[..<equals].lowercased(), String(token[token.index(after: equals)...])))
                 } else {
@@ -42,14 +48,15 @@ extension Filters {
         var webrtc = false
         var hiding: Place?
         var odd = 0
+        var entities = 0
 
         for (name, value) in options {
             switch name {
             case "third-party", "3p", "~first-party", "~1p":
-                guard rule.party != "first-party" else { return nil }
+                guard rule.party != "first-party" else { why = Drop.badOption; return nil }
                 rule.party = "third-party"
             case "first-party", "1p", "~third-party", "~3p":
-                guard rule.party != "third-party" else { return nil }
+                guard rule.party != "third-party" else { why = Drop.badOption; return nil }
                 rule.party = "first-party"
             case "match-case":
                 rule.caseSensitive = true
@@ -60,15 +67,19 @@ extension Filters {
             case "reason":
                 continue // a note for people, it changes nothing
             case "domain", "from":
-                guard let value else { return nil }
+                guard let value else { why = Drop.badOption; return nil }
                 for domain in value.split(separator: "|") {
                     if domain.hasPrefix("~") {
-                        guard let clean = plainDomain(domain.dropFirst()) else { return nil }
+                        guard let clean = plainDomain(domain.dropFirst()) else {
+                            why = entity(domain.dropFirst()) != nil ? Drop.entityDomain : Drop.badDomain
+                            return nil
+                        }
                         excludes.append(clean)
                     } else if let clean = plainDomain(domain) {
                         includes.append(clean)
                     } else {
-                        odd += 1 // left out below, unless it only narrows an exception to hiding
+                        // Left out below, unless it only narrows an exception to hiding.
+                        if entity(domain) != nil { entities += 1 } else { odd += 1 }
                     }
                 }
             case "doc", "document":
@@ -78,10 +89,10 @@ extension Filters {
             case "popup":
                 wanted.insert("popup")
             case "generichide", "ghide":
-                guard exception else { return nil }
+                guard exception else { why = Drop.badOption; return nil }
                 if hiding == nil { hiding = .unhide }
             case "elemhide", "ehide":
-                guard exception else { return nil }
+                guard exception else { why = Drop.badOption; return nil }
                 hiding = .unhideAll
             default:
                 if name.hasPrefix("~"), let type = kinds[String(name.dropFirst())] {
@@ -95,13 +106,14 @@ extension Filters {
                 } else if name == "~webrtc" {
                     continue // every kind WebKit has
                 } else {
+                    why = Drop.option(name)
                     return nil // $redirect, $csp, $removeparam, $to, …
                 }
             }
         }
-        if webrtc, wanted.isEmpty, frames == nil { return nil }
-        guard includes.isEmpty || excludes.isEmpty else { return nil }
-        guard wanted.isEmpty || unwanted.isEmpty else { return nil }
+        if webrtc, wanted.isEmpty, frames == nil { why = Drop.option("webrtc"); return nil }
+        guard includes.isEmpty || excludes.isEmpty else { why = Drop.mixedDomains; return nil }
+        guard wanted.isEmpty || unwanted.isEmpty else { why = Drop.mixedTypes; return nil }
         rule.ifDomain = Array(Set(includes)).sorted()
         rule.unlessDomain = Array(Set(excludes)).sorted()
 
@@ -112,28 +124,29 @@ extension Filters {
         // leaves them hidden as before; with nothing else said, it stands.
         if let hiding {
             let said = options.filter { !["generichide", "ghide", "elemhide", "ehide", "domain", "from"].contains($0.name) }
-            guard said.isEmpty, excludes.isEmpty else { return nil }
+            guard said.isEmpty, excludes.isEmpty else { why = Drop.hidingException; return nil }
             if let host = pureHost(pattern), rule.ifDomain.isEmpty {
                 rule.filter = ".*"
                 rule.ifDomain = [host]
             } else if pattern.isEmpty || pattern == "*" {
-                guard !rule.ifDomain.isEmpty else { return nil }
+                guard !rule.ifDomain.isEmpty else { why = Drop.hidingException; return nil }
                 rule.filter = ".*"
             } else {
-                guard let filter = urlFilter(pattern), !everywhere(pattern) || !rule.ifDomain.isEmpty else { return nil }
+                guard let filter = urlFilter(pattern), !everywhere(pattern) || !rule.ifDomain.isEmpty else { why = Drop.hidingException; return nil }
                 rule.filter = filter
             }
             // $elemhide reaches a site's own hiding rules only by the sites
             // it names.
-            if hiding == .unhideAll, rule.ifDomain.isEmpty || rule.filter != ".*" { return nil }
+            if hiding == .unhideAll, rule.ifDomain.isEmpty || rule.filter != ".*" { why = Drop.hidingException; return nil }
             return [(rule, hiding)]
         }
-        guard odd == 0 else { return nil }
+        guard odd == 0 else { why = Drop.badDomain; return nil }
+        guard entities == 0 else { why = Drop.entityDomain; return nil }
 
         // @@||site^$document: nothing is blocked on that site's pages.
         if documentOnly {
             guard options.count == 1, rule.ifDomain.isEmpty, rule.unlessDomain.isEmpty,
-                  let host = pureHost(pattern) else { return nil }
+                  let host = pureHost(pattern) else { why = Drop.documentException; return nil }
             rule.filter = ".*"
             rule.ifDomain = [host]
             return [(rule, .plain)]
@@ -143,10 +156,10 @@ extension Filters {
             // Everything, narrowed only by what it is or where: fine on the
             // sites it names, a way to block the web otherwise. "|https://"
             // is everything too, said another way.
-            guard !rule.ifDomain.isEmpty else { return nil }
+            guard !rule.ifDomain.isEmpty else { why = Drop.everywhere; return nil }
             rule.filter = pattern.isEmpty || pattern == "*" ? ".*" : (urlFilter(pattern) ?? ".*")
         } else {
-            guard let filter = urlFilter(pattern) else { return nil }
+            guard let filter = urlFilter(pattern) else { why = Drop.badPattern; return nil }
             rule.filter = filter
         }
 
@@ -314,6 +327,14 @@ extension Filters {
         "^[a-z-]+://([^/]*\\.)?" + escape(site) + "[/:]"
     }
 
+    /// Every address on uBO's entity `name.*` (name and one more label, and
+    /// their subdomains). One label only: "name.co.uk" is missed rather than
+    /// "name.example.com" reached, and WebKit's grammar has no "a|b" to
+    /// list the second-level ones.
+    static func onEntity(_ name: String) -> String {
+        "^[a-z-]+://([^/]*\\.)?" + escape(name) + "\\.[a-z0-9-]+[/:]"
+    }
+
     /// `||example.com^` and nothing else: the site it names.
     private static func pureHost(_ pattern: Substring) -> String? {
         guard pattern.hasPrefix("||"), pattern.hasSuffix("^") else { return nil }
@@ -328,6 +349,36 @@ extension Filters {
               domain.allSatisfy({ ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "." || $0 == "-" || $0 == "_" })
         else { return nil }
         return domain
+    }
+
+    /// uBO's "example.*", every top-level domain of a name, as "example.*"
+    /// lowercased, or nil.
+    static func entity(_ value: Substring) -> String? {
+        let name = value.lowercased()
+        guard name.hasSuffix(".*") else { return nil }
+        let head = name.dropLast(2)
+        guard !head.isEmpty, !head.hasPrefix("."), !head.hasSuffix("."),
+              head.allSatisfy({ ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "." || $0 == "-" || $0 == "_" })
+        else { return nil }
+        return name
+    }
+
+    /// Whether two sites, hosts or entities, can name the same page: one
+    /// under the other, or an entity whose name is in the host. Said wide
+    /// for entities, so a spared site is never hidden.
+    static func overlap(_ a: String, _ b: String) -> Bool {
+        let aEntity = a.hasSuffix(".*"), bEntity = b.hasSuffix(".*")
+        switch (aEntity, bEntity) {
+        case (false, false):
+            return a == b || a.hasSuffix("." + b) || b.hasSuffix("." + a)
+        case (true, true):
+            let x = "." + a.dropLast(2), y = "." + b.dropLast(2)
+            return x == y || x.hasSuffix(y) || y.hasSuffix(x)
+        case (true, false):
+            return ("." + b + ".").contains("." + a.dropLast(2) + ".")
+        case (false, true):
+            return ("." + a + ".").contains("." + b.dropLast(2) + ".")
+        }
     }
 
     /// The line a $badfilter line takes back: itself without that option.

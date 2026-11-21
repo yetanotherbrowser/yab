@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>t4c-iframe-redefine</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t4c-iframe-redefine",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function pop(open){let w=null;
+ try{w=open("");if(w){w.document.open();w.document.writeln("<script>window.location=\"ad-landing.html\"<\/script>");w.document.close()}}catch(e){F.detail=String(e)}
+ return w}
+const f=document.createElement("iframe");f.style.cssText="position:absolute;top:-1000px;visibility:hidden";document.body.appendChild(f);
+Object.defineProperty(window,"open",{value:f.contentDocument.defaultView.open,writable:true,configurable:true});
+function run(){if(ran)return;ran=true;const w=pop(window.open.bind(window));
+ F.effect.redefinedOpenBlocked=(w===null);F.kept.pageStillAlive=true;finish()}
+setTimeout(run,100);
+</script>

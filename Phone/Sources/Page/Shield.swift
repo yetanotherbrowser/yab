@@ -26,7 +26,9 @@ final class Shield {
     /// Smaller compiler batches bound the first build's memory on iPhone.
     /// The shared converter still supplies every exception to each batch.
     nonisolated static let perList = 50_000
-    nonisolated static let schema = ShieldLists.schema * 100 + 1
+    nonisolated static let schema = ShieldLists.schema * 100 + 4
+    /// The lists' !#if words that hold on iPhone (Filters.Preparser).
+    nonisolated static let env = Filters.webKit.union(["env_mobile"])
     static let shared = Shield(folder: Shield.folder(), fetches: Shield.fetches())
 
     /// Where the lists, their compiled form and the record of the build are
@@ -55,6 +57,16 @@ final class Shield {
 
     /// The compiled lists, put on every page that blocks, in this order.
     @ObservationIgnored private(set) var lists: [WKContentRuleList] = []
+
+    /// The lists' scriptlets as one script for every page that gets the
+    /// lists (Shield+Scriptlets), nil for none.
+    @ObservationIgnored private(set) var scriptlets: WKUserScript?
+    @ObservationIgnored private var scriptletSource: String?
+    @ObservationIgnored private var scriptletAsk = 0
+    /// Off with YAB_SHIELD_SCRIPTLETS=0, to measure them.
+    @ObservationIgnored var scriptletsAllowed = Shield.scriptletsAllowed()
+    /// How many times a page's script was put on or taken off: for tests.
+    @ObservationIgnored private(set) var placements = 0
 
     /// Whether a page of this site, private or not, gets the lists: the app
     /// answers from Settings, Site Settings and the Mac's (AppModel.blocksAds).
@@ -92,6 +104,7 @@ final class Shield {
     /// and with it the lists it holds.
     private final class Fitting {
         var lists: [WKContentRuleList] = []
+        var script: WKUserScript?
         var host: String?
         var isPrivate = false
     }
@@ -113,12 +126,36 @@ final class Shield {
         let fitting = fitting(controller)
         fitting.host = host
         fitting.isPrivate = isPrivate
-        let want = wants(host, isPrivate) ? lists : []
+        let on = wants(host, isPrivate)
+        let want = on ? lists : []
         let have = fitting.lists
-        guard have.count != want.count || zip(have, want).contains(where: { $0 !== $1 }) else { return }
-        for list in have where !want.contains(where: { $0 === list }) { controller.remove(list) }
-        for list in want where !have.contains(where: { $0 === list }) { controller.add(list) }
-        fitting.lists = want
+        if have.count != want.count || zip(have, want).contains(where: { $0 !== $1 }) {
+            for list in have where !want.contains(where: { $0 === list }) { controller.remove(list) }
+            for list in want where !have.contains(where: { $0 === list }) { controller.add(list) }
+            fitting.lists = want
+        }
+        // A user script reaches only the next document, so a page's script
+        // follows from its next load, as the per-site switch's reload does.
+        let script = on ? scriptlets : nil
+        if fitting.script !== script {
+            Shield.place(script, replacing: fitting.script, in: controller)
+            fitting.script = script
+            placements += 1
+        }
+    }
+
+    /// A new page's controller, before its other scripts: the scriptlets go
+    /// on first with nothing to move. The lists wait for the view (fit).
+    func prepare(_ controller: WKUserContentController, host: String?, isPrivate: Bool) {
+        guard let scriptlets, controller.userScripts.isEmpty, wants(host, isPrivate) else { return }
+        controller.addUserScript(scriptlets)
+        fitting(controller).script = scriptlets
+    }
+
+    /// Every user script was taken off this controller (WebPool.adopt):
+    /// the next fit puts the scriptlets back.
+    func scriptsRemoved(from controller: WKUserContentController) {
+        fitting(controller).script = nil
     }
 
     /// Switched on or off for every page already open, or the lists swapped
@@ -191,6 +228,7 @@ final class Shield {
                 report["lookup_ms"] = Int((CACurrentMediaTime() - t0) * 1000)
                 if let found {
                     lookups += 1
+                    loadScriptlets(made.build)
                     install(found)
                 }
                 // Missing (an iOS update can retire WebKit's compiled form)
@@ -227,6 +265,35 @@ final class Shield {
     }
 
     private func hold() { busy += 1 }
+
+    /// A build's table, read and made a script off the main thread, then
+    /// on every page that blocks.
+    private func loadScriptlets(_ build: Int) {
+        guard scriptletsAllowed else { return }
+        scriptletAsk += 1
+        let ask = scriptletAsk
+        let file = Shield.scriptletsFile(build, in: folder)
+        hold()
+        Task.detached(priority: .userInitiated) {
+            let source = (try? String(contentsOf: file, encoding: .utf8)).flatMap(Shield.scriptletSource)
+            await MainActor.run {
+                let shield = self
+                if ask == shield.scriptletAsk, shield.takeScriptlets(source) { shield.apply() }
+                shield.letGo()
+            }
+        }
+    }
+
+    /// A new script object only for a new source, so pages keep theirs
+    /// across builds whose table is the same; whether it changed.
+    @discardableResult
+    private func takeScriptlets(_ source: String?) -> Bool {
+        let source = scriptletsAllowed ? source : nil
+        guard source != scriptletSource else { return false }
+        scriptletSource = source
+        scriptlets = source.map { WKUserScript(source: $0, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page) }
+        return true
+    }
 
     private func letGo() {
         busy -= 1
@@ -283,8 +350,9 @@ final class Shield {
         let folder = folder
         let known = old?.left ?? [:]
         let unchanged = old?.schema == Shield.schema ? digest : nil
+        let allowed = scriptletsAllowed
         Task.detached(priority: .utility) {
-            let result = await Shield.make(build, folder: folder, in: store, leaving: known, unless: unchanged)
+            let result = await Shield.make(build, folder: folder, in: store, leaving: known, unless: unchanged, scriptlets: allowed)
             await MainActor.run {
                 let shield = self
                 shield.building = false
@@ -299,6 +367,8 @@ final class Shield {
                     shield.made = Made(schema: Shield.schema, build: build, count: fresh.count, rules: result.rules,
                                        fetched: shield.made?.fetched, digest: result.digest,
                                        left: result.left.isEmpty ? nil : result.left)
+                    shield.scriptletAsk += 1
+                    shield.takeScriptlets(result.scriptlets)
                     shield.install(fresh)
                     if let old, old.count > 0 { shield.forget(old.build, old.count) }
                     let took = result.report["total_ms"] as? Int ?? 0
@@ -325,6 +395,7 @@ final class Shield {
 
     private struct Result: @unchecked Sendable {
         var lists: [WKContentRuleList]?
+        var scriptlets: String?
         var unchanged = false
         var rules = 0
         var digest: String?
@@ -336,7 +407,8 @@ final class Shield {
     /// fails, each text is tried alone to find the one WebKit won't take,
     /// and the build made again without it; failing that, `base` alone.
     private nonisolated static func make(_ build: Int, folder: URL, in store: WKContentRuleListStore?,
-                                         leaving known: [String: String], unless unchanged: String?) async -> Result {
+                                         leaving known: [String: String], unless unchanged: String?,
+                                         scriptlets allowed: Bool) async -> Result {
         var report: [String: Any] = ["main_thread": pthread_main_np() != 0]
         guard let store else { return Result(report: report) }
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -380,11 +452,16 @@ final class Shield {
         report["skipped"] = attempt.skipped
         report["lists"] = attempt.lists?.count ?? 0
         report["sizes"] = attempt.sizes
-        return Result(lists: attempt.lists, rules: attempt.rules, digest: inputs, left: left, report: report)
+        report["scriptlet_bytes"] = attempt.table?.utf8.count ?? 0
+        keep(attempt.lists == nil ? nil : attempt.table, build: build, in: folder)
+        let source = allowed ? attempt.table.flatMap(scriptletSource) : nil
+        return Result(lists: attempt.lists, scriptlets: source, rules: attempt.rules, digest: inputs, left: left, report: report)
     }
 
     private struct Attempt: @unchecked Sendable {
         var lists: [WKContentRuleList]?
+        /// The scriptlet table the page script reads, nil for none.
+        var table: String?
         var rules = 0
         var skipped = 0
         var convert = 0
@@ -399,11 +476,13 @@ final class Shield {
                                             in store: WKContentRuleListStore) async -> Attempt {
         var attempt = Attempt()
         let t0 = CFAbsoluteTimeGetCurrent()
-        let rules = autoreleasepool { Filters.convert([ShieldLists.base] + texts) }
+        let rules = autoreleasepool { Filters.convert([ShieldLists.base] + texts, env: env) }
         guard let parts = Filters.plan(rules, perList: Shield.perList, cap: Filters.cap) else { return attempt }
         attempt.convert = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
         attempt.rules = rules.count - parts.left
         attempt.skipped = rules.skipped + parts.left
+        // No ##+js names no site: no page gets the script, nor the click guard in it.
+        attempt.table = rules.scriptlets.isEmpty ? nil : rules.scriptlets.table()
         var lists: [WKContentRuleList] = []
         for (index, part) in parts.parts.enumerated() {
             let list = autoreleasepool { part.json }
@@ -437,7 +516,7 @@ final class Shield {
     /// `base` and the lists' texts as WebKit's lists: the Mac's conversion
     /// and split, each list within WebKit's limit (Filters.perList).
     nonisolated static func split(_ texts: [String], perList: Int = Shield.perList, cap: Int = Filters.cap) -> Split? {
-        let rules = Filters.convert([ShieldLists.base] + texts)
+        let rules = Filters.convert([ShieldLists.base] + texts, env: env)
         guard let split = Filters.lists(rules, perList: perList, cap: cap) else { return nil }
         return Split(lists: split.lists, rules: rules.count - split.left, skipped: rules.skipped + split.left)
     }
@@ -458,6 +537,7 @@ final class Shield {
     /// The build before, once no page holds it: WebKit's files go; lists
     /// already on a page keep working from memory until taken off.
     private func forget(_ build: Int, _ count: Int) {
+        try? FileManager.default.removeItem(at: Shield.scriptletsFile(build, in: folder))
         guard let store else { return }
         Shield.remove((0..<max(count, 4)).map { Shield.identifier(build, $0) }, from: store)
     }

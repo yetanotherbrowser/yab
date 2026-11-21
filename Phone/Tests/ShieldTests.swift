@@ -30,16 +30,19 @@ final class ShieldTests: XCTestCase {
         (rule["action"] as? [String: Any])?["type"] as? String ?? ""
     }
 
+    /// Third-party loads of a whole site: one rule each. A site with no
+    /// kinds named would be two (what pages load, and pages in frames).
     private var manyTexts: [String] {
-        [(0..<2_500).map { "||ad\($0).example.com^" }.joined(separator: "\n"),
+        [(0..<2_500).map { "||ad\($0).example.com^$3p" }.joined(separator: "\n"),
          (0..<10).map { "@@||ok\($0).example.com^$script" }.joined(separator: "\n"),
          (0..<1_500).map { "##.promo-\($0)" }.joined(separator: "\n")]
     }
 
     func testListsStayWithinTheirSizeAndEveryBlockingListEndsWithEveryException() throws {
         let split = try XCTUnwrap(Shield.split(manyTexts, perList: 1_000, cap: 6_000))
-        // 2 565 blocks (the lists' and base's own) at 990 a list, then 1 509
-        // generic hiding rules at 1 000 a list.
+        // 2 569 rules (the lists' blocks, base's own and its 15 site hides)
+        // at 986 a list, the 14 exceptions ending each, then 1 509 generic
+        // hiding rules at 1 000 a list.
         XCTAssertEqual(split.lists.count, 5)
         XCTAssertEqual(split.skipped, 0)
         let lists = try split.lists.map(parse)
@@ -59,7 +62,7 @@ final class ShieldTests: XCTestCase {
     func testOverTheCapTheLastReadRulesAreLeftOut() throws {
         let split = try XCTUnwrap(Shield.split(manyTexts, perList: 1_000, cap: 2_000))
         XCTAssertEqual(split.lists.count, 2, "no more lists than the cap allows")
-        XCTAssertGreaterThanOrEqual(split.skipped, 585 + 1_509)
+        XCTAssertGreaterThanOrEqual(split.skipped, 597 + 1_509)
         for list in try split.lists.map(parse) { XCTAssertLessThanOrEqual(list.count, 1_000) }
     }
 
@@ -185,6 +188,159 @@ final class ShieldTests: XCTestCase {
         shield.apply()
         XCTAssertEqual(shield.identifiers(on: page).count, 2)
         XCTAssertEqual(shield.identifiers(on: other).count, 2)
+    }
+
+    // MARK: - scriptlets
+
+    private func started(with list: String, scriptlets allowed: Bool = true) async throws -> Shield {
+        let lists = Shield.listsFolder(folder)
+        try FileManager.default.createDirectory(at: lists, withIntermediateDirectories: true)
+        try list.write(to: lists.appendingPathComponent("easylist.txt"), atomically: true, encoding: .utf8)
+        let shield = Shield(folder: folder, fetches: false)
+        shield.scriptletsAllowed = allowed
+        shield.start()
+        await shield.settled()
+        return shield
+    }
+
+    /// A controller as WebPool makes one: Dark Reader's page-world proxy and
+    /// its own world, then a page-world reporter at the end.
+    private func pageController() -> WKUserContentController {
+        let controller = WKUserContentController()
+        WebsiteDarkening.install(in: controller, enabled: { false })
+        controller.addUserScript(WKUserScript(source: "/* reporter */", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        return controller
+    }
+
+    private func ids(_ scripts: [WKUserScript]) -> Set<ObjectIdentifier> { Set(scripts.map(ObjectIdentifier.init)) }
+
+    private func runsFirst(_ script: WKUserScript, on controller: WKUserContentController) -> Bool {
+        let scripts = controller.userScripts
+        guard let at = scripts.firstIndex(where: { $0 === script }),
+              let proxy = scripts.firstIndex(where: { $0.source == WebsiteDarkening.proxy }),
+              let reporter = scripts.firstIndex(where: { $0.source == "/* reporter */" }) else { return false }
+        return at < proxy && proxy < reporter
+    }
+
+    func testTheScriptletsGoOnBeforeThePagesOwnScriptsOnlyWhereTheListsDo() async throws {
+        let shield = try await started(with: "news.example##+js(aopr, aclib)\n")
+        let script = try XCTUnwrap(shield.scriptlets)
+        XCTAssertEqual(script.injectionTime, .atDocumentStart)
+        XCTAssertFalse(script.isForMainFrameOnly, "every frame picks its own rules")
+        XCTAssertTrue(script.source.contains(#""hosts":" news.example=0 ""#))
+        XCTAssertFalse(script.source.contains("__YAB_"))
+        shield.wants = { host, _ in host != "off.example" }
+        let controller = pageController()
+        // A copy: WebKit hands out its live array.
+        let own = controller.userScripts.map { $0 }
+        shield.fit(controller, host: "news.example", isPrivate: false)
+        XCTAssertTrue(runsFirst(script, on: controller), "before Dark Reader's proxy and the page's code")
+        XCTAssertEqual(ids(controller.userScripts), ids(own + [script]), "nothing of the page's own lost or doubled")
+        XCTAssertFalse(shield.identifiers(on: controller).isEmpty)
+
+        let placed = shield.placements
+        shield.fit(controller, host: "news.example", isPrivate: false)
+        shield.fit(controller, host: "other.example", isPrivate: false)
+        XCTAssertEqual(shield.placements, placed, "the same script and lists: nothing done")
+
+        shield.fit(controller, host: "off.example", isPrivate: false)
+        XCTAssertEqual(ids(controller.userScripts), ids(own), "off for the site: the script goes with the lists")
+        XCTAssertEqual(shield.identifiers(on: controller), [])
+        shield.fit(controller, host: "news.example", isPrivate: false)
+        XCTAssertTrue(runsFirst(script, on: controller))
+
+        shield.wants = { _, _ in false }
+        shield.apply()
+        XCTAssertEqual(ids(controller.userScripts), ids(own), "the switch off everywhere")
+        shield.wants = { _, _ in true }
+        shield.apply()
+        XCTAssertTrue(runsFirst(script, on: controller))
+        XCTAssertEqual(controller.userScripts.count, own.count + 1)
+    }
+
+    func testTheLibraryIsServedCompacted() throws {
+        let library = try XCTUnwrap(Shield.scriptletLibrary)
+        XCTAssertTrue(library.contains("__YAB_TABLE__") && library.contains("__YAB_OFF__"))
+        XCTAssertFalse(library.contains("__YAB_GUARD__"), "the click guard is in, at its marker")
+        XCTAssertTrue(library.contains("function guardClicks("))
+        let lines = library.split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertGreaterThan(lines.count, 1)
+        XCTAssertTrue(lines.allSatisfy { !$0.isEmpty && !$0.hasPrefix(" ") && !$0.hasPrefix("\t") && !$0.hasPrefix("//") })
+    }
+
+    func testTheScriptletsAreKeptBesideTheirBuildFoundAtTheNextLaunchAndGoWithIt() async throws {
+        let first = try await started(with: "news.example##+js(aopr, aclib)\n")
+        let one = folder.appendingPathComponent("scriptlets-1.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: one.path))
+        let again = Shield(folder: folder, fetches: false)
+        again.start()
+        await again.settled()
+        XCTAssertEqual(again.compiles, 0)
+        XCTAssertNotNil(again.scriptlets)
+        XCTAssertEqual(again.scriptlets?.source, first.scriptlets?.source)
+
+        try "other.example##+js(nowoif)\n".write(to: Shield.listsFolder(folder).appendingPathComponent("easylist.txt"), atomically: true, encoding: .utf8)
+        again.compile()
+        await again.settled()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: one.path), "the old build's table goes with its lists")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("scriptlets-2.json").path))
+        XCTAssertEqual(again.scriptlets?.source.contains("other.example"), true)
+        XCTAssertEqual(again.scriptlets?.source.contains("news.example"), false)
+    }
+
+    func testNoScriptWithTheSwitchOffOrNoneInTheLists() async throws {
+        XCTAssertTrue(Shield.scriptletsAllowed(environment: [:], arguments: []))
+        XCTAssertFalse(Shield.scriptletsAllowed(environment: ["YAB_SHIELD_SCRIPTLETS": "0"], arguments: []))
+        XCTAssertFalse(Shield.scriptletsAllowed(environment: [:], arguments: ["-YAB_SHIELD_SCRIPTLETS", "0"]))
+        let plain = Shield(folder: folder.appendingPathComponent("plain", isDirectory: true), fetches: false)
+        plain.start()
+        await plain.settled()
+        XCTAssertNil(plain.scriptlets, "the built-in list has no ##+js: it names no site, so no page gets the click guard either")
+        XCTAssertFalse(plain.lists.isEmpty)
+        let off = try await started(with: "news.example##+js(aopr, aclib)\n", scriptlets: false)
+        XCTAssertNil(off.scriptlets)
+        XCTAssertFalse(off.lists.isEmpty, "the lists block as before")
+        let controller = pageController()
+        let own = controller.userScripts.map { $0 }
+        off.fit(controller, host: "news.example", isPrivate: false)
+        XCTAssertEqual(ids(controller.userScripts), ids(own))
+        XCTAssertEqual(off.placements, 0)
+    }
+
+    func testANewPageGetsTheScriptletsFirstWithNothingMoved() async throws {
+        let shield = try await started(with: "127.0.0.1##+js(aopr, aclib)\n")
+        let script = try XCTUnwrap(shield.scriptlets)
+        let pool = WebPool(dataStore: .nonPersistent(), fixturesEnabled: false)
+        pool.shield = shield
+        let tab = Tab(id: "new", title: "New", site: "127.0.0.1", icon: "", url: "http://127.0.0.1:9/page")
+        let view = pool.view(for: tab)
+        defer { view.stopLoading() }
+        let scripts = view.configuration.userContentController.userScripts
+        XCTAssertTrue(scripts.first === script)
+        XCTAssertEqual(scripts.filter { $0 === script }.count, 1)
+        XCTAssertEqual(scripts.filter { $0.source == WebsiteDarkening.proxy }.count, 1)
+        XCTAssertEqual(shield.placements, 0, "nothing taken off and put back")
+        XCTAssertFalse(shield.identifiers(on: view.configuration.userContentController).isEmpty)
+    }
+
+    func testAnAdoptedPageKeepsDarkReaderAndGetsTheScriptletsFirst() async throws {
+        let shield = try await started(with: "127.0.0.1##+js(aopr, aclib)\n")
+        let script = try XCTUnwrap(shield.scriptlets)
+        let pool = WebPool(dataStore: .nonPersistent(), fixturesEnabled: false)
+        pool.shield = shield
+        let tab = Tab(id: "adopted", title: "Adopted", site: "127.0.0.1", icon: "", url: "http://127.0.0.1/page")
+        let configuration = pool.configurationForPage(for: tab)
+        // As a page made elsewhere has one: Dark Reader's handler already on.
+        configuration.userContentController = pageController()
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        XCTAssertTrue(pool.adopt(view, for: tab))
+        let scripts = view.configuration.userContentController.userScripts
+        XCTAssertEqual(scripts.filter { $0.source == WebsiteDarkening.proxy }.count, 1, "Dark Reader's proxy back, once")
+        XCTAssertEqual(scripts.filter { $0.source.hasPrefix("globalThis.__yabWebsiteDarkEngine") }.count, 1)
+        let at = try XCTUnwrap(scripts.firstIndex { $0 === script })
+        let proxy = try XCTUnwrap(scripts.firstIndex { $0.source == WebsiteDarkening.proxy })
+        XCTAssertLessThan(at, proxy)
+        XCTAssertFalse(shield.identifiers(on: view.configuration.userContentController).isEmpty)
     }
 
     // MARK: - which pages

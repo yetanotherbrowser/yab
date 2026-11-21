@@ -510,6 +510,7 @@ final class Shield: ObservableObject {
             fit(controller, for: fitting(controller).host)
         }
         ShieldChromium.tell()
+        ShieldScriptlets.refreshChromium()
     }
 
     /// For the bench, after it put these lists on and off a page by hand:
@@ -636,6 +637,7 @@ final class Shield: ObservableObject {
     /// leaves everything else for later.
     func start() {
         readSkips()
+        ShieldScriptlets.read()
         guard let made, made.count > 0 else {
             if let made, made.failed == true, made.schema == Shield.schema,
                Self.selectionMatches(made.selection, current: selectedSourceNames) {
@@ -801,7 +803,7 @@ final class Shield: ObservableObject {
             // thrown away after.
             var good: [(name: String, text: String)] = []
             for (index, source) in texts.enumerated() {
-                let probe = await compile([(source.name, source.text)], as: { "shield-probe-\(index)-\($0)" }, in: store)
+                let probe = await compile([(source.name, source.text)], as: { "shield-probe-\(index)-\($0)" }, in: store, probe: true)
                 if let lists = probe.lists {
                     good.append((source.name, source.text))
                     await MainActor.run { Shield.remove(lists.indices.map { "shield-probe-\(index)-\($0)" }) }
@@ -839,7 +841,8 @@ final class Shield: ObservableObject {
 
     /// `base` and these texts, converted and compiled one list after
     /// another under the names given. All of them, or nil and none kept.
-    private nonisolated static func compile(_ texts: [(name: String, text: String)], as name: @escaping @Sendable (Int) -> String, in store: WKContentRuleListStore) async -> Attempt {
+    /// A probe's lists are thrown away, so its scriptlets are never kept.
+    private nonisolated static func compile(_ texts: [(name: String, text: String)], as name: @escaping @Sendable (Int) -> String, in store: WKContentRuleListStore, probe: Bool = false) async -> Attempt {
         var attempt = Attempt()
         let t0 = CFAbsoluteTimeGetCurrent()
         let rules = convert(texts)
@@ -877,6 +880,8 @@ final class Shield: ObservableObject {
             lists.append(compiled)
         }
         attempt.lists = lists
+        // Only a build that compiled replaces the table pages run.
+        if !probe { ShieldScriptlets.write(rules) }
         try? FileManager.default.createDirectory(at: hidingFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? hiding.write(to: hidingFile, atomically: true, encoding: .utf8)
         try? String(split.hiding).write(to: hidingCountFile, atomically: true, encoding: .utf8)

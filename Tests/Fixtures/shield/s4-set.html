@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>s4-set</title>
+<!-- rule: fixture.test##+js(set, setBool, true) -->
+<!-- rule: fixture.test##+js(set, setFn, noopFunc) -->
+<!-- rule: fixture.test##+js(set, setTrue, trueFunc) -->
+<!-- rule: fixture.test##+js(set, setFalse, falseFunc) -->
+<!-- rule: fixture.test##+js(set, setStr, '') -->
+<!-- rule: fixture.test##+js(set, setUndef, undefined) -->
+<!-- rule: fixture.test##+js(set, setNum, 7) -->
+<!-- rule: fixture.test##+js(set, deep.a.b, 1) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s4-set",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+window.setBool=false;
+window.setFn=function(){return "real"};
+window.deep={a:{}};
+F.effect.bool=(window.setBool===true);
+F.effect.noopFunc=(typeof window.setFn==="function"&&window.setFn()===undefined);
+F.effect.trueFunc=(typeof window.setTrue==="function"&&window.setTrue()===true);
+F.effect.falseFunc=(typeof window.setFalse==="function"&&window.setFalse()===false);
+F.effect.emptyString=(window.setStr==="");
+F.effect.undefinedValue=("setUndef" in window&&window.setUndef===undefined);
+F.effect.number=(window.setNum===7);
+F.effect.dottedChain=!!(window.deep&&window.deep.a&&window.deep.a.b===1);
+F.kept.unrelatedWritable=(()=>{window.plain=1;return window.plain===1})();
+finish();</script>

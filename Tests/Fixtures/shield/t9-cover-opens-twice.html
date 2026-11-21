@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>t9-cover-opens-twice</title>
+<!-- the click guard, on a site the lists name, and a person's click on a clear cover whose handler opens two windows -->
+<style>body{margin:0;height:100vh}</style>
+<body><p>news</p>
+<script>
+const F=window.__yabFixture={name:"t9-cover-opens-twice",state:"pending",collateral:"pending",clicks:0};
+const cover=document.createElement("div");
+cover.style.cssText="position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647";
+cover.addEventListener("click",e=>{if(!e.isTrusted)return;F.clicks++;window.open("https://ads.example/one","_blank");window.open("https://ads.example/two","_blank");F.state="clicked";F.collateral="ok"});
+document.body.appendChild(cover);
+</script>

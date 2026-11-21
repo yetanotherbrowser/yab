@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>t2-overlay</title>
+<!-- rule: fixture.test###dontfoid -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t2-overlay",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function run(){if(ran)return;ran=true;
+ const o=document.createElement("div");o.id="dontfoid";o.style.cssText="position:fixed;top:0;left:0;width:100%;height:100%;background:transparent;z-index:2147483647";
+ o.addEventListener("click",e=>{window.__overlayClicked=true},true);document.body.appendChild(o);
+ setTimeout(()=>{const hit=document.elementFromPoint(innerWidth/2,innerHeight/2);
+  F.effect.overlayNotHit=hit!==o;F.kept.pageStillAlive=true;finish()},150)}
+setTimeout(run,50);
+</script>

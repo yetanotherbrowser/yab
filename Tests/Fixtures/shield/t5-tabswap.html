@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>t5-tabswap</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t5-tabswap",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function run(){if(ran)return;ran=true;if(window.opener){document.title="copy";return}
+ const start=location.href;let w=null;
+ try{w=window.open(start)}catch(e){}
+ if(w){F.effect.noCopyTab=false;finish();setTimeout(()=>location.replace("ad-landing.html"),500)}
+ else{F.effect.noCopyTab=true;F.kept.stayedOnPage=(location.href===start);finish()}}
+document.addEventListener("click",run);setTimeout(run,100);
+</script>

@@ -4,9 +4,10 @@ import Foundation
 // enforces itself (see Shield). Only what a WebKit rule says exactly is
 // kept; everything else is left out rather than stretched to fit, because
 // a rule that blocks a little more than its list meant is how a blocker
-// breaks a checkout. Left out: scriptlets, redirects, $csp, $removeparam,
-// regular expressions, procedural cosmetics, rules that name both sites to
-// act on and sites to spare.
+// breaks a checkout. Left out: redirects, $csp, $removeparam, regular
+// expressions, procedural cosmetics, rules that name both sites to act on
+// and sites to spare. Scriptlets (##+js) are no WebKit rule: they come out
+// as a table of their own, for a page script (Scriptlets).
 //
 // WebKit is strict about what it reads. One url-filter it cannot parse (a
 // disjunction, a {n} repetition, a character outside ASCII) or one domain
@@ -97,8 +98,10 @@ enum Filters {
         /// them off.
         var generic: [Rule] = []
         var unhide: [Rule] = []
-        /// Lines that were rules of a kind left out, comments not counted.
-        var skipped = 0
+        /// Lines that were rules of a kind left out, comments not counted,
+        /// by why (Drop).
+        var dropped: [String: Int] = [:]
+        var skipped: Int { dropped.values.reduce(0, +) }
         /// The sites with hiding rules of their own: a page of one of them
         /// (or of a part of one) always gets the lists, never what Shield
         /// learned of the site.
@@ -108,8 +111,53 @@ enum Filters {
         /// out of it. Not WebKit's to enforce; Shield applies them to a
         /// tab's top document before it loads (Skip).
         var skips: [Skip] = []
+        var scriptlets = Scriptlets()
 
         var count: Int { blocks.count + exceptions.count + important.count + generic.count + unhide.count }
+
+        mutating func drop(_ reason: String, _ count: Int = 1) {
+            if count > 0 { dropped[reason, default: 0] += count }
+        }
+    }
+
+    /// Why a line was left out, as Rules.dropped counts it. A network
+    /// option WebKit has no word for is "option-" and its name.
+    enum Drop {
+        static let urlskip = "urlskip"
+        static let badfilter = "badfilter"
+        static let notThisPlatform = "not-this-platform"
+        static let regex = "regex"
+        static let badOption = "bad-option"
+        static let badDomain = "bad-domain"
+        static let entityDomain = "entity-domain"
+        static let entityExclude = "entity-exclude"
+        static let mixedDomains = "mixed-domains"
+        static let mixedTypes = "mixed-types"
+        static let mixedSites = "mixed-sites"
+        static let hidingException = "hiding-exception"
+        static let documentException = "document-exception"
+        static let exceptionExcluding = "exception-excluding"
+        static let everywhere = "everywhere"
+        static let badPattern = "bad-pattern"
+        static let procedural = "procedural"
+        static let htmlFiltering = "html-filtering"
+        static let cssInjection = "css-injection"
+        static let nonASCII = "non-ascii"
+        static let badSelector = "bad-selector"
+        static let hidingSpared = "hiding-spared"
+        static let adguardScriptlet = "adguard-scriptlet"
+        static let adguardJS = "adguard-js"
+        static let scriptletGeneric = "scriptlet-generic"
+        static let scriptletUnsupported = "scriptlet-unsupported"
+        static let scriptletMalformed = "scriptlet-malformed"
+        static let scriptletExcepted = "scriptlet-excepted"
+        static let scriptletUnsafeArg = "scriptlet-unsafe-arg"
+        static let scriptletBadHost = "scriptlet-bad-host"
+
+        static func option(_ name: String) -> String {
+            let bare = name.hasPrefix("~") ? String(name.dropFirst()) : name
+            return "option-" + (optionNames.contains(bare) ? bare : "unknown")
+        }
     }
 
     /// Where a rule made from a network line goes.
@@ -132,14 +180,25 @@ enum Filters {
     /// `trusted`: the texts, by index, whose $urlskip rules are taken.
     /// uBlock Origin takes them only from a list it trusts (its own), since
     /// a rule can send any address anywhere.
-    static func convert(_ texts: [String], trusted: Set<Int> = []) -> Rules {
+    /// `env`: the !#if words that hold here (Preparser).
+    static func convert(_ texts: [String], trusted: Set<Int> = [], env: Set<String> = webKit) -> Rules {
+        var rules = Rules()
         // Lines cut on bytes rather than characters: a few megabytes of
         // text, and walking it character by character was most of the time.
         var lines: [String] = []
         var skipLines: [String] = []
         for (index, text) in texts.enumerated() {
+            var gate = Preparser(env: env)
             for line in text.utf8.split(separator: UInt8(ascii: "\n")) {
                 guard let trimmed = trim(Substring(line)) else { continue }
+                if trimmed.hasPrefix("!#") {
+                    gate.read(trimmed)
+                    continue
+                }
+                guard gate.open else {
+                    if !trimmed.hasPrefix("!") { rules.drop(Drop.notThisPlatform) }
+                    continue
+                }
                 lines.append(trimmed)
                 if trusted.contains(index), trimmed.contains("urlskip=") { skipLines.append(trimmed) }
             }
@@ -151,27 +210,27 @@ enum Filters {
             if let undone = unbadfilter(line) { taken.insert(undone) }
         }
 
-        var rules = Rules()
         // An identical block after the exceptions still has work to do.
         // Deduplicate within its output group, not across rule precedence.
         var seen = Set<PlacedRule>()
         var hides = Hides()
+        var scripts = ScriptletRules()
         for line in lines {
             if line.hasPrefix("!") || line.hasPrefix("[") { continue }
             // A $urlskip line is a skip (above), never a block of its own.
             if line.contains("urlskip="), skipParts(line) != nil {
-                rules.skipped += 1
+                rules.drop(Drop.urlskip)
                 continue
             }
             if taken.contains(line) || line.contains("badfilter") {
-                rules.skipped += 1
+                rules.drop(Drop.badfilter)
                 continue
             }
             if let host = hostsLine(line) {
                 // A hosts entry is the same whole-site rule as ||host^.
                 // uBlock's $badfilter may name that form in another list.
                 if taken.contains("||\(host.lowercased())^") {
-                    rules.skipped += 1
+                    rules.drop(Drop.badfilter)
                     continue
                 }
                 for rule in hostRule(host).map(ofLoads) ?? [] where seen.insert(PlacedRule(rule: rule, place: .plain)).inserted {
@@ -183,11 +242,13 @@ enum Filters {
                 continue // a comment in a hosts file
             }
             if let marker = cosmeticMarker(line) {
-                if !hides.take(line, marker) { rules.skipped += 1 }
+                let why = ScriptletRules.claims(line, marker) ? scripts.take(line, marker) : hides.take(line, marker)
+                if let why { rules.drop(why) }
                 continue
             }
-            guard let made = network(line) else {
-                rules.skipped += 1
+            var why: String?
+            guard let made = network(line, why: &why) else {
+                rules.drop(why ?? Drop.badPattern)
                 continue
             }
             for (rule, place) in made {
@@ -213,7 +274,10 @@ enum Filters {
         }
         let (generic, own, dropped, sites) = hides.rules()
         rules.hidingSites = sites
-        rules.skipped += dropped
+        rules.drop(Drop.hidingSpared, dropped)
+        let (scriptlets, left) = scripts.table()
+        rules.scriptlets = scriptlets
+        for (reason, count) in left { rules.drop(reason, count) }
         for rule in generic where seen.insert(PlacedRule(rule: rule, place: .plain)).inserted { rules.generic.append(rule) }
         for rule in own where seen.insert(PlacedRule(rule: rule, place: .plain)).inserted { rules.blocks.append(rule) }
         return rules
