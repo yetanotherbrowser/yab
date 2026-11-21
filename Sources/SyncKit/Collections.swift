@@ -24,6 +24,9 @@ public enum SyncCollection {
     /// The first space: the same id on every device, so first spaces meet
     /// instead of doubling.
     public static let firstSpace = "00000000-0000-0000-0000-000000000001"
+    /// Whether `id` is the first space's. Its sign-ins are every device's:
+    /// it never has its own, whatever a record says (#909).
+    public static func isFirstSpace(_ id: String) -> Bool { id.uppercased() == firstSpace }
 
     /// Every collection's merge rules. Runs before a journal opens, on
     /// every device, the collections a device never shows too.

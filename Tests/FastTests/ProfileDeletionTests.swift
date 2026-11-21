@@ -203,6 +203,8 @@ struct ProfileDeletionTests {
             let journal = try Journal(path: nil, device: "profile220")
             var flush = SyncCenter.Flush(collections: [SyncShapes.tab])
             flush.rows = [personal.id, work.id]
+            // Shared, as SyncCenter.read says while they head the first space.
+            flush.pinsShown = true
             try SyncCenter.tell(flush, into: journal)
             #expect(journal.living(SyncShapes.tab).map(\.id) == ["shared-pin"])
             #expect(!Spaces.read().contains { $0.isFirst })

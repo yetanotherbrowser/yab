@@ -80,10 +80,13 @@ struct SettingsSpacePage: View {
                             }.padding(Metrics.Settings.rowPadding).frame(minHeight: Metrics.Settings.row).contentShape(Rectangle())
                         }.buttonStyle(SettingsRowStyle()).accessibilityIdentifier("settings.space.color")
                     }.background(SettingsInk.group, in: RoundedRectangle(cornerRadius: Metrics.Settings.groupRadius))
-                    VStack(alignment: .leading, spacing: Metrics.Settings.headGap) {
-                        Text("Sign-ins").font(.footnote).foregroundStyle(SettingsInk.footer)
-                            .accessibilityAddTraits(.isHeader)
-                        SpaceSignInsControls(spaceID: spaceID, route: .settings)
+                    // As on the Mac: the first space's sign-ins are everyone's.
+                    if !app.sync.isFirstSpace(spaceID) {
+                        VStack(alignment: .leading, spacing: Metrics.Settings.headGap) {
+                            Text("Sign-ins").font(.footnote).foregroundStyle(SettingsInk.footer)
+                                .accessibilityAddTraits(.isHeader)
+                            SpaceSignInsControls(spaceID: spaceID, route: .settings)
+                        }
                     }
                     // As on the Mac: never the last space, nor the Mac's first.
                     if app.sync.mayDeleteSpace(spaceID) {
