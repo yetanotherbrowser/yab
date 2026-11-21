@@ -1825,6 +1825,52 @@ enum SpaceAsk {
     }
 }
 
+// MARK: - the glide after a sideways swipe
+
+/// The trackpad's glide after fingers lift from a sideways swipe the
+/// column took. The catch let it through: lifted while drifting down, the
+/// glide scrolled the rows of the space being left as the row of spaces
+/// slid, and the column seemed stuck. A swipe that turned the space keeps
+/// its glide too, until the glide ends or fingers come down again.
+struct SwipeGlide {
+    /// The glide coming is a sideways swipe's, the column's to hold back.
+    private(set) var held = false
+
+    /// The fingers lifted: `sideways` when the swipe was the column's.
+    mutating func lifted(sideways: Bool) { held = sideways }
+
+    /// Whether this event is the held glide's, to be swallowed.
+    mutating func takes(phase: NSEvent.Phase, momentum: NSEvent.Phase) -> Bool {
+        if phase == .began || phase == .mayBegin {
+            held = false
+            return false
+        }
+        guard held, momentum != [] else { return false }
+        if momentum == .ended || momentum == .cancelled { held = false }
+        return true
+    }
+}
+
+/// A swipe's end, owed to the rows when they heard its began. A began with
+/// no move in it goes on to the rows before the catch knows which way the
+/// fingers go, and their scroll view opens a gesture. When the moves after
+/// it go sideways the catch takes them, but taking the end too would leave
+/// that gesture open.
+struct SwipeEnd {
+    /// The rows heard this swipe's began and wait for its end.
+    private(set) var owed = false
+
+    /// Fingers down: `passed` when the began went on to the rows.
+    mutating func began(passed: Bool) { owed = passed }
+
+    /// The swipe ended or was cancelled: whether its end goes on to the
+    /// rows, even when the catch took its moves. Owed once only.
+    mutating func ended() -> Bool {
+        defer { owed = false }
+        return owed
+    }
+}
+
 // MARK: - two fingers sideways
 
 /// Laid behind the column: two fingers sideways over it go to the next
@@ -1906,7 +1952,15 @@ struct SpaceSwipe: NSViewRepresentable {
             SpaceSwipe.columns.add(self)
             spaceButtons.removeAll()
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .otherMouseDown, .otherMouseUp, .swipe]) { [weak self] event in
-                AppKitMainThread.sync { self?.heard(event) ?? event }
+                // Not `self?.heard(event) ?? event`: optional chaining
+                // folds heard's nil, the event taken, into self's, and the
+                // `??` handed every taken event back. A sideways swipe's
+                // moves, its drift up or down too, went on to the rows of
+                // the space being left, which scrolled under the fingers.
+                AppKitMainThread.sync {
+                    guard let self else { return event }
+                    return self.heard(event)
+                }
             }
         }
 
@@ -1926,6 +1980,9 @@ struct SpaceSwipe: NSViewRepresentable {
             return abs(speed) > 600 && (speed < 0) == (travel < 0)
         }
         private var sideways: Bool?
+        /// The glide after a sideways swipe, held back (SwipeGlide).
+        private var glide = SwipeGlide()
+        private var end = SwipeEnd()
 
         /// Fingers down again on a gesture whose end never came here, gone
         /// to another window or another app (a swipe of three fingers to
@@ -2013,10 +2070,13 @@ struct SpaceSwipe: NSViewRepresentable {
                 travel = 0
                 recent = []
                 wheel.reset()
+                glide = SwipeGlide()
+                end = SwipeEnd()
                 return event
             }
             if column, event.phase == [], event.momentumPhase == [] { return wheeled(event) }
             guard Swipe.isGesture(event) else { return event }
+            if glide.takes(phase: event.phase, momentum: event.momentumPhase) { return nil }
             if column, event.phase == .began || event.phase == .ended || event.phase == .cancelled {
                 MainActor.assumeIsolated {
                     SpaceSwipe.note(event.phase == .began
@@ -2032,9 +2092,12 @@ struct SpaceSwipe: NSViewRepresentable {
                 owned = false
                 paging = false
                 unpaged = false
+                end = SwipeEnd()
                 return event
             case .began:
                 lose()
+                // Goes on to the rows unless taken below, sideways.
+                end.began(passed: true)
                 owned = browser?.swipesSpaces == true
                     && bounds.contains(convert(event.locationInWindow, from: nil))
                     // Begun on the island: that swipe swaps players, or
@@ -2050,15 +2113,20 @@ struct SpaceSwipe: NSViewRepresentable {
             default:
                 // Ended, cancelled, or the momentum after: the gesture is over.
                 let mine = owned && sideways == true
+                // When the rows heard the began, this end closes their
+                // gesture, even when the catch took the moves (SwipeEnd).
+                var owed = false
                 if event.phase == .ended || event.phase == .cancelled {
                     owned = false
+                    owed = end.ended()
+                    glide.lifted(sideways: mine)
                     // The row of spaces goes on the way the fingers went,
                     // or to whichever shows more (SpacePaging).
                     if mine, paging {
                         paging = false
                         let speed = SpacePaging.speed(recent.map { ($0.0, Double($0.1)) }, liftedAt: event.timestamp)
                         MainActor.assumeIsolated { SpacePager.shared.release(speed: CGFloat(speed)) }
-                        return nil
+                        return owed ? event : nil
                     }
                     // Gone quiet before lifting is no flick.
                     recent.removeAll { event.timestamp - $0.0 > 0.06 }
@@ -2076,7 +2144,7 @@ struct SpaceSwipe: NSViewRepresentable {
                                 browser.switchSpace(to: order[here + way].id)
                             }
                         }
-                        return nil
+                        return owed ? event : nil
                     }
                     if mine, let browser {
                         // Across the top, any way toward a neighbor brings
@@ -2084,13 +2152,15 @@ struct SpaceSwipe: NSViewRepresentable {
                         MainActor.assumeIsolated { SpacePull.shared.release(browser) }
                     }
                 }
-                return mine && event.momentumPhase == [] ? nil : event
+                return mine && event.momentumPhase == [] && !owed ? nil : event
             }
             guard owned else { return event }
             if sideways == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
                 sideways = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
             }
             guard sideways == true, let browser else { return event }
+            // Every way on from here takes the event, a sideways began too.
+            if event.phase == .began { end.began(passed: false) }
             travel += event.scrollingDeltaX
             // Timed by the trackpad, not as they arrive: moves held up
             // behind a busy frame come in a bunch and would read as a flick.

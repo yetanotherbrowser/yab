@@ -104,6 +104,48 @@ struct SpaceWheelTests {
         #expect(Self.play(moves) == [1, 0, 1])
     }
 
+    @Test func aHandTurningOnGoesOneSpace() {
+        // #822: a thumb wheel turned by hand, notches 30 to 120 ms apart,
+        // went a space at every gap longer than `gather`, three here.
+        let times = [0, 0.03, 0.12, 0.15, 0.27, 0.30]
+        #expect(Self.play(times.map { Self.notch(-1, at: $0) }) == [0, 1, 0, 0, 0, 0])
+        // The same with a smooth mouse's points.
+        #expect(Self.play(times.map { Self.smooth(-6, at: $0) }) == [0, 1, 0, 0, 0, 0])
+    }
+
+    @Test func turningOnRepeatsAfterTheHold() {
+        // Turned on and on, notches 40 ms apart: one space at once, then
+        // one more each time the hold has passed and two notches more have
+        // come, as a held key repeats.
+        let gap = 0.04
+        let steps = Self.play((0..<26).map { Self.notch(-1, at: Double($0) * gap) })
+        let turns = steps.indices.filter { steps[$0] == 1 }
+        #expect(turns.first == 1)
+        #expect(turns.count == 4)
+        for (a, b) in zip(turns, turns.dropFirst()) {
+            #expect(Double(b - a) * gap >= SpaceWheel.Rule.hold)
+        }
+        #expect(steps.allSatisfy { $0 == 0 || $0 == 1 })
+    }
+
+    @Test func theHoldSpansAShortPause() {
+        // A pause longer than `gather` but shorter than `quiet` is the same
+        // push: no turn until the hold is over.
+        // Gaps of 120, 100 and 100 ms: each longer than `gather`, none
+        // longer than `quiet`, the last move past the hold.
+        let times = [0, 0.12, 0.22, 0.32]
+        #expect(zip(times, times.dropFirst()).allSatisfy { a, b in
+            b - a > SpaceWheel.Rule.gather && b - a < SpaceWheel.Rule.quiet
+        })
+        #expect(times[3] >= SpaceWheel.Rule.hold && times[2] < SpaceWheel.Rule.hold)
+        #expect(Self.play(times.map { Self.notch(-2, at: $0) }) == [1, 0, 0, 1])
+    }
+
+    @Test func theOtherWayAfterATurnTurnsBack() {
+        // Back the other way at once is a push of its own, with no hold.
+        #expect(Self.play([Self.notch(-2, at: 0), Self.notch(2, at: 0.05)]) == [1, -1])
+    }
+
     @Test func resetForgetsThePush() {
         var wheel = SpaceWheel()
         #expect(wheel.take(Self.notch(-3, at: 0)) == 1)
