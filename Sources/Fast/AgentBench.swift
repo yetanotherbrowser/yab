@@ -87,15 +87,16 @@ extension Bench {
             return
         }
         if let waiting = AgentSecrets.nativeQuestionReply(protectedPages) { guarded(waiting); return }
+        let reach = AgentSecrets.reach(verb, request)
         Task { @MainActor in
             for tab in protectedPages {
-                guard await AgentSecrets.check(tab.page) else { guarded(["error": AgentSecrets.refusal(for: tab.page)]); return }
+                guard await AgentSecrets.check(tab.page, reach: reach) else { guarded(["error": AgentSecrets.refusal(for: tab.page)]); return }
             }
             let checked: ([String: Any]) -> Void = { out in
                 Task { @MainActor in
                     if let waiting = AgentSecrets.nativeQuestionReply(protectedPages) { guarded(waiting); return }
                     for tab in protectedPages {
-                        guard await AgentSecrets.check(tab.page) else { guarded(["error": AgentSecrets.refusal(for: tab.page)]); return }
+                        guard await AgentSecrets.check(tab.page, reach: reach) else { guarded(["error": AgentSecrets.refusal(for: tab.page)]); return }
                     }
                     guarded(out)
                 }

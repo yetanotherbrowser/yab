@@ -362,6 +362,14 @@ extension Bench {
             AgentFeed.shared.pointed(tab.page, at: CGPoint(x: x * zoom, y: y * zoom))
             DispatchQueue.main.asyncAfter(deadline: .now() + (seen ? 0.45 : 0)) {
             if taken() { return }
+            AgentPage.lands(tab, ref: ref, at: CGPoint(x: x, y: y)) { clear in
+            if taken() { return }
+            // Something of the top page's over it: by script, on the
+            // element itself (AgentPage.landing).
+            guard clear else {
+                act(["action": "script"]) { said in answer(said) }
+                return
+            }
             // A real click, then a look to see it landed. A page that
             // asks something (confirm) holds its script, and the look
             // with it: the question is the answer then.
@@ -382,6 +390,7 @@ extension Bench {
                     // The click took the page elsewhere: it landed.
                     once(said["error"] == nil ? said : ["done": "mouse"])
                 }
+            }
             }
             }
             }
@@ -599,13 +608,20 @@ extension Bench {
                     return
                 }
                 guard let x = out["x"] as? Double, let y = out["y"] as? Double else { then(); return }
+                // A real click where it lands on the ref; by script when
+                // something of the top page is over it (AgentPage.landing).
+                @MainActor func click(_ at: CGPoint) {
+                    AgentPage.lands(tab, ref: ref, at: at) { clear in
+                        if clear { _ = AgentPage.click(tab.page, x: at.x, y: at.y); then(); return }
+                        AgentPage.run(tab, AgentPage.act, ["action": "script", "ref": ref, "text": "", "value": "", "dy": 0], frame: frame) { _ in then() }
+                    }
+                }
                 // A ref in another site's frame: its point is the frame's own.
-                guard let marker else { _ = AgentPage.click(tab.page, x: x, y: y); then(); return }
+                guard let marker else { click(CGPoint(x: x, y: y)); return }
                 AgentPage.run(tab, AgentPage.frameBox, ["k": marker]) { box in
                     if case .success(let value) = box, let at = value as? [String: Any], let bx = at["x"] as? Double, let by = at["y"] as? Double {
-                        _ = AgentPage.click(tab.page, x: x + bx, y: y + by)
-                    }
-                    then()
+                        click(CGPoint(x: x + bx, y: y + by))
+                    } else { then() }
                 }
             }
         }
@@ -713,8 +729,15 @@ extension Bench {
                 if case .success(let value) = result, let out = value as? [String: Any] { answer(out) } else { answer(["error": "couldn't click \(ref)"]) }
                 return
             }
-            if let x = out["x"] as? Double, let y = out["y"] as? Double { _ = AgentPage.click(tab.page, x: x, y: y) }
-            answer(["ok": true, "before": before])
+            guard let x = out["x"] as? Double, let y = out["y"] as? Double else { answer(["ok": true, "before": before]); return }
+            // A real click where it lands on the ref; by script when
+            // something of the top page is over it (AgentPage.landing).
+            AgentPage.lands(tab, ref: ref, at: CGPoint(x: x, y: y)) { clear in
+                if clear { _ = AgentPage.click(tab.page, x: x, y: y); answer(["ok": true, "before": before]); return }
+                AgentPage.run(tab, AgentPage.act, ["action": "script", "ref": ref, "text": "", "value": "", "dy": 0]) { _ in
+                    answer(["ok": true, "before": before])
+                }
+            }
         }
     }
 
