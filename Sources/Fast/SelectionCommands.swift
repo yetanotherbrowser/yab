@@ -1028,7 +1028,7 @@ final class SelectionCommands: ObservableObject {
                           partial: @escaping (String) -> Void = { _ in }) async throws -> String {
         if command.id == "quote" { return "“\(snap.text)”\n\(snap.url)" }
         if command.id == "calendar", let date = snap.date {
-            return "Add “\(snap.text)” on \(date.formatted(date: .abbreviated, time: .shortened))"
+            return "Add “\(snap.text)” on \(date.englishFormatted(date: .abbreviated, time: .shortened))"
         }
         if command.id == "map" { return "Open “\(snap.text)” in Maps" }
         if command.id == "call" { return "Call \(snap.phone ?? snap.text)" }

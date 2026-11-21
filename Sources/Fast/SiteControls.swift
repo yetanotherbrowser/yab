@@ -892,7 +892,7 @@ struct SiteFacts {
         if let seconds = values[kSecOIDX509V1ValidityNotAfter as String]?[kSecPropertyKeyValue as String] as? NSNumber {
             until = Date(timeIntervalSinceReferenceDate: seconds.doubleValue)
         }
-        let date = until.map { $0.formatted(date: .abbreviated, time: .omitted) }
+        let date = until.map { $0.englishFormatted(date: .abbreviated, time: .omitted) }
         switch (issuer, date) {
         case let (issuer?, date?): return "Certificate from \(issuer), valid until \(date)."
         case let (issuer?, nil): return "Certificate from \(issuer)."

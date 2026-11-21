@@ -2603,7 +2603,7 @@ enum ChatStamp {
 
     /// "Today 14:09", "Yesterday 23:47", "Tuesday 9:15" within the week,
     /// else the date: "Oct 3 14:09", with its year when it isn't this one's.
-    static func words(_ date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+    static func words(_ date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = AppDates.locale) -> String {
         let time = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).hour().minute())
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
         var style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)

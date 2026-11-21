@@ -1519,12 +1519,12 @@ struct HintList: View {
         if hint.draft != nil { return "Reply ready" }
         guard let due = hint.due, hint.done != true else { return "" }
         let calendar = Calendar.current
-        let time = due.formatted(date: .omitted, time: .shortened)
+        let time = due.englishFormatted(date: .omitted, time: .shortened)
         if calendar.isDate(due, inSameDayAs: now) { return "Due " + time }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(due, inSameDayAs: tomorrow) {
             return "Due tomorrow"
         }
-        return due < now ? "Overdue" : "Due " + due.formatted(.dateTime.month(.abbreviated).day())
+        return due < now ? "Overdue" : "Due " + due.formatted(AppDates.dateTime.month(.abbreviated).day())
     }
 
     /// A meeting in its last ten minutes, or begun a little ago.
@@ -1588,7 +1588,7 @@ struct HintList: View {
         .onTapGesture { if step == nil { hints.take(hint, in: browser) } }
         .onHover { inside in hovered = inside ? hint.id : (hovered == hint.id ? nil : hovered) }
         .contextMenu { if !hint.setup, !done { menu(hint, now: now) } }
-        .pointerTip(hint.seen.map { "Opened " + $0.formatted(date: .omitted, time: .shortened) } ?? "")
+        .pointerTip(hint.seen.map { "Opened " + $0.englishFormatted(date: .omitted, time: .shortened) } ?? "")
     }
 
     /// The row's own menu, the system's. One of yab's own is about today:

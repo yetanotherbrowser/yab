@@ -198,7 +198,7 @@ final class Noticing {
     /// "4d".
     nonisolated static func age(_ date: Date, now: Date) -> String {
         let calendar = Calendar.current
-        if calendar.isDate(date, inSameDayAs: now) { return date.formatted(date: .omitted, time: .shortened) }
+        if calendar.isDate(date, inSameDayAs: now) { return date.englishFormatted(date: .omitted, time: .shortened) }
         if calendar.isDate(date, inSameDayAs: now.addingTimeInterval(-86_400)) { return "yesterday" }
         return "\(max(1, Int(now.timeIntervalSince(date) / 86_400)))d"
     }
@@ -209,7 +209,7 @@ final class Noticing {
         if hours < 0 { return "was due \(Calendar.current.isDate(date, inSameDayAs: now) ? "today" : "earlier")" }
         if hours < 12 { return "in \(max(1, Int(hours)))h" }
         if Calendar.current.isDateInTomorrow(date) { return "tomorrow" }
-        let format = DateFormatter()
+        let format = AppDates.formatter()
         format.dateFormat = "EEE"
         return format.string(from: date)
     }

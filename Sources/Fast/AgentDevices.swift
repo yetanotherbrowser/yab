@@ -72,7 +72,7 @@ enum AgentDevices {
         guard !others.isEmpty || !tabs.isEmpty else { return "Only this Mac is in Sync. Another device joins in Settings › Sync, Add a Device." }
         var out = "# The user's other devices in Sync\n"
         for id in Set(others).union(tabs.keys).sorted(by: { (names[$0] ?? $0) < (names[$1] ?? $1) }) {
-            let last = seen[id].map { " · last seen \($0.formatted(.relative(presentation: .named)))" } ?? ""
+            let last = seen[id].map { " · last seen \($0.formatted(.relative(presentation: .named).locale(AppDates.locale)))" } ?? ""
             out += "\n## \(names[id] ?? "another device")\(last)\n"
             let open = (tabs[id] ?? []).sorted { ($0.seen ?? 0) > ($1.seen ?? 0) }
             if open.isEmpty { out += "No tabs of today open there.\n"; continue }

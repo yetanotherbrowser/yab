@@ -176,17 +176,17 @@ struct MailPane: View {
         let days = Int(now.timeIntervalSince(date) / 86_400)
         if waiting { return days < 1 ? "today" : "\(days)d, no reply" }
         let calendar = Calendar.current
-        if calendar.isDate(date, inSameDayAs: now) { return date.formatted(date: .omitted, time: .shortened) }
+        if calendar.isDate(date, inSameDayAs: now) { return date.englishFormatted(date: .omitted, time: .shortened) }
         // Days on the calendar, not spans of 24 hours: Monday's mail read on
         // Wednesday morning was Monday, though under 48 hours ago.
         let apart = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? days
         if apart == 1 { return "yesterday" }
-        if apart > 1, apart < 7 { return date.formatted(.dateTime.weekday(.abbreviated)) }
+        if apart > 1, apart < 7 { return date.formatted(AppDates.dateTime.weekday(.abbreviated)) }
         // Mail of another year, as old inbox threads and Gmail's finds are, says which.
         if !Calendar.current.isDate(date, equalTo: now, toGranularity: .year) {
-            return date.formatted(.dateTime.month(.abbreviated).day().year())
+            return date.formatted(AppDates.dateTime.month(.abbreviated).day().year())
         }
-        return date.formatted(.dateTime.month(.abbreviated).day())
+        return date.formatted(AppDates.dateTime.month(.abbreviated).day())
     }
 
     /// From when to when, both ends said one way ("30 Sep to 1 Oct"), where
@@ -195,7 +195,7 @@ struct MailPane: View {
         let calendar = Calendar.current
         if calendar.isDate(first, inSameDayAs: last) { return said(first, now: now) }
         let thisYear = calendar.isDate(first, equalTo: now, toGranularity: .year) && calendar.isDate(last, equalTo: now, toGranularity: .year)
-        let style: Date.FormatStyle = thisYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year()
+        let style: Date.FormatStyle = thisYear ? AppDates.dateTime.month(.abbreviated).day() : AppDates.dateTime.month(.abbreviated).day().year()
         return first.formatted(style) + " to " + last.formatted(style)
     }
 
@@ -686,7 +686,7 @@ extension MailListView {
         if days < 7 { return "This Week" }
         if calendar.isDate(date, equalTo: now, toGranularity: .month) { return "Earlier This Month" }
         let sameYear = calendar.isDate(date, equalTo: now, toGranularity: .year)
-        return date.formatted(sameYear ? .dateTime.month(.wide) : .dateTime.month(.wide).year())
+        return date.formatted(sameYear ? AppDates.dateTime.month(.wide) : AppDates.dateTime.month(.wide).year())
     }
 
     /// How a list no split of yours groups is grouped: the long ones that
@@ -3558,7 +3558,7 @@ private struct MailPersonRail: View {
             }
             if let meeting = person.meeting {
                 section("Together") {
-                    item(meeting.title, meeting.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+                    item(meeting.title, meeting.at.formatted(AppDates.dateTime.weekday(.abbreviated).hour().minute()))
                 }
             }
             if !person.recent.isEmpty {

@@ -566,7 +566,7 @@ enum WelcomeEnd: WelcomeChapter {
             return words.prefix(1).uppercased() + words.dropFirst()
         }
         guard Calendar.current.isDateInTomorrow(meeting.start) else { return nil }
-        return "Tomorrow " + meeting.start.formatted(date: .omitted, time: .shortened)
+        return "Tomorrow " + meeting.start.englishFormatted(date: .omitted, time: .shortened)
     }
 
     /// How long until it starts, in words: "in 25m", "in 2h 10m", "now".

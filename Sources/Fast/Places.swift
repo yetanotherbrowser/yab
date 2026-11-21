@@ -487,7 +487,7 @@ extension Browser {
     private func purchaseItems(_ filter: Int) -> [PlaceItem] {
         let book = Purchases.shared
         let now = Date()
-        let day = DateFormatter()
+        let day = AppDates.formatter()
         day.setLocalizedDateFormatFromTemplate("MMMd")
         switch filter {
         case 1:
@@ -751,7 +751,7 @@ extension Browser {
                 query.stock.jumps[key] = jump
             }
             return PlaceItem(id: "visit.\(key).\(Int(at.timeIntervalSince1970))", section: Browser.day(at), title: title,
-                             source: passage.flatMap { $0.isEmpty ? nil : "…\($0)…" } ?? "\(host) · \(at.formatted(date: .omitted, time: .shortened))",
+                             source: passage.flatMap { $0.isEmpty ? nil : "…\($0)…" } ?? "\(host) · \(at.englishFormatted(date: .omitted, time: .shortened))",
                              tile: .site(host), what: .visit(url: url, title: title, key: key, at: at, count: count))
         }
     }
@@ -769,7 +769,7 @@ extension Browser {
         }
         return projects + Chat.listed(Chats.shared.all).map { chat in
             let live = Agents.shared.session(chat.id)?.state.live == true
-            let when = Calendar.current.isDateInToday(chat.updated) ? chat.updated.formatted(date: .omitted, time: .shortened)
+            let when = Calendar.current.isDateInToday(chat.updated) ? chat.updated.englishFormatted(date: .omitted, time: .shortened)
                                                                      : Browser.day(chat.updated)
             let gist = Chat.plain(chat.answer)
             let project = Projects.shared.project(chat.project).map { "in " + $0.name }
@@ -1278,12 +1278,12 @@ extension Browser {
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }
         if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 {
-            return date.formatted(.dateTime.weekday(.wide))
+            return date.formatted(AppDates.dateTime.weekday(.wide))
         }
         if !calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
-            return date.formatted(.dateTime.month(.wide).day().year())
+            return date.formatted(AppDates.dateTime.month(.wide).day().year())
         }
-        return date.formatted(.dateTime.month(.wide).day())
+        return date.formatted(AppDates.dateTime.month(.wide).day())
     }
 
     /// A site's name as a person says it: stripe.com is Stripe.

@@ -541,7 +541,7 @@ struct DevApplicationPane: View {
         app.rows = cookies.filter { DevApplicationModel.cookie($0, belongsTo: app.selection.origin) }.map { c in
             let name = c["name"] as? String ?? "", value = c["value"] as? String ?? ""
             let expires = (c["expires"] as? NSNumber)?.doubleValue ?? 0
-            let expiry = c["session"] as? Bool == true ? "Session" : Date(timeIntervalSince1970: expires / 1000).formatted(date: .numeric, time: .shortened)
+            let expiry = c["session"] as? Bool == true ? "Session" : Date(timeIntervalSince1970: expires / 1000).englishFormatted(date: .numeric, time: .shortened)
             let id = [name, c["domain"] as? String ?? "", c["path"] as? String ?? "", DevApplicationModel.text(c["partitionKey"])].joined(separator: "\u{1f}")
             return ApplicationGridRow(id: id, cells: [name, value, c["domain"] as? String ?? "", c["path"] as? String ?? "/", expiry, String(name.utf8.count + value.utf8.count), c["httpOnly"] as? Bool == true ? "✓" : "", c["secure"] as? Bool == true ? "✓" : "", c["sameSite"] as? String ?? "", DevApplicationModel.text(c["partitionKey"])], data: c)
         }
@@ -767,6 +767,7 @@ private struct ApplicationCookieEditor: View {
             Picker("SameSite", selection: text("sameSite", default: "Lax")) { ForEach(["None", "Lax", "Strict"], id: \.self) { Text($0).tag($0) } }.pickerStyle(.menu)
             if cookie["session"] as? Bool != true {
                 DatePicker("Expires", selection: Binding(get: { Date(timeIntervalSince1970: ((cookie["expires"] as? NSNumber)?.doubleValue ?? 0) / 1000) }, set: { cookie["expires"] = $0.timeIntervalSince1970 * 1000 }))
+                    .environment(\.locale, AppDates.locale)
             }
             if let partition = cookie["partitionKey"] { Text("Partition key: " + DevApplicationModel.text(partition)).foregroundStyle(Palette.muted) }
         }

@@ -262,7 +262,7 @@ enum PanelTime {
         if seconds < 3600 { return "\(Int(seconds / 60)) min" }
         if seconds < 86_400 { return "\(Int(seconds / 3600)) h" }
         if seconds < 7 * 86_400 { return "\(Int(seconds / 86_400)) d" }
-        return date.formatted(.dateTime.month(.abbreviated).day())
+        return date.formatted(AppDates.dateTime.month(.abbreviated).day())
     }
 }
 

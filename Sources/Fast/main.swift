@@ -23,7 +23,7 @@ if CommandLine.arguments.dropFirst().first == ChromiumNativeHostLauncher.flag {
 // is, before anything else asks for it (LaunchCopy).
 LaunchCopy.ensure()
 
-// Dates in English, as the rest of Yab, in every door (EnglishDates).
+// Retire the old date locale override before native input services start.
 EnglishDates.apply()
 
 let launchWords = Array(CommandLine.arguments.dropFirst())

@@ -1743,7 +1743,7 @@ enum ChatAttachment: Equatable, Identifiable {
     /// file for the message; `kind`, the extension its data is in.
     static func keep(_ data: Data, _ kind: String) -> URL? {
         guard data.count <= most else { return nil }
-        let stamp = Date().formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
+        let stamp = Date().formatted(AppDates.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
             .replacingOccurrences(of: ":", with: ".")
         let ending = kind == "tiff" ? "png" : kind
         // Two pasted in one second are two files, as the Finder names them.

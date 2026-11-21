@@ -106,7 +106,7 @@ enum AskFromDay {
                                           place: place(hit.host, hit.url), host: hit.host, urls: URL(string: hit.url).map { [$0] } ?? [],
                                           at: hit.at, name: "")
                 pages[number] = source
-                text += "\n[\(number)] \(source.title) · \(hit.host) · \(hit.at.formatted(date: .abbreviated, time: .shortened))"
+                text += "\n[\(number)] \(source.title) · \(hit.host) · \(hit.at.englishFormatted(date: .abbreviated, time: .shortened))"
                     + (hit.passage.map { " · \u{201C}\($0)\u{201D}" } ?? "")
             }
         }

@@ -207,6 +207,7 @@ struct MeetingNotice: View {
     /// "2 – 3 PM", as the calendar writes it.
     static func span(_ meeting: Meeting) -> String {
         let format = DateIntervalFormatter()
+        format.locale = AppDates.locale
         format.dateStyle = .none
         format.timeStyle = .short
         return format.string(from: meeting.start, to: meeting.end)

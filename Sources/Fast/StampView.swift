@@ -483,7 +483,7 @@ struct StampAboutSection: View {
                         Text("No. \(info.number)")
                             .font(.system(size: 22, weight: .bold))
                             .monospacedDigit()
-                        Text("from \(info.from), \(info.at.formatted(.dateTime.month(.abbreviated).day()))")
+                        Text("from \(info.from), \(info.at.formatted(AppDates.dateTime.month(.abbreviated).day()))")
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)

@@ -1204,7 +1204,7 @@ struct Omnibox: View {
                 return "Visited yesterday"
             }
             let sameYear = calendar.component(.year, from: at) == calendar.component(.year, from: now)
-            return "Visited " + at.formatted(sameYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year())
+            return "Visited " + at.formatted(sameYear ? AppDates.dateTime.month(.abbreviated).day() : AppDates.dateTime.month(.abbreviated).day().year())
         }
 
         /// The compact card's chosen row: a veil of this space's own color,

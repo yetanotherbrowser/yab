@@ -67,9 +67,9 @@ enum AgentCalendar {
             return "No calendar Yab can read. Google's comes with the account connected in Settings › Mail (its consent includes the calendar); the Mac's calendars once macOS lets Yab read them (System Settings › Privacy & Security › Calendars)."
         }
         let calendar = Calendar.current
-        let dayName = DateFormatter()
+        let dayName = AppDates.formatter()
         dayName.dateFormat = "EEEE yyyy-MM-dd"
-        let clock = DateFormatter()
+        let clock = AppDates.formatter()
         clock.dateFormat = "HH:mm"
         var out = "# Calendar, \(days == 1 ? "one day" : "\(days) days") (\(TimeZone.current.identifier))\n"
         for offset in 0..<days {
@@ -116,9 +116,9 @@ enum AgentCalendar {
         var asked = hours
         if let minutes { asked.length = max(5, min(minutes, 8 * 60)) }
         let slots = MailSlots.free(busy: busy, from: now, hours: asked, days: days)
-        let clock = DateFormatter()
+        let clock = AppDates.formatter()
         clock.dateFormat = "HH:mm"
-        let dayName = DateFormatter()
+        let dayName = AppDates.formatter()
         dayName.dateFormat = "EEEE yyyy-MM-dd"
         let calendar = Calendar.current
         let start = String(format: "%d:%02d", hours.start / 60, hours.start % 60), end = String(format: "%d:%02d", hours.end / 60, hours.end % 60)

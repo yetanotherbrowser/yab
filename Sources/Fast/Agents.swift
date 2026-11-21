@@ -2695,7 +2695,7 @@ final class Agents: ObservableObject {
     /// works. Filing it into the subject pages is the daily pass's job.
     static func extractionPrompt(_ session: Session) -> String {
         if let project = Projects.shared.project(session.project), project.memoryOn { return projectExtraction(session, project) }
-        let clock = DateFormatter()
+        let clock = AppDates.formatter()
         clock.dateFormat = "HH:mm"
         return """
         Now, quietly (the user sees nothing of this turn), keep this task's episodic memory. Look back \

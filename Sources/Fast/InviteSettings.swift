@@ -226,7 +226,7 @@ private struct PostSection: View {
 
     private var surpriseLine: String {
         if let opens = reward.live?.opens { return "Opens \(PostReward.words(until: opens))" }
-        if let after = reward.after, after > Date() { return "After " + after.formatted(.dateTime.month(.abbreviated).day()) }
+        if let after = reward.after, after > Date() { return "After " + after.formatted(AppDates.dateTime.month(.abbreviated).day()) }
         return "One post"
     }
 
@@ -236,9 +236,9 @@ private struct PostSection: View {
             return ("Post it on X", reward.waitedLong ? "Didn't see it yet. If it's up, paste its link." : "Yab counts it once X shows your post.")
         }
         if let opens = reward.live?.opens { return ("Your post is up", "The surprise opens \(PostReward.words(until: opens)).") }
-        let next = reward.after.map { " The next one with a post after \($0.formatted(.dateTime.month(.wide).day()))." } ?? ""
+        let next = reward.after.map { " The next one with a post after \($0.formatted(AppDates.dateTime.month(.wide).day()))." } ?? ""
         if let fresh = reward.fresh { return ("\(fresh.title) is yours", "\(reward.count) of 3." + next) }
-        if let after = reward.after, after > Date() { return ("Next icon after \(after.formatted(.dateTime.month(.wide).day()))", "One post a week counts.") }
+        if let after = reward.after, after > Date() { return ("Next icon after \(after.formatted(AppDates.dateTime.month(.wide).day()))", "One post a week counts.") }
         if reward.lastGone { return ("The post is gone", "So it didn't count. Post again any time.") }
         return ("Post About Yab", "Unlock one of three icons by posting about Yab. One post per week counts.")
     }
@@ -433,7 +433,7 @@ struct InviteFriendsPage: View {
         let prefix = friend.best ? "Best friend · " : ""
         switch friend.state {
         case "joined":
-            return prefix + "Opened Yab" + (friend.at.map { " on " + $0.formatted(.dateTime.month(.abbreviated).day()) } ?? "")
+            return prefix + "Opened Yab" + (friend.at.map { " on " + $0.formatted(AppDates.dateTime.month(.abbreviated).day()) } ?? "")
         case "opened": return prefix + "Opened the page, hasn't installed"
         default: return prefix + "Link copied"
         }

@@ -1661,7 +1661,7 @@ enum NetClock {
     /// 16:42:11.284, the time of day a frame or an event came.
     static func time(_ wall: Double) -> String {
         guard wall > 0 else { return "" }
-        let formatter = DateFormatter()
+        let formatter = AppDates.formatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         return formatter.string(from: Date(timeIntervalSince1970: wall))
     }

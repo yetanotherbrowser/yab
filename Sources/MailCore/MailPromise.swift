@@ -411,8 +411,14 @@ public enum MailPromise {
         }
         if today { return calendar.component(.hour, from: due) >= 20 ? "tonight" : "today" }
         if calendar.isDate(due, inSameDayAs: now.addingTimeInterval(86_400)) { return "by tomorrow" }
-        let weekday = due.formatted(.dateTime.weekday(.abbreviated))
-        return due.timeIntervalSince(now) < 6 * 86_400 ? "by " + weekday : "by " + due.formatted(.dateTime.month(.abbreviated).day())
+        var components = Locale.Components(locale: .current)
+        if components.languageComponents.languageCode?.identifier != "en" {
+            components.languageComponents.languageCode = .english
+            components.languageComponents.script = nil
+        }
+        let dateTime = Date.FormatStyle.dateTime.locale(Locale(components: components))
+        let weekday = due.formatted(dateTime.weekday(.abbreviated))
+        return due.timeIntervalSince(now) < 6 * 86_400 ? "by " + weekday : "by " + due.formatted(dateTime.month(.abbreviated).day())
     }
 
     /// Late: its day has gone.

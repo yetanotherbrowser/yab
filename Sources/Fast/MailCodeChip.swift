@@ -40,7 +40,7 @@ struct MailCodeChip: View {
         .buttonStyle(PressStyle())
         .focusable(false)
         .pointerStyle(.link)
-        .keyTip(state == .expired ? "Expired at " + item.expires.formatted(date: .omitted, time: .shortened) : "Copy", keys: "⌘C")
+        .keyTip(state == .expired ? "Expired at " + item.expires.englishFormatted(date: .omitted, time: .shortened) : "Copy", keys: "⌘C")
         .accessibilityLabel("Copy code " + item.read.shown)
     }
 }

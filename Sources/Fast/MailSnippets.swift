@@ -395,7 +395,7 @@ extension MailSnippets {
     /// with nothing to fill it becomes a place to fill by hand,
     /// {{first_name}}, which keeps the mail from going until it is.
     nonisolated static func fill(_ text: String, to person: MailPerson?, me: String, date: Date, clipboard: String? = nil,
-                                 locale: Locale = .current, zone: TimeZone = .current) -> String {
+                                 locale: Locale = AppDates.locale, zone: TimeZone = .current) -> String {
         let name = person?.name.trimmingCharacters(in: .whitespaces) ?? ""
         let mine = me.trimmingCharacters(in: .whitespaces)
         let filled: [String: String] = ["first_name": first(of: name), "name": name, "my_name": mine,
@@ -405,7 +405,7 @@ extension MailSnippets {
 
     /// The words as they go into a page's box: {date} and {clipboard}
     /// filled; {first_name} and the rest are a mail's, left as written.
-    nonisolated static func fillPage(_ text: String, date: Date, clipboard: String? = nil, locale: Locale = .current,
+    nonisolated static func fillPage(_ text: String, date: Date, clipboard: String? = nil, locale: Locale = AppDates.locale,
                                      zone: TimeZone = .current) -> String {
         fill(text, with: ["date": said(date, locale: locale, zone: zone), "clipboard": clipboard ?? board(for: text)], only: Set(everywhere))
     }

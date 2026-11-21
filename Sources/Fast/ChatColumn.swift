@@ -2155,7 +2155,7 @@ struct ChatInfo: View {
     /// "today at 15:45", "Monday", "Sep 12".
     static func when(_ date: Date) -> String {
         let calendar = Calendar.current
-        let format = DateFormatter()
+        let format = AppDates.formatter()
         if calendar.isDateInToday(date) {
             format.dateFormat = "HH:mm"
             return "today at " + format.string(from: date)

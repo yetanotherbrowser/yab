@@ -1228,8 +1228,8 @@ final class MailDesk: ObservableObject {
         if days < 0 { return ("\(-days)d late", true) }
         if days == 0 { return ("due today", false) }
         if days == 1 { return ("by tomorrow", false) }
-        if days < 7 { return ("by " + due.formatted(.dateTime.weekday(.abbreviated)), false) }
-        return ("by " + due.formatted(.dateTime.month(.abbreviated).day()), false)
+        if days < 7 { return ("by " + due.formatted(AppDates.dateTime.weekday(.abbreviated)), false) }
+        return ("by " + due.formatted(AppDates.dateTime.month(.abbreviated).day()), false)
     }
 
     /// When an invitation meets, in a row's words: "Today 2:00 PM",
@@ -1238,9 +1238,9 @@ final class MailDesk: ObservableObject {
     nonisolated static func meetWords(_ start: Date, allDay: Bool, now: Date = Date(), calendar: Calendar = .current) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: start)).day ?? 0
         let day = days <= 0 ? "Today" : days == 1 ? "Tomorrow"
-            : days < 7 ? start.formatted(.dateTime.weekday(.abbreviated)) : start.formatted(.dateTime.month(.abbreviated).day())
+            : days < 7 ? start.formatted(AppDates.dateTime.weekday(.abbreviated)) : start.formatted(AppDates.dateTime.month(.abbreviated).day())
         if allDay { return day }
-        return day + (days >= 7 ? ", " : " ") + start.formatted(date: .omitted, time: .shortened)
+        return day + (days >= 7 ? ", " : " ") + start.englishFormatted(date: .omitted, time: .shortened)
     }
 
     /// These rows with when their invitations meet, said before their time.
@@ -1497,7 +1497,7 @@ final class MailDesk: ObservableObject {
             if Meetings.shared.allowed, !promise.address.isEmpty,
                let meeting = Meetings.shared.list.first(where: { $0.people.contains(promise.address) && $0.start > now }),
                promise.due.map({ meeting.start < $0 }) ?? true, meeting.start.timeIntervalSince(now) < 7 * 86_400 {
-                row.remind = "Meeting " + meeting.start.formatted(.dateTime.weekday(.abbreviated))
+                row.remind = "Meeting " + meeting.start.formatted(AppDates.dateTime.weekday(.abbreviated))
             }
             out.append(row)
         }

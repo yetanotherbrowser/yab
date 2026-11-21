@@ -5053,7 +5053,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         let hosts = Set(sites.compactMap(\.host))
         let name = hosts.count == 1
             ? Address.pretty(URL(string: "https://\(hosts.first!)")!)
-            : Date.now.formatted(.dateTime.day().month(.abbreviated))
+            : Date.now.formatted(AppDates.dateTime.day().month(.abbreviated))
         bookmarks.insert(.folder(name, sites), into: nil)
         announce("\(sites.count) tabs bookmarked in \(name)", mark: "folder.bookmark", feedback: .success)
     }

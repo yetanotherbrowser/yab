@@ -22,7 +22,7 @@ enum When {
     }
 
     private static let hour: DateFormatter = {
-        let formatter = DateFormatter()
+        let formatter = AppDates.formatter()
         formatter.timeStyle = .short
         formatter.dateStyle = .none
         return formatter
