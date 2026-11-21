@@ -272,11 +272,11 @@ struct AppIconPage: View {
         Section {
             VStack(spacing: 0) {
                 flow
-                Text(middle.title)
+                FadingText(middle.title)
                     .font(.system(size: 17, weight: .semibold))
                     .padding(.top, 2)
                 // One line kept for the note, so the dots don't jump.
-                Text(note)
+                FadingText(note)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
@@ -284,7 +284,7 @@ struct AppIconPage: View {
                     .padding(.top, 16)
                 // Under the dots, so they stay put whatever is in the middle.
                 if middle.unlocked {
-                    Button(middle == selection ? "In the Dock" : "Choose") { wear() }
+                    Button { wear() } label: { FadingText(middle == selection ? "In the Dock" : "Choose") }
                         .buttonStyle(.yab(middle == selection ? .secondary : .primary, .regular))
                         .disabled(middle == selection)
                         .padding(.top, 16)
@@ -297,8 +297,10 @@ struct AppIconPage: View {
                                 .padding(.top, 16)
                         }
                     } else {
-                        Button(middle == .charm ? "Invite a Best Friend…" : middle == .surprise ? "Post on X…" : "Invite a Friend…") {
+                        Button {
                             model?.go(middle == .charm ? .bestFriend : .inviteFriends)
+                        } label: {
+                            FadingText(middle == .charm ? "Invite a Best Friend…" : middle == .surprise ? "Post on X…" : "Invite a Friend…")
                         }
                         .buttonStyle(.yab(.secondary, .regular))
                         .padding(.top, 16)
@@ -479,13 +481,19 @@ struct AppIconPage: View {
     private var dots: some View {
         HStack(spacing: 8) {
             ForEach(choices) { style in
-                Circle()
-                    .fill(style.halloween && Halloween.on
-                          ? AnyShapeStyle(Self.pumpkin.opacity(style == middle ? 1 : 0.45))
-                          : style == middle ? AnyShapeStyle(.primary) : style.unlocked ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-                    .overlay(Circle().strokeBorder(style.unlocked || style == middle ? Color.clear : Color.secondary.opacity(0.5), lineWidth: 1))
-                    .frame(width: 6, height: 6)
-                    .onTapGesture { look(style) }
+                let pumpkin = style.halloween && Halloween.on
+                // Each dot's two looks cross-fade: a changing fill is resolved again every frame.
+                ZStack {
+                    Circle()
+                        .fill(pumpkin ? AnyShapeStyle(Self.pumpkin.opacity(0.45)) : style.unlocked ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                        .overlay(Circle().strokeBorder(style.unlocked ? Color.clear : Color.secondary.opacity(0.5), lineWidth: 1))
+                        .opacity(style == middle ? 0 : 1)
+                    Circle()
+                        .fill(pumpkin ? AnyShapeStyle(Self.pumpkin) : AnyShapeStyle(.primary))
+                        .opacity(style == middle ? 1 : 0)
+                }
+                .frame(width: 6, height: 6)
+                .onTapGesture { look(style) }
             }
         }
     }
@@ -511,6 +519,25 @@ struct AppIconPage: View {
         guard middle.unlocked, middle != selection else { return }
         middle.choose()
         looking = nil
+    }
+}
+
+/// Changing words cross-faded as two views: Text's own content transition is redrawn on the CPU every frame.
+private struct FadingText: View {
+    let words: String
+
+    init(_ words: String) { self.words = words }
+
+    var body: some View {
+        // The hidden copy sizes it, so a button still widens with its words.
+        Text(words)
+            .hidden()
+            .overlay {
+                Text(words)
+                    .fixedSize()
+                    .id(words)
+                    .transition(.opacity)
+            }
     }
 }
 
