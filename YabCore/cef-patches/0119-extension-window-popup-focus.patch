@@ -55,7 +55,7 @@ index 54fc2f7..bf08d00 100644
        [&](BrowserWindowInterface* browser) {
          if (windows_util::CanOperateOnWindow(
 @@ -1793,7 +1808,20 @@ void WindowsUpdateFunction::UpdateWindowState(
-     browser_window->SetBounds(window_bounds);
+     }
    }
  
 -  if (params.update_info.focused) {

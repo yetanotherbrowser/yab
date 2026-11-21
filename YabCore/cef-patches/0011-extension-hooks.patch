@@ -191,8 +191,8 @@
  #include "chrome/browser/extensions/api/tabs/tabs_api.h"
 +#include "chrome/browser/extensions/external_action_origin.h"
  
+ #include "base/memory/weak_ptr.h"
  #include "base/metrics/histogram_functions.h"
- #include "base/metrics/histogram_macros.h"
 @@ -2400,6 +2401,12 @@
    }
  
