@@ -2400,6 +2400,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// The chat column is out on the right (ChatColumn.swift).
     var chatOpen = false {
         willSet { relay.send(\.chatOpen, newValue) }
+        didSet { if oldValue != chatOpen { applyWindowFloorSoon() } }
     }
     /// The extension page sharing the chat column; native chat state remains
     /// intact while a panel is in front.

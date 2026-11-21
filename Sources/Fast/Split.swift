@@ -1217,7 +1217,8 @@ extension Browser {
 
     func applyWindowFloor() {
         guard let window = BrowserWindows.shared.window(for: self), !window.styleMask.contains(.fullScreen) else { return }
-        let least = Self.leastWindow(floor: windowFloor, content: contentFloor)
+        let paneFloor = chatOpen || stagePair != nil ? Self.sideBySideWindow : Self.narrowestWindow
+        let least = Self.leastWindow(floor: max(windowFloor, paneFloor), content: contentFloor)
         if window.contentMinSize != least { window.contentMinSize = least }
     }
 
@@ -1235,8 +1236,10 @@ extension Browser {
         return splitBook.place.width + sideShown - Pair.room
     }
 
-    /// The window's own least width, without a pair (see YabApp).
-    nonisolated static let narrowestWindow: CGFloat = 640
+    /// The window's own least width, with a single page.
+    nonisolated static let narrowestWindow: CGFloat = 360
+    /// Keep room for the page beside a docked chat or a second page.
+    nonisolated static let sideBySideWindow: CGFloat = 640
     /// And its least height.
     nonisolated static let leastHeight: CGFloat = 420
 
