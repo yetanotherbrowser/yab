@@ -111,6 +111,7 @@ does not undo browser side effects already accepted by the helper.
 | `tab.readiness` | `profile`, optional exact `url` | Verified main-frame/default-world document proof; see CoreContracts.md |
 | `tab.resize` | `width`, `height` in points, `scale` | Requested and actual native backing scale |
 | `tab.visible` | `visible` | `orderOut` stops painting/rAF; show resumes with retained content |
+| `tab.frames` | `interval` in ms, 0 for the display's rate | The page stays visible and draws at most once per interval (CEF 0137, `nativeHooks.frameInterval`); refused on the stock SDK |
 | `input.send` | fields below | Forward AppKit event to hidden producer window |
 | `script.evaluate` | `world`, `function`, JSON `arguments`, optional `userGesture` | Awaited JSON result or error |
 | `script.bind` | `world`, `name` | Persistent world-name binding; emits `script.message` |

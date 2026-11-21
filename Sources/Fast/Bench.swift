@@ -524,16 +524,7 @@ final class Bench {
             WrappedLedger.shared.add(.codeCalls)
             WrappedLedger.shared.add("code.tool." + verb)
         }
-        // One answer, and always one: a page that never replies to a script
-        // would otherwise hold the bench, every later command waits behind it.
-        var answered = false
         let usage = UsageProbe.begin(request)
-        var answer: ([String: Any]) -> Void = { reply in
-            guard !answered else { return }
-            answered = true
-            UsageProbe.end(usage)
-            given(reply)
-        }
         // Long polls say how long they will hold; everything else answers
         // well inside the time a tool call is given.
         let polls = ["wait", "handoff-wait", "agent-wait", "import", "settle", "mail-time"].contains(request["do"] as? String ?? "")
@@ -544,7 +535,10 @@ final class Bench {
         // A jar of tens of thousands poured the old way, on a busy Mac.
         let pour = request["do"] as? String == "cookie-pour"
         let patience = bringing || pour ? 600 : fixture || osa ? 90 : polls ? min(request["seconds"] as? Double ?? 20, 60) + 5 : 25
-        DispatchQueue.main.asyncAfter(deadline: .now() + patience) { answer(["error": "no answer within \(Int(patience)) s"]) }
+        // The time-out goes through every wrapper added below, as any answer does.
+        var answer: ([String: Any]) -> Void = { _ in }
+        let call = answerOnce(within: patience, for: request["session"] as? String, timingOut: { answer($0) }) { UsageProbe.end(usage); given($0) }
+        answer = call.answer
         // A test can address either browser window without moving focus.
         let windowBrowser: Browser?
         if Store.testing, let number = request["browserWindowNumber"] as? Int {
@@ -631,6 +625,9 @@ final class Bench {
            let refusal = Agents.shared.stoppedOnTab(tab, session: request["session"] as? String) {
             answer(["error": refusal]); return
         }
+        // Past the bench's own refusals above, so a call they turn away wakes
+        // nothing; one its verb's handler refuses wakes the page until it answers.
+        if let tab = find(request, in: browser) { call.names(tab) }
         if Bench.forAgents(verb) {
             agentCommand(verb, request, browser: browser, answer)
             return
@@ -10027,6 +10024,8 @@ final class Bench {
     /// tab behind another is, until an agent next works in them.
     func rest(_ tab: Tab) {
         working.removeValue(forKey: ObjectIdentifier(tab))
+        pace.forget(ObjectIdentifier(tab))
+        (tab.builtPage as? PageFramePace)?.restsFrames = false
         if let page = tab.builtPage, page.engine != .webKit {
             // A remote producer follows attachment. Leaving a rested page
             // in the room would keep it painting until the next command.
@@ -10042,10 +10041,15 @@ final class Bench {
     }
 
     // A seen page that moves costs the browser about 7% of a core and
-    // its page's process 3% more (an animated canvas, measured 2026-09-28),
-    // and an agent that came through `yab mcp` can stay attached for hours
-    // between its calls. So a page is seen only near the work: one left
-    // alone two minutes rests until the next call in it.
+    // its page's process 3% more (an animated canvas, measured 2026-09-28
+    // on a 60 Hz display). A Chromium page here is paced by the main
+    // display, and at 240 Hz the same kind of page cost its GPU process 37%,
+    // its renderer 18% and the window server 14% (2026-11-19): between
+    // calls it now draws at 30 Hz, where the helper has CEF 0137
+    // (ChromiumPage+Frames.swift). An agent
+    // that came through `yab mcp` can stay attached for hours between its
+    // calls, so a page is seen only near the work: one left alone two
+    // minutes rests until the next call in it.
     private struct Working { weak var tab: Tab?; var at: Date }
     private var working: [ObjectIdentifier: Working] = [:]
     private var resting: Timer?
@@ -10053,6 +10057,8 @@ final class Bench {
 
     private func worked(_ tab: Tab) {
         working[ObjectIdentifier(tab)] = Working(tab: tab, at: Date())
+        pace.woke(ObjectIdentifier(tab), for: tab.agent ?? tab.guest ?? Agents.script)
+        paceRoom()
         guard resting == nil else { return }
         resting = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.restIdle() }
@@ -10062,11 +10068,58 @@ final class Bench {
     private func restIdle() {
         let now = Date()
         for (key, work) in working where work.tab == nil || now.timeIntervalSince(work.at) > Bench.seenFor {
-            if let tab = work.tab { rest(tab) } else { working.removeValue(forKey: key) }
+            if let tab = work.tab { rest(tab) } else { working.removeValue(forKey: key); pace.forget(key) }
         }
         if working.isEmpty {
             resting?.invalidate()
             resting = nil
+        }
+    }
+
+    // A page in the room between its agent's calls draws slowly
+    // (ChromiumPage+Frames.swift), and at the display's rate from the moment
+    // a call names it until that call has its answer (answerOnce).
+    private var pace = BenchPace()
+
+    var callsInFlight: Int { pace.calls }
+
+    /// One answer, and always one: a page that never replies to a script
+    /// would otherwise hold the bench, every later command waits behind it.
+    /// The first reply goes and any later one is dropped; with none within
+    /// `patience` the call says so itself, through `late` when given (the
+    /// answer with the caller's wrappers, each of which passes it on). In
+    /// flight until then, so the count of calls in flight always comes back down.
+    func answerOnce(within patience: TimeInterval, for session: String? = nil, timingOut late: (([String: Any]) -> Void)? = nil,
+                    _ given: @escaping ([String: Any]) -> Void)
+        -> (answer: ([String: Any]) -> Void, names: (Tab) -> Void) {
+        var answered = false
+        var named: ObjectIdentifier?
+        let agent = session ?? Agents.script
+        pace.began(for: agent)
+        let answer: ([String: Any]) -> Void = { [self] reply in
+            guard !answered else { return }
+            answered = true
+            pace.ended(for: agent, naming: named)
+            paceRoom()
+            given(reply)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + patience) { (late ?? answer)(["error": "no answer within \(Int(patience)) s"]) }
+        // Named once, and only while unanswered: a name after the answer
+        // would never be taken back.
+        let names: (Tab) -> Void = { [self] tab in
+            guard !answered, named == nil else { return }
+            let page = ObjectIdentifier(tab)
+            named = page
+            pace.names(page)
+            paceRoom()
+        }
+        return (answer, names)
+    }
+
+    private func paceRoom() {
+        for (key, work) in working {
+            guard let page = work.tab?.builtPage as? PageFramePace else { continue }
+            page.restsFrames = !pace.awake(key)
         }
     }
 

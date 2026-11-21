@@ -1,0 +1,184 @@
+--- a/cef/BUILD.gn
++++ b/cef/BUILD.gn
+@@ -994,6 +994,7 @@ source_set("libcef_static") {
+     "//components/url_formatter",
+     "//components/user_prefs",
+     "//components/version_info",
++    "//components/viz/host",
+     "//components/viz/service",
+     "//components/web_cache/renderer",
+     "//components/webauthn/json",
+--- a/cef/include/cef_browser.h
++++ b/cef/include/cef_browser.h
+@@ -73,6 +73,7 @@
+ #define CEF_YAB_EXTENSION_SIDE_PANEL_VERSION 1
+ #define CEF_YAB_EXTENSION_COMMAND_VERSION 1
+ #define CEF_YAB_PAGE_SURFACE_VERSION 1
++#define CEF_YAB_FRAME_INTERVAL_VERSION 1
+ 
+ class CefBrowserHost;
+ class CefClient;
+@@ -1500,6 +1501,19 @@ class CefBrowserHost : public virtual CefBaseRefCounted {
+   virtual void CopyPageSurface(int width,
+                                int height,
+                                CefRefPtr<CefPageSurfaceCallback> callback) = 0;
++
++  ///
++  /// Sends BeginFrames to this browser's top-level compositor, and so to every
++  /// frame of its page, at most once every |interval_ms| milliseconds, as
++  /// Chrome's Energy Saver does for all of them (viz
++  /// HostFrameSinkManager::Throttle); 0 goes back to the display's own rate.
++  /// The page stays visible: requestAnimationFrame, timers and observers go
++  /// on, only fewer frames are drawn. A page being captured is never slowed.
++  /// One interval holds for every browser slowed this way, the last one set.
++  /// Returns false if the browser has no compositor. UI thread only.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual bool SetFrameInterval(int interval_ms) = 0;
+ #endif
+ };
+ 
+--- a/cef/libcef/browser/browser_host_base.cc
++++ b/cef/libcef/browser/browser_host_base.cc
+@@ -5,7 +5,9 @@
+ #include "cef/libcef/browser/browser_host_base.h"
+ #include "cef/libcef/common/api_version_util.h"
+ 
++#include <map>
+ #include <tuple>
++#include <vector>
+ 
+ #include "base/logging.h"
+ #include "cef/libcef/browser/browser_guest_util.h"
+@@ -50,7 +52,11 @@
+ #include "components/viz/common/frame_sinks/copy_output_result.h"
+ #include "content/public/browser/render_widget_host_view.h"
+ #include "content/public/browser/render_widget_host.h"
++#include "base/no_destructor.h"
++#include "components/viz/host/host_frame_sink_manager.h"
+ #include "ui/base/resource/resource_scale_factor.h"
++#include "ui/compositor/compositor.h"
++#include "ui/views/widget/widget.h"
+ #include "ui/gfx/image/image_skia.h"
+ #include "ui/shell_dialogs/select_file_policy.h"
+ 
+@@ -1397,6 +1403,55 @@ void CefBrowserHostBase::CopyPageSurface(
+           callback));
+ }
+ 
++namespace {
++// viz keeps a single set of throttled frame sinks for the browser process and
++// each Throttle() replaces it, so every change sends all the slowed producer
++// compositors again. A closed producer's widget is gone: so is its entry.
++struct PacedFrames {
++  std::map<viz::FrameSinkId, base::WeakPtr<views::Widget>> roots;
++  base::TimeDelta interval;
++};
++PacedFrames& Paced() {
++  static base::NoDestructor<PacedFrames> paced;
++  return *paced;
++}
++}  // namespace
++
++bool CefBrowserHostBase::SetFrameInterval(int interval_ms) {
++  CEF_REQUIRE_UIT_RETURN(false);
++  if (interval_ms < 0 || interval_ms > 1000) {
++    return false;
++  }
++  auto web_contents = GetWebContents();
++  // The page's own frame sink is a child of its window's compositor
++  // (BrowserCompositorMac uses the parent layer's), and viz throttles a sink's
++  // descendants with it, including a renderer that replaces this one later.
++  auto* widget = web_contents ? views::Widget::GetTopLevelWidgetForNativeView(
++                                    web_contents->GetNativeView())
++                              : nullptr;
++  auto* compositor = widget ? widget->GetCompositor() : nullptr;
++  auto* manager = compositor && compositor->context_factory()
++                      ? compositor->context_factory()->GetHostFrameSinkManager()
++                      : nullptr;
++  if (!manager) {
++    return false;
++  }
++  auto& paced = Paced();
++  std::erase_if(paced.roots, [](const auto& root) { return !root.second; });
++  if (interval_ms > 0) {
++    paced.roots[compositor->frame_sink_id()] = widget->GetWeakPtr();
++    paced.interval = base::Milliseconds(interval_ms);
++  } else {
++    paced.roots.erase(compositor->frame_sink_id());
++  }
++  std::vector<viz::FrameSinkId> ids;
++  for (const auto& root : paced.roots) {
++    ids.push_back(root.first);
++  }
++  manager->Throttle(ids, paced.interval);
++  return true;
++}
++
+ void CefBrowserHostBase::ReplaceMisspelling(const CefString& word) {
+   if (!CEF_CURRENTLY_ON_UIT()) {
+     CEF_POST_TASK(
+--- a/cef/libcef/browser/browser_host_base.h
++++ b/cef/libcef/browser/browser_host_base.h
+@@ -331,6 +331,7 @@ class CefBrowserHostBase : public CefBrowserHost,
+                            const CefString& command_name) override;
+   void CopyPageSurface(int width, int height,
+                        CefRefPtr<CefPageSurfaceCallback> callback) override;
++  bool SetFrameInterval(int interval_ms) override;
+ 
+   // CefBrowser methods:
+   bool IsValid() override;
+--- a/components/viz/host/host_frame_sink_manager.cc
++++ b/components/viz/host/host_frame_sink_manager.cc
+@@ -454,15 +454,19 @@ void HostFrameSinkManager::InvalidateCopyOutputReadyCallback(
+ 
+ void HostFrameSinkManager::Throttle(const std::vector<FrameSinkId>& ids,
+                                     base::TimeDelta interval) {
++  throttled_ids_ = ids;
++  throttle_interval_ = interval;
+   frame_sink_manager_->Throttle(ids, interval);
+ }
+ 
+ void HostFrameSinkManager::StartThrottlingAllFrameSinks(
+     base::TimeDelta interval) {
++  global_throttle_interval_ = interval;
+   frame_sink_manager_->StartThrottlingAllFrameSinks(interval);
+ }
+ 
+ void HostFrameSinkManager::StopThrottlingAllFrameSinks() {
++  global_throttle_interval_.reset();
+   frame_sink_manager_->StopThrottlingAllFrameSinks();
+ }
+ 
+@@ -550,6 +554,15 @@ void HostFrameSinkManager::RegisterAfterConnectionLoss() {
+   for (const auto& map_entry : non_empty_frame_callbacks_) {
+     frame_sink_manager_->RequestNonEmptyFrameNotification(map_entry.first);
+   }
++
++  // Throttling last, once the hierarchy it reaches down is registered.
++  if (!throttled_ids_.empty()) {
++    frame_sink_manager_->Throttle(throttled_ids_, throttle_interval_);
++  }
++  if (global_throttle_interval_) {
++    frame_sink_manager_->StartThrottlingAllFrameSinks(
++        *global_throttle_interval_);
++  }
+ }
+ 
+ void HostFrameSinkManager::OnFirstSurfaceActivation(
+--- a/components/viz/host/host_frame_sink_manager.h
++++ b/components/viz/host/host_frame_sink_manager.h
+@@ -487,6 +487,13 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
+   // from inside a container mutation.
+   base::flat_map<FrameSinkId, base::OnceClosure> non_empty_frame_callbacks_;
+ 
++  // The last throttling asked for, sent again to a new Viz instance: a GPU
++  // process that restarted would otherwise draw every throttled sink at the
++  // display's rate until the next Throttle() call (Yab, CEF 0137).
++  std::vector<FrameSinkId> throttled_ids_;
++  base::TimeDelta throttle_interval_;
++  std::optional<base::TimeDelta> global_throttle_interval_;
++
+   // If |frame_sink_manager_remote_| connection was lost.
+   bool connection_was_lost_ = false;
+ 

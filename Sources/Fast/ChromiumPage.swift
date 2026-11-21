@@ -30,12 +30,13 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     /// Sound, Now Playing, capture and full screen (ChromiumPage+Media.swift).
     let media = ChromiumMedia()
     let sleepState = ChromiumSleep()
-    var videoPiP: ChromiumVideoPiP?
+    let frames = ChromiumFrames()
+    var videoPiP: ChromiumVideoPiP? { didSet { if (videoPiP == nil) != (oldValue == nil) { paceFrames() } } }
     var nativeVideoPiPKnown = false
     var nativeVideoPiPRevision: UInt64 = 0
     private(set) var remoteID: String? {
         didSet {
-            if remoteID != oldValue { ChromiumTabGroups.shared.changed() }
+            if remoteID != oldValue { ChromiumTabGroups.shared.changed(); paceFrames() }
         }
     }
     private(set) var contextID: UInt32 = 0
@@ -1435,6 +1436,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         updateSurface()
         watchKeyWindow()
         scripts.appearanceChanged()
+        paceFrames()
     }
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
