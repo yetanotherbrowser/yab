@@ -272,10 +272,7 @@ final class PageContainer: UIView {
                                     left: windowPane.isEmpty || windowPane.minX <= 0.5 ? max(0, safe.minX - extent.minX) : 0,
                                     bottom: max(0, bounds.maxY - safe.maxY),
                                     right: windowPane.isEmpty || windowPane.maxX >= window.bounds.width - 0.5 ? max(0, extent.maxX - safe.maxX) : 0)
-        // Whether the page runs under a side is the window's question: a
-        // split pane touches one side of a notched window too.
-        let column = ChromeGeometry.Sides(left: max(0, windowInsets.left), right: max(0, windowInsets.right)).foot == .zero
-        let viewport = PageViewport(size: bounds.size, hardware: hardware, chrome: chrome, statusColumn: column)
+        let viewport = PageViewport(size: bounds.size, hardware: hardware, chrome: chrome)
         if !fixturesEnabled {
             if let pool { pool.setViewport(viewport, visible: view) }
             else if let view { viewport.apply(to: view) }
@@ -287,8 +284,7 @@ final class PageContainer: UIView {
         if let host = failureHost {
             attachFailureHost()
             // WebKit's viewport already fits any transient smaller frame.
-            // Its words keep clear of a status column the page runs under.
-            let visible = fixturesEnabled ? viewport.clear : (view?.scrollView.verticalScrollIndicatorInsets ?? viewport.clear)
+            let visible = fixturesEnabled ? viewport.current : (view?.scrollView.verticalScrollIndicatorInsets ?? viewport.current)
             // Cover the page edge to edge and inset only the words. A frame
             // inset by the bars left the page the failed navigation started
             // from showing under the toolbar and the status bar.

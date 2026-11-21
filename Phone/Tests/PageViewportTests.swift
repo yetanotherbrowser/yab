@@ -50,9 +50,9 @@ final class PageViewportTests: XCTestCase {
         }
     }
 
-    /// A real page's own width: a status column at one side (the Duo's) took
-    /// it from the page and left a bar of nothing down that side (#1890).
-    func testPageTakesTheWholeWidthBesideAStatusColumn() async throws {
+    /// A real page's own width beside a Duo's status column: under it, the
+    /// site's top-right controls stood beneath the camera (#989).
+    func testPageLaysOutBesideAStatusColumn() async throws {
         let host = try XCTUnwrap(window.rootViewController?.view)
         let pool = WebPool(dataStore: .nonPersistent(), fixturesEnabled: false)
         let tab = PageFixtures.liveTab(for: try XCTUnwrap(URL(string: "about:blank")), id: "viewport.width", isPrivate: false)
@@ -63,8 +63,8 @@ final class PageViewportTests: XCTestCase {
         defer { view.removeFromSuperview() }
         PageViewport(size: view.bounds.size, hardware: UIEdgeInsets(top: 0, left: 0, bottom: 34, right: 84),
                      chrome: .init(folded: false, hasNow: false, visible: true)).apply(to: view)
-        XCTAssertEqual(view.obscuredContentInsets.right, 0)
-        XCTAssertEqual(view.scrollView.contentInset.right, 0)
+        XCTAssertEqual(view.obscuredContentInsets.right, 84)
+        XCTAssertEqual(view.scrollView.contentInset.right, 84)
         XCTAssertEqual(view.scrollView.verticalScrollIndicatorInsets.right, 84)
         XCTAssertFalse(view.scrollView.automaticallyAdjustsScrollIndicatorInsets)
         view.loadHTMLString("<!doctype html><title>ready</title><meta name=viewport content='width=device-width'><body>", baseURL: nil)
@@ -74,7 +74,7 @@ final class PageViewportTests: XCTestCase {
             let title = try? await view.evaluateJavaScript("document.title") as? String
             if title == "ready", let inner = try? await view.evaluateJavaScript("innerWidth") as? CGFloat { width = inner; break }
         }
-        XCTAssertEqual(width, host.bounds.width)
+        XCTAssertEqual(width, host.bounds.width - 84)
     }
 
     /// The scroll bar on a Duo's cover stood a third of the way in (#1945):
@@ -95,8 +95,8 @@ final class PageViewportTests: XCTestCase {
         host.addSubview(view)
         defer { view.removeFromSuperview() }
         view.layoutIfNeeded()
-        XCTAssertEqual(view.safeAreaInsets.right, 84, "the column must be a real safe area for UIKit to add it")
         let column = window.safeAreaInsets.right + 84
+        XCTAssertEqual(view.safeAreaInsets.right, column, "the column must be a real safe area for UIKit to add it")
         let viewport = PageViewport(size: view.bounds.size,
                                     hardware: UIEdgeInsets(top: window.safeAreaInsets.top, left: window.safeAreaInsets.left,
                                                            bottom: window.safeAreaInsets.bottom, right: column),
@@ -114,11 +114,12 @@ final class PageViewportTests: XCTestCase {
             if title == "tall", view.scrollView.contentSize.height > view.bounds.height * 2 { tall = true; break }
         }
         XCTAssertTrue(tall, "a page tall enough to scroll")
-        // The site lays out the whole width and reads the column itself.
+        // The site lays out beside the column, so it has no column left to
+        // pad for: a site reading env() is not inset twice.
         let inner = try await view.evaluateJavaScript("innerWidth") as? CGFloat
-        XCTAssertEqual(inner, view.bounds.width)
+        XCTAssertEqual(inner, view.bounds.width - column)
         let env = try await view.evaluateJavaScript("getComputedStyle(document.getElementById('probe')).paddingRight") as? String
-        XCTAssertEqual(env, "\(Int(column))px")
+        XCTAssertEqual(env, "0px")
         view.scrollView.setContentOffset(CGPoint(x: 0, y: 400), animated: false)
         view.scrollView.flashScrollIndicators()
         view.scrollView.layoutIfNeeded()
@@ -214,9 +215,9 @@ final class PageViewportTests: XCTestCase {
             let web = WKWebView(frame: container.bounds)
             container.show(web)
             container.updateViewport()
-            // The page runs under the column; the indicators stand beside it.
-            XCTAssertEqual(web.obscuredContentInsets.left, 0)
-            XCTAssertEqual(web.obscuredContentInsets.right, 0)
+            // The page and its indicators stand beside the column.
+            XCTAssertEqual(web.obscuredContentInsets.left, left ? 84 : 0)
+            XCTAssertEqual(web.obscuredContentInsets.right, left ? 0 : 84)
             XCTAssertEqual(web.scrollView.verticalScrollIndicatorInsets.left, left ? 84 : 0)
             XCTAssertEqual(web.scrollView.verticalScrollIndicatorInsets.right, left ? 0 : 84)
             XCTAssertEqual(web.scrollView.verticalScrollIndicatorInsets.bottom, web.obscuredContentInsets.bottom)
@@ -232,7 +233,6 @@ final class PageViewportTests: XCTestCase {
         for (columnLeft, columnRight) in [(CGFloat(0), CGFloat(84)), (84, 0), (62, 62)] {
             ChromeGeometry.extraSides = .init(left: columnLeft - window.safeAreaInsets.left,
                                               right: columnRight - window.safeAreaInsets.right)
-            let notch = columnLeft > 0 && columnRight > 0
             for second in [false, true] {
                 let pane = CGRect(x: second ? half : 0, y: 0, width: half, height: host.bounds.height)
                 let container = PageContainer(frame: pane)
@@ -247,9 +247,9 @@ final class PageViewportTests: XCTestCase {
                     container.transform = CGAffineTransform(translationX: offset, y: 0)
                     container.updateViewport()
                     let insets = web.obscuredContentInsets
-                    // The page runs under a column and stays inside a notch.
-                    XCTAssertEqual(insets.left, notch ? left : 0, accuracy: 0.01)
-                    XCTAssertEqual(insets.right, notch ? right : 0, accuracy: 0.01)
+                    // The page stays inside a column as inside a notch.
+                    XCTAssertEqual(insets.left, left, accuracy: 0.01)
+                    XCTAssertEqual(insets.right, right, accuracy: 0.01)
                     let indicators = web.scrollView.verticalScrollIndicatorInsets
                     XCTAssertEqual(indicators.left, left, accuracy: 0.01)
                     XCTAssertEqual(indicators.right, right, accuracy: 0.01)

@@ -17,50 +17,21 @@ struct PageViewport: Equatable {
     let size: CGSize
     let hardware: UIEdgeInsets
     let chrome: Chrome
-    /// The window reserves one side only (an iPhone Duo's status column), so
-    /// the page runs under it. A pane's own hardware can't tell: a split
-    /// pane beside a notch touches one of the window's two sides too.
-    let statusColumn: Bool
-
-    init(size: CGSize, hardware: UIEdgeInsets, chrome: Chrome, statusColumn: Bool? = nil) {
-        self.size = size
-        self.hardware = hardware
-        self.chrome = chrome
-        self.statusColumn = statusColumn
-            ?? (ChromeGeometry.Sides(left: max(0, hardware.left), right: max(0, hardware.right)).foot == .zero)
-    }
 
     var minimum: UIEdgeInsets { insets(folded: true) }
     var maximum: UIEdgeInsets { insets(folded: false) }
     var current: UIEdgeInsets { insets(folded: chrome.folded) }
 
-    /// The page's own hardware sides, whether the page runs under them or not.
-    private var sides: ChromeGeometry.Sides {
-        ChromeGeometry.Sides(left: max(0, hardware.left), right: max(0, hardware.right))
-    }
-
-    /// Where Yab's own things on the page stand (the scroll indicators, the
-    /// failure pane's words): the viewport, clear of a status column too.
-    var clear: UIEdgeInsets { beside(current) }
-
-    private func beside(_ insets: UIEdgeInsets) -> UIEdgeInsets {
-        var out = insets
-        out.left = max(out.left, sides.left)
-        out.right = max(out.right, sides.right)
-        return out
-    }
-
     private func insets(folded: Bool) -> UIEdgeInsets {
         let layout = ChromeGeometry(size: size, folded: folded, hasNow: chrome.hasNow, verticalControls: chrome.verticalControls, leadingRail: chrome.leadingRail)
         let topOfChrome = chrome.hasNow ? min(layout.plate.minY, layout.now.minY) : layout.plate.minY
         let occupied = chrome.visible ? max(0, size.height - topOfChrome) : 0
-        // The page runs under a status column, or the site lays out short of
-        // the window's edge and leaves a bar of nothing down that whole side
-        // (#1890: 382 of the cover's 466 points). Sites still read the column
-        // from env(safe-area-inset-*). A notch's two sides stay inset.
-        let sides = statusColumn ? .zero : self.sides
-        return UIEdgeInsets(top: max(0, hardware.top), left: sides.left,
-                            bottom: max(max(0, hardware.bottom), occupied), right: sides.right)
+        // The page lays out inside both hardware sides, a Duo's status column
+        // included: under the column, a site's own top-right controls stood
+        // beneath the camera and a tap there opened Control Center (#989).
+        // WebKit fills the column beside the page with its under-page color.
+        return UIEdgeInsets(top: max(0, hardware.top), left: max(0, hardware.left),
+                            bottom: max(max(0, hardware.bottom), occupied), right: max(0, hardware.right))
     }
 
     private func fitting(_ insets: UIEdgeInsets, to size: CGSize) -> UIEdgeInsets {
@@ -146,11 +117,10 @@ struct PageViewport: Equatable {
         let identity = ObjectIdentifier(view)
         var scrollInsets = current
         scrollInsets.top += refreshTop
-        let indicators = fitting(beside(current), to: frame)
         guard view.minimumViewportInset != minimum || view.maximumViewportInset != maximum
                 || view.obscuredContentInsets != current || view.scrollView.contentInset != scrollInsets
-                || view.scrollView.verticalScrollIndicatorInsets != indicators
-                || view.scrollView.horizontalScrollIndicatorInsets != indicators
+                || view.scrollView.verticalScrollIndicatorInsets != current
+                || view.scrollView.horizontalScrollIndicatorInsets != current
                 || view.scrollView.automaticallyAdjustsScrollIndicatorInsets else { return }
         // These setters can synchronously move contentOffset even during a
         // drag or deceleration. That movement is layout, not a new swipe.
@@ -167,17 +137,17 @@ struct PageViewport: Equatable {
         // .never prevents UIKit from adding the hardware edges a second time.
         // The scroll range needs the same edges as the viewport.
         if view.scrollView.contentInset != scrollInsets { view.scrollView.contentInset = scrollInsets }
-        // The indicators stand beside a status column the page runs under.
-        // UIKit's own adjustment added the window's safe area on top of
-        // these, so on a Duo's cover the bar stood 168 points in (#1945).
+        // The indicators take the viewport's edges. UIKit's own adjustment
+        // added the window's safe area on top of these, so on a Duo's cover
+        // the bar stood 168 points in (#1945).
         if view.scrollView.automaticallyAdjustsScrollIndicatorInsets {
             view.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
         }
-        if view.scrollView.verticalScrollIndicatorInsets != indicators {
-            view.scrollView.verticalScrollIndicatorInsets = indicators
+        if view.scrollView.verticalScrollIndicatorInsets != current {
+            view.scrollView.verticalScrollIndicatorInsets = current
         }
-        if view.scrollView.horizontalScrollIndicatorInsets != indicators {
-            view.scrollView.horizontalScrollIndicatorInsets = indicators
+        if view.scrollView.horizontalScrollIndicatorInsets != current {
+            view.scrollView.horizontalScrollIndicatorInsets = current
         }
     }
 }
