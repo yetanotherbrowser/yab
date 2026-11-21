@@ -942,8 +942,31 @@ final class Agents: ObservableObject {
     }
 
     func detach(_ id: String) {
+        leftUntil[id] = nil
         guard let session = session(id), session.state == .attached, !session.script else { return }
         finish(session, .done)
+    }
+
+    /// Sessions a terminal left waiting for the person (`yab settings --session`), and when each ends unused.
+    private(set) var leftUntil: [String: Date] = [:]
+
+    func leave(_ id: String, for life: TimeInterval = Mcp.keptFor, now: Date = Date()) {
+        guard let session = session(id), session.state == .attached, !session.script else { return }
+        leftUntil[id] = now.addingTimeInterval(life)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(life))
+            self?.expireLeft()
+        }
+    }
+
+    /// A call in a left session: its time starts again.
+    func used(_ id: String?, now: Date = Date()) {
+        guard let id, leftUntil[id] != nil else { return }
+        leave(id, now: now)
+    }
+
+    func expireLeft(now: Date = Date()) {
+        for (id, until) in leftUntil where until <= now { detach(id) }
     }
 
     // MARK: - agents the browser starts

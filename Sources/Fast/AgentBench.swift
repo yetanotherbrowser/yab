@@ -12,6 +12,7 @@ import WebKit
 extension Bench {
     func agentCommand(_ verb: String, _ request: [String: Any], browser: Browser, _ answer: @escaping ([String: Any]) -> Void) {
         if let refusal = RemoteTaskBoundary.refusal(request) { answer(["error": refusal]); return }
+        Agents.shared.used(request["session"] as? String)
 
         if verb.hasPrefix("agent-native-"),
            let target = request["target"] as? [String: Any], target["kind"] as? String == "tab",

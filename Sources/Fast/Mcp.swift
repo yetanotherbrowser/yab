@@ -758,12 +758,22 @@ enum Mcp {
     /// done. A shell inside Claude Code or Codex shares the session's yes
     /// with that session's `yab mcp` (clientSession).
     static func once(_ tool: String, _ input: [String: Any], args: [String]) -> [String: Any] {
+        within(args) { call(tool, input) }
+    }
+
+    /// Several calls from a terminal in one session, which leaves when `body` returns.
+    static func within<T>(_ args: [String], _ body: () -> T) -> T {
         socket = Wire.socket(args)
         client = "yab"
-        let result = call(tool, input)
-        if let session { _ = wire(["do": "agent-detach", "session": session]) }
-        return result
+        defer {
+            if let session { _ = wire(["do": "agent-detach", "session": session].merging(keepSession ? ["after": keptFor] : [:]) { $1 }) }
+        }
+        return body()
     }
+    /// Set by a call that leaves its session for later (a change still waiting for the person).
+    static var keepSession = false
+    /// How long a session left for later lasts without a call before Yab ends it.
+    static let keptFor: TimeInterval = 5 * 60
 
     static func snap(_ tab: String?) -> [String: Any] {
         let got = ask(["do": "snapshot", "id": tab ?? "", "interactive": true])

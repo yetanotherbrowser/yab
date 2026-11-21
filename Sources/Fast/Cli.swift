@@ -65,6 +65,8 @@ enum Cli {
         case "mail": return rest.first?.lowercased() == "flush" || CliFiles.mailWords(words) ? first : ""
         // "yab files search lease"; "yab files from last week" is a task.
         case "files": return CliFiles.filesWords(words) ? first : ""
+        // "yab settings show theme"; "yab settings make it dark" is a task.
+        case "settings": return fits(CliSettings.verbs) ? first : ""
         case "setup", "remove": return rest.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
         default: return first
         }
@@ -97,7 +99,7 @@ enum Cli {
     /// Every first word `command` or the agent answers, for near misses.
     static let commandWords: Set = ["help", "version", "status", "quit", "serve", "import", "guide", "session",
                                     "sessions", "memory", "skills", "skill", "every", "routines", "mail", "files",
-                                    "setup", "remove", "agent", "exec", "plugin", "list", "stop", "steer", "queue"]
+                                    "settings", "setup", "remove", "agent", "exec", "plugin", "list", "stop", "steer", "queue"]
 
     /// A word one slip from `command` (two for a long one), and not it: a
     /// letter added, dropped, changed or two swapped. Beside a short
@@ -138,6 +140,8 @@ enum Cli {
             exit(MailLater.flushHeadless())
         case "files":
             CliFiles.run("files", rest)
+        case "settings":
+            CliSettings.run(rest)
         case "-h", "--help", "help":
             print(usage)
             exit(0)
@@ -210,6 +214,7 @@ enum Cli {
           \(c) session stop ID               stop a task
           \(c) exec -f FILE.js [--json]       run browser steps; exec --help for all options
           \(c) mcp                           local stdio MCP server for an assistant
+          \(c) settings [show] [WORDS]       Yab's settings, spaces and tabs; settings --help for changes
           \(c) memory search WORDS           search relevant remembered facts
           \(c) memory list                   list memory pages
           \(c) memory show FILE              read a page; memory path prints its folder

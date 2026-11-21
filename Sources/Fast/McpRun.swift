@@ -40,6 +40,8 @@ enum McpRun {
       t.press(keys) t.hover(ref) t.drag(ref, toRef) t.drag(ref, {dx, dy}) t.drag({x, y}, {x, y}) t.scroll(ref|null, dy)
       t.dialog(accept, text) t.text() t.wait(forText) t.navigate(url) t.fetch(url) t.show() t.close()
       sleep(ms), keep (an object that lasts between runs)
+      native_context(query|{…}) native_actions(query) native_apply({action, target, arguments, requestId})
+      native_operation(id) native_undo(changeId): Yab's own settings, as parsed JSON
     Each action returns what changed on the page, as the tool does. At most \(200) steps a run.
     outputLimit bounds printed text (8000 characters by default, 256–32000); print only the result you need.
     A promise that remains pending is an error; there are no background JavaScript tasks here.
@@ -191,6 +193,15 @@ enum McpRun {
     function tabs() {
       return __tool('tabs', {}).split('\n').map(l => { const m = l.match(/^(\w+) \[(\w+)\]/); return m ? { id: m[1], whose: m[2], line: l } : null; }).filter(Boolean);
     }
+    function __native(name, input) {
+      const said = __tool(name, input);
+      try { return JSON.parse(said); } catch (e) { return said; }
+    }
+    function native_context(o = {}) { return __native('native_context', typeof o === 'string' ? { query: o } : o); }
+    function native_actions(query) { return __native('native_actions', query ? { query: String(query) } : {}); }
+    function native_apply(o) { return __native('native_apply', o); }
+    function native_operation(o) { return __native('native_operation', typeof o === 'string' ? { operationId: o } : o); }
+    function native_undo(changeId) { return __native('native_undo', changeId ? { changeId: String(changeId) } : {}); }
     var page = new Proxy({}, { get(o, k) { throw new Error('there is no page here: const t = open(url), or tab(id), then t.' + String(k) + '(…)'); } });
     """#
 }

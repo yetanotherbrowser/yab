@@ -481,7 +481,11 @@ extension Bench {
         let answer = c.answer
         let agents = c.agents
         let session = c.session
-        agents.detach(session ?? "")
+        if let after = c.request["after"] as? Double, let session {
+            agents.leave(session, for: min(max(after, 1), Mcp.keptFor))
+        } else {
+            agents.detach(session ?? "")
+        }
         answer(["ok": true])
     }
 

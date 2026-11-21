@@ -84,3 +84,27 @@ extension McpToolsTests {
         #expect(Self.words(approval).contains("status: needs_user"))
     }
 }
+
+extension McpToolsTests {
+    @Test func nativeToolsAreFunctionsReturningParsedJSON() {
+        var calls: [(String, [String: Any])] = []
+        let result = McpRun.run("""
+        const theme = native_context('theme').settings[0].value;
+        native_actions('engine');
+        native_apply({ action: 'settings.set.theme', target: { kind: 'application', id: 'app' }, arguments: { value: 'dark' }, requestId: 'r1' });
+        native_undo('c1');
+        return theme;
+        """) { name, input in
+            calls.append((name, input))
+            let text = name == "native_context" ? #"{"settings":[{"id":"theme","value":"system"}]}"# : "{}"
+            return ["content": [["type": "text", "text": text]], "isError": false]
+        }
+        #expect(result["isError"] as? Bool == false)
+        #expect(Self.words(result).hasPrefix("system"))
+        #expect(calls.map(\.0) == ["native_context", "native_actions", "native_apply", "native_undo"])
+        #expect(calls[0].1["query"] as? String == "theme")
+        #expect(calls[1].1["query"] as? String == "engine")
+        #expect(calls[2].1["requestId"] as? String == "r1")
+        #expect(calls[3].1["changeId"] as? String == "c1")
+    }
+}
