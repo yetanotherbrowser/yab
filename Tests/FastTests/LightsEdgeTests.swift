@@ -209,6 +209,24 @@ struct LightsEdgeTests {
         #expect(!EdgeReach.away(CGPoint(x: -600, y: 400), window: flush, screen: nil))
     }
 
+    /// #1024: a window tiled beside this one, out past its edge, is not the
+    /// edge: a rest over it brings nothing. Empty desktop out there still is.
+    @Test func aWindowBesideTheEdgeIsNotTheEdge() {
+        // 9 is another app's window, 12 another of Yab's, 5 the desktop's.
+        let ordinary: Set<Int> = [9, 12]
+        func covered(top: Int, own: Set<Int> = [7, 8]) -> Bool {
+            EdgeReach.covered(top: top, own: own, ordinary: { ordinary.contains($0) })
+        }
+        #expect(covered(top: 9))
+        #expect(covered(top: 12))
+        // Nothing under the pointer, or the desktop's own window.
+        #expect(!covered(top: 0))
+        #expect(!covered(top: 5))
+        // The window itself, or a child window of its own.
+        #expect(!covered(top: 7))
+        #expect(!covered(top: 8))
+    }
+
     /// #786: a window behind another app's is watched while the pointer is
     /// over it and nothing covers it there, so a rest at its edge brings
     /// its column out with no click first.

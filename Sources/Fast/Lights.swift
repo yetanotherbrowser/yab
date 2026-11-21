@@ -696,6 +696,17 @@ enum EdgeReach {
         return past && point.x < 0 && point.y >= 0 && point.y <= height
     }
 
+    /// The pointer is out past the edge over another window: one tiled
+    /// beside this window, another app's or another of Yab's (#1024). That
+    /// is not the edge, and a rest there brings nothing. Empty desktop out
+    /// there still is: no window under the pointer (`top` 0), or one that
+    /// is not an app's ordinary window, the desktop's own. `top` is the
+    /// number of the topmost window under the pointer and `own` the
+    /// window's number and its child windows'.
+    static func covered(top: Int, own: Set<Int>, ordinary: (Int) -> Bool) -> Bool {
+        top != 0 && !own.contains(top) && ordinary(top)
+    }
+
     /// The pointer has left the window for another display: outside the
     /// window and off the screen the window is on, in screen space (a tester's
     /// report, 2026-10-13). With a display arranged beside the window's
@@ -1138,6 +1149,21 @@ final class Brim {
         NSWindow.windowNumber(at: pointer, belowWindowWithWindowNumber: 0)
     }
 
+    /// The window's number and its child windows', as the window server
+    /// numbers them.
+    private static func own(_ window: NSWindow) -> Set<Int> {
+        Set(([window] + (window.childWindows ?? [])).map(\.windowNumber))
+    }
+
+    /// Whether a window is an app's ordinary one, at the level documents
+    /// and browsers are, and not the desktop's or one floating above.
+    private static func ordinary(_ number: Int) -> Bool {
+        guard number > 0,
+              let info = (CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(number)) as? [[String: Any]])?.first,
+              let layer = info[kCGWindowLayer as String] as? Int else { return false }
+        return layer == Int(CGWindowLevelForKey(.normalWindow))
+    }
+
     /// The pointer is on another window and this one is not in front: the
     /// column and the strip it had out over the page go back, unless
     /// something hangs from them or a button is held, a drag on its way
@@ -1201,7 +1227,7 @@ final class Brim {
         let front = window.isKeyWindow || window.isMainWindow || Brim.benchFront
         guard EdgeReach.watches(front: front, onScreen: window.isVisible && window.occlusionState.contains(.visible),
                                 frame: window.frame, pointer: pointer, top: Brim.top(under: pointer),
-                                own: Set(([window] + (window.childWindows ?? [])).map(\.windowNumber))) else {
+                                own: Brim.own(window)) else {
             cancelRest()
             // A rest at the top edge from before counts for nothing when
             // the pointer comes back to it: the strip waits a whole rest.
@@ -1383,7 +1409,13 @@ final class Brim {
                 } else if EdgeReach.wall(here, last: last, height: frame.height) {
                     past = true
                 }
-                let edge = !away && EdgeReach.at(here, past: past, height: frame.height)
+                var edge = !away && EdgeReach.at(here, past: past, height: frame.height)
+                // Out past the edge over a window beside this one: not the
+                // edge (#1024). The window server is asked only then.
+                if edge, !over, EdgeReach.covered(top: Brim.top(under: pointer), own: Brim.own(window), ordinary: Brim.ordinary) {
+                    edge = false
+                    past = false
+                }
                 let now = CACurrentMediaTime()
                 let rest = belowMenu ? EdgeReach.rest(edge: edge) : nil
                 let before = dwell.until
