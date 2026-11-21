@@ -295,7 +295,9 @@ enum NativeActions {
                                  // The person's consent for mail going to their AI (MailConsent): theirs alone.
                                  "mail-ahead", "mail-summaries", "mail-agents-others",
                                  // AI in Yab (AIUse): the person turns AI on or off, never an agent.
-                                 "ai-use"])
+                                 "ai-use",
+                                 // Siri and Shortcuts opening things in Yab: the person's call, never an agent's.
+                                 "shortcuts-siri"])
 
     /// Sources an agent can add as Settings › Live Folders does; a search,
     /// a repository (live.follow_repo) and a routine's folder come their own ways.
