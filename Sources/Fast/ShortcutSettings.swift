@@ -93,7 +93,7 @@ struct ShortcutsPage: View {
         switch line {
         case .head(let title, let first):
             Text(title)
-                .font(.system(size: 13, weight: ShortcutCardRow<EmptyView>.headWeight))
+                .font(.system(size: 13, weight: FormGroupRow<EmptyView>.headWeight))
                 .padding(.horizontal, 10)
                 .padding(.top, first ? 0 : 24)
                 .padding(.bottom, 10)
@@ -102,7 +102,7 @@ struct ShortcutsPage: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
         case .row(let id, let cell, let first, let last):
-            ShortcutCardRow(first: first, last: last) {
+            FormGroupRow(first: first, last: last) {
                 switch cell {
                 case .shortcut(let item): ShortcutRow(item: item).settingsAnchor(id)
                 case .command(let command):
@@ -142,38 +142,6 @@ struct ShortcutsPage: View {
         let words = does.lowercased()
         let typed = needle.lowercased().split(whereSeparator: \.isWhitespace)
         return !typed.isEmpty && typed.allSatisfy { words.contains($0) }
-    }
-}
-
-/// A row of a group, the way a grouped Form draws one: the group is its
-/// rows' backgrounds laid edge to edge, so it can be built a row at a time.
-private struct ShortcutCardRow<Content: View>: View {
-    /// The Form's own measures on each design.
-    static var radius: CGFloat { if #available(macOS 26.0, *) { 12 } else { 10 } }
-    static var pad: CGFloat { if #available(macOS 26.0, *) { 10.5 } else { 8 } }
-    static var headWeight: Font.Weight { if #available(macOS 26.0, *) { .regular } else { .semibold } }
-
-    let first: Bool
-    let last: Bool
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        let top = first ? Self.radius : 0
-        let foot = last ? Self.radius : 0
-        content
-            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, Self.pad)
-            .background {
-                UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: foot, bottomTrailingRadius: foot,
-                                       topTrailingRadius: top, style: .continuous)
-                    .fill(Color(nsColor: .quaternarySystemFill))
-            }
-            .overlay(alignment: .bottom) {
-                if !last {
-                    Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1).padding(.horizontal, 10)
-                }
-            }
     }
 }
 
