@@ -49,6 +49,7 @@ import dev.yab.browser.model.*
 import dev.yab.browser.media.MediaOwner
 import dev.yab.browser.media.PageMediaState
 import dev.yab.browser.ui.BrowserScreen
+import dev.yab.browser.ui.LocalBrowserChromeClipping
 import dev.yab.browser.ui.pageTranslationMenu
 import dev.yab.browser.ui.BrowserTabletPageAddressEntry
 import dev.yab.browser.ui.BrowserTabletPageEnvironment
@@ -167,9 +168,18 @@ class MainActivity : FragmentActivity() {
         if (savedInstanceState == null) pendingAction = incomingAction(intent)
         setContent {
             val themeState by browser.state.collectAsState()
+            // One stable receiver for the chrome's clipping reports: the provider
+            // below would otherwise rebuild the lambda on every state emission
+            // and restart the chrome's effects on the fold's hot path.
+            val chromeClip = remember(engine) {
+                val report: (String?, dev.yab.browser.ui.BrowserChromeClipping) -> Unit =
+                    { owner, clip -> engine.setChromeClipping(owner, clip.obscuredPx, clip.maxPx) }
+                report
+            }
             BrowserAccessibility { BrowserTheme(themeState.settings.appearance) {
                 CompositionLocalProvider(LocalBrowserSiteIcons provides BrowserSiteIconScope(siteIcons,
-                    themeState.space?.isPrivate != false || themeState.privateContentBlocked)) { Content() }
+                    themeState.space?.isPrivate != false || themeState.privateContentBlocked),
+                    LocalBrowserChromeClipping provides chromeClip) { Content() }
             } }
         }
     }
