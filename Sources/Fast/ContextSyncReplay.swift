@@ -67,7 +67,7 @@ final class ContextSyncReplay {
                 switch target {
                 case .profile(let field):
                     item.localProfile = privacy.syncProfileCell(field)
-                    guard record.alive(), let incoming = Self.profile(record), let value = Profile.cells(incoming)[field] else { item.readable = false; return item }
+                    guard record.alive(), let incoming = SyncShapes.profile(from: record), let value = Profile.cells(incoming)[field] else { item.readable = false; return item }
                     item.profile = value
                     item = replacingText(item, value.value.isEmpty ? "Empty value" : value.value)
                 case .address(let id, let field):
@@ -213,10 +213,5 @@ final class ContextSyncReplay {
         // An unencodable record cannot keep a stable admission identity.
         guard let data = try? encoder.encode(record) else { return "unavailable:" + UUID().uuidString }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-    private static func profile(_ record: SyncKit.Record) -> Profile? {
-        guard let data = json(record) else { return nil }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(Profile.self, from: data)
     }
 }

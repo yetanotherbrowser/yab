@@ -207,12 +207,23 @@ final class QuickActions: ObservableObject {
         var date: Date
     }
 
-    private struct Saved: Codable {
+    struct Saved: Codable {
         var actions: [QuickAction]
         var personalized: Set<String>
         var dismissed: Set<String>
         var made: [Made]?
         var hinted: [String: Int]?
+
+        /// The sets sorted: a set lists its members in another order in
+        /// each run, and sync compares the file across Macs.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(actions, forKey: .actions)
+            try c.encode(personalized.sorted(), forKey: .personalized)
+            try c.encode(dismissed.sorted(), forKey: .dismissed)
+            try c.encodeIfPresent(made, forKey: .made)
+            try c.encodeIfPresent(hinted, forKey: .hinted)
+        }
     }
 
     private static var file: URL { Store.file("quick-actions.json") }

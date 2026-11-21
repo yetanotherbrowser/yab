@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import SQLite3
 import Testing
 @testable import SyncKit
 
@@ -298,6 +299,114 @@ struct SyncKitTests {
         let again = try Journal(path: path, device: "a")
         #expect(again.clock.latest == stamp && again.cursor == 42)
         #expect(again.record(Record.Key(collection: "test.mark", id: "1"))?["title"] == "T")
+    }
+
+    @Test func aChangeHereBringsARecordRemovedElsewhereBackWhole() throws {
+        kinds()
+        let a = try Journal(path: nil, device: "a"), b = try Journal(path: nil, device: "b")
+        let fields: [String: Value] = ["title": "One", "url": "https://one.test/"]
+        try a.reconcile("test.mark", ["1": fields], shown: true)
+        _ = try b.receive(a.pending().map { ($0.record, 1) })
+        try b.reconcile("test.mark", ["1": fields], shown: true)
+        // Removed on b; a's files still hold it, unchanged: no edit.
+        try b.reconcile("test.mark", [:], shown: true)
+        _ = try a.receive(b.pending().map { ($0.record, 2) })
+        #expect(try a.reconcile("test.mark", ["1": fields], shown: true).isEmpty)
+        // Then a changes one field: it comes back with all of them.
+        var changed = fields
+        changed["title"] = "One again"
+        #expect(try a.reconcile("test.mark", ["1": changed], shown: true).count == 1)
+        let back = try #require(a.record(Record.Key(collection: "test.mark", id: "1")))
+        #expect(back.alive())
+        #expect(back["url"] == "https://one.test/" && back["title"] == "One again")
+    }
+
+    @Test func aRemovalThatNowSaysWhyReachesTheMirrorAndAnEmptiedOneDoesNot() throws {
+        kinds()
+        let a = try Journal(path: nil, device: "a"), b = try Journal(path: nil, device: "b")
+        try a.reconcile("test.mark", ["1": ["title": "One"]])
+        _ = try b.receive(a.pending().map { ($0.record, 1) })
+        try a.reconcile("test.mark", [:])
+        _ = try b.receive(a.pending().map { ($0.record, 2) })
+        // Marked, then removed again, as a visit deleted by hand is.
+        try a.reconcile("test.mark", ["1": ["title": "One", "cut": 5]])
+        try a.reconcile("test.mark", [:])
+        let told = try b.receive(a.pending().map { ($0.record, 3) })
+        #expect(told.map(\.id) == ["1"] && told.first?.alive() == false && told.first?.fields["cut"] == 5)
+        // A change from before the removal, arriving late: nothing for it either.
+        let c = try Journal(path: nil, device: "c")
+        _ = try c.receive(b.all("test.mark").map { ($0, 3) })
+        var late = try #require(c.all("test.mark").first)
+        let was = try #require(late.stamps["title"])
+        late.fields["title"] = "Older"
+        late.stamps["title"] = Stamp(wall: was.wall, count: was.count, device: "d")
+        #expect(try #require(late.stamps["title"]) < (try #require(late.deleted)))
+        #expect(try c.receive([(late, 4)]).isEmpty)
+        // Emptied after its removal: nothing for the mirror.
+        #expect(try a.blankRemoved("test.mark") == 1)
+        #expect(try b.receive(a.pending().map { ($0.record, 4) }).isEmpty)
+    }
+
+    @Test func aClosedTabSeenElsewhereSinceIsNoNews() throws {
+        kinds()
+        let a = try Journal(path: nil, device: "a"), b = try Journal(path: nil, device: "b"), c = try Journal(path: nil, device: "c")
+        try a.reconcile("test.tab", ["1": ["title": "One", "seen": 1]])
+        let first = a.pending().map { ($0.record, Int64(1)) }
+        _ = try b.receive(first); _ = try c.receive(first)
+        // Closed on a, then seen on b before b heard of it.
+        try a.remove(Record.Key(collection: "test.tab", id: "1"))
+        try b.change(Record.Key(collection: "test.tab", id: "1"), ["seen": 9])
+        #expect(try c.receive(a.pending().map { ($0.record, 2) }).count == 1)
+        let seen = b.pending().map { ($0.record, Int64(3)) }
+        _ = try c.receive(seen)
+        // Delivered again, as a catch-up does: nothing new.
+        #expect(try c.receive(seen).isEmpty)
+    }
+
+    @Test func aStampTakenForAChangeOutsideTheJournalSurvivesARelaunch() throws {
+        kinds()
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("sync-\(UUID()).sqlite").path
+        defer { for end in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + end) } }
+        var stamp: Stamp?
+        do {
+            let j = try Journal(path: path, device: "a")
+            try j.change(Record.Key(collection: "test.mark", id: "1"), ["title": "T"])
+            // A clear's fence (ContextPrivacy), with no record changed after it.
+            stamp = j.tick()
+        }
+        let again = try Journal(path: path, device: "a")
+        #expect(again.clock.latest == stamp)
+        #expect(again.clock.tick() > stamp!)
+    }
+
+    @Test func aReconcileThatChangesNothingWritesNothing() throws {
+        kinds()
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("sync-\(UUID()).sqlite").path
+        defer { for end in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + end) } }
+        let journal = try Journal(path: path, device: "a")
+        try journal.reconcile("test.mark", ["1": ["title": "One"]])
+        try journal.reconcile("test.mark", ["1": ["title": "One"]], shown: true)
+        // A second connection sees the file's data version move only when
+        // another one commits a change to it.
+        var other: OpaquePointer?
+        #expect(sqlite3_open(path, &other) == SQLITE_OK)
+        defer { sqlite3_close(other) }
+        func version() -> Int64 {
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_prepare_v2(other, "PRAGMA data_version", -1, &statement, nil) == SQLITE_OK,
+                  sqlite3_step(statement) == SQLITE_ROW else { return -1 }
+            return sqlite3_column_int64(statement, 0)
+        }
+        func wal() -> Int { ((try? FileManager.default.attributesOfItem(atPath: path + "-wal"))?[.size] as? Int) ?? -1 }
+        let before = version(), written = wal()
+        #expect(try journal.reconcile("test.mark", ["1": ["title": "One"]]).isEmpty)
+        #expect(try journal.reconcile("test.mark", ["1": ["title": "One"]], shown: true).isEmpty)
+        #expect(version() == before)
+        #expect(wal() == written)
+        try journal.reconcile("test.mark", ["1": ["title": "Two"]])
+        #expect(version() != before)
+        #expect(wal() > written)
     }
 
     // MARK: Convergence

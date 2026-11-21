@@ -190,7 +190,7 @@ final class SyncCenter: ObservableObject {
                 guard let seal, let data = record["secret"]?.string.flatMap({ seal.reveal($0, in: record.key) }) else { return nil }
                 return SyncWallet.contextAddress(data, id: record.id)
             }, writeAddress: { address, record in
-                guard let data = try? JSONEncoder().encode(address) else { return false }
+                guard let data = Wallet.addressData(address) else { return false }
                 let facts = record["facts"].flatMap { try? JSONEncoder().encode($0) }
                 return Wallet.put(card: false, record.id, secret: data, facts: facts, from: record.latest?.wall)
             })
@@ -1191,12 +1191,14 @@ final class SyncCenter: ObservableObject {
         if let routines = read.routines { try SyncShapes.reconcileRoutines(journal, routines, device: read.device) }
         if let projects = read.projects { try journal.reconcile(SyncShapes.project, SyncShapes.projects(projects)) }
         if let visits = read.visits {
-            let now = SyncShapes.visits(visits)
-            // Deleted by hand: marked first, then removed, so the other
-            // devices tell it from a place that only left the two weeks.
-            let cut = SyncShapes.cut(read.cuts, in: journal, keeping: now)
-            if !cut.isEmpty { try journal.reconcile(SyncShapes.visit, now.merging(cut) { mine, _ in mine }) }
-            try journal.reconcile(SyncShapes.visit, now)
+            do {
+                try SyncShapes.reconcileVisits(journal, SyncShapes.visits(visits), cuts: read.cuts)
+            } catch {
+                // Deleted by hand and not told: told with the next flush.
+                let cuts = read.cuts
+                if !cuts.isEmpty { DispatchQueue.main.async { MainActor.assumeIsolated { History.shared.keepCuts(cuts) } } }
+                throw error
+            }
         }
         if let now = read.now { try SyncNow.reconcile(journal, now, device: read.device) }
         if read.failed != nil { return }
@@ -1380,7 +1382,9 @@ final class SyncCenter: ObservableObject {
                 self.walletStamps = read.stamps
                 self.walletSeen = read.seen
                 do {
-                    for collection in SyncWallet.collections { try journal.reconcile(collection, read.now[collection] ?? [:]) }
+                    for collection in SyncWallet.collections where read.differs.contains(collection) {
+                        try journal.reconcile(collection, read.now[collection] ?? [:])
+                    }
                     Vault.published(read.published)
                 } catch {
                     NSLog("sync: %@", String(describing: error))
@@ -1398,7 +1402,8 @@ final class SyncCenter: ObservableObject {
         guard SyncWallet.on, let seal else { return }
         walletEpoch += 1
         walletQueue.async {
-            SyncWallet.write(records, seal: seal, contextEpoch: contextEpoch)
+            // Nothing written in and nothing here newer: nothing to read back.
+            guard SyncWallet.write(records, seal: seal, contextEpoch: contextEpoch) else { return }
             DispatchQueue.main.async { [weak self] in self?.changed(SyncWallet.login) }
         }
     }
@@ -1922,9 +1927,8 @@ final class SyncCenter: ObservableObject {
         for record in files {
             if record.id == "know.json", !ContextPrivacy.shared.mayTakeSync("know.json", epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record)) { continue }
             if record.id == "profile.json" {
-                guard ContextPrivacy.shared.current(fetched.contextEpoch), record.alive(), let json = record["json"], let data = try? JSONEncoder().encode(json) else { continue }
-                let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-                if let incoming = try? decoder.decode(Profile.self, from: data) { _ = ContextPrivacy.shared.mergeSyncedProfile(incoming, epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record)) }
+                guard ContextPrivacy.shared.current(fetched.contextEpoch), record.alive(), let incoming = SyncShapes.profile(from: record) else { continue }
+                _ = ContextPrivacy.shared.mergeSyncedProfile(incoming, epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record))
                 continue
             }
             ContextPrivacy.shared.transaction {

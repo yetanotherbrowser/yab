@@ -374,8 +374,9 @@ enum Wallet {
         facts["code"] = (3...4).contains(code.count)
         var record = ["number": digits]
         if (3...4).contains(code.count) { record["csc"] = code }
-        guard let secret = try? JSONSerialization.data(withJSONObject: record),
-              let generic = try? JSONSerialization.data(withJSONObject: facts)
+        // Sorted, so the same card is the same bytes on every Mac (sync compares its secret as they are).
+        guard let secret = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
+              let generic = try? JSONSerialization.data(withJSONObject: facts, options: .sortedKeys)
         else { return false }
         return write(.card, card.id, secret: secret, generic: generic)
     }
@@ -434,6 +435,16 @@ enum Wallet {
         try? JSONDecoder().decode(StreetAddress.self, from: data)
     }
 
+    /// An address as its secret is kept, here and in its record. Its keys
+    /// sorted: an encoder lists them in another order on each run, and two
+    /// Macs that kept the same address in two orders took each other's for
+    /// a change, forever.
+    static func addressData(_ address: StreetAddress) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try? encoder.encode(address)
+    }
+
     /// The address a form or a checkout gets without being asked which:
     /// the one the person used last, and failing that the home one getting
     /// to know them found, never simply the one saved last (work, kept a
@@ -456,7 +467,7 @@ enum Wallet {
     private static func writeAddress(_ address: StreetAddress) -> Bool {
         var kept = address.tidied()
         kept.saved = nil
-        guard let data = try? JSONEncoder().encode(kept) else { return false }
+        guard let data = addressData(kept) else { return false }
         return write(.address, address.id, secret: data, generic: nil)
     }
 

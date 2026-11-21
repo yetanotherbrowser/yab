@@ -136,10 +136,14 @@ public final class Journal: @unchecked Sendable {
     /// once reconciled this way, the journal stands in for what was shown.
     /// `orphaned`: records missing from `now` removed though the files never
     /// held them.
+    /// `revive`: with `shown`, a record removed elsewhere that the files
+    /// still hold unchanged comes back when this says so (given the record
+    /// and what the files say); otherwise it stays removed.
     @discardableResult
     public func reconcile(_ collection: String, _ now: [String: [String: Value]], within: ((Record) -> Bool)? = nil,
                           under: Set<String>? = nil, blank: Bool = false, shown: Bool = false,
-                          orphaned: ((Record) -> Bool)? = nil) throws -> [Record.Key] {
+                          orphaned: ((Record) -> Bool)? = nil,
+                          revive: ((Record, [String: Value]) -> Bool)? = nil) throws -> [Record.Key] {
         try queue.sync {
             let kind = Kind.of(collection)
             var changed: [Record.Key] = []
@@ -171,11 +175,15 @@ public final class Journal: @unchecked Sendable {
                     var want = fields
                     if started, let had = have[id]?.0, let was = base[id] {
                         // Only what the files changed since they last said
-                        // `was`, over the record as it stands.
+                        // `was`, over the record as it stands. One removed
+                        // elsewhere comes back with all the files say: its
+                        // fields went with the removal.
                         let edits = Journal.edits(fields, since: was)
-                        if edits.isEmpty { continue }
-                        want = had.visible
-                        for (name, value) in edits { want[name] = value }
+                        if edits.isEmpty, had.alive(kind) || !(revive?(had, fields) ?? false) { continue }
+                        if had.alive(kind) {
+                            want = had.visible
+                            for (name, value) in edits { want[name] = value }
+                        }
                     }
                     if record.update(to: want, clock: clock, kind: kind) {
                         try save(record, dirty: true, version: have[id]?.1)
@@ -209,7 +217,9 @@ public final class Journal: @unchecked Sendable {
                     }
                     if !started { setMeta(startedKey, "1") }
                 }
-                persistClock()
+                // The clock moves only with a change: a reconcile that
+                // changed nothing writes nothing.
+                if !changed.isEmpty { persistClock() }
             }
             return changed.sorted()
         }
@@ -748,6 +758,16 @@ public final class Journal: @unchecked Sendable {
         if let restorationError { throw restorationError }
     }
 
+    /// A stamp for a change made outside the journal, written down at
+    /// once: the next launch's clock starts after it.
+    public func tick() -> Stamp {
+        queue.sync {
+            let stamp = clock.tick()
+            persistClock()
+            return stamp
+        }
+    }
+
     public func remove(_ key: Record.Key) throws {
         try queue.sync {
             guard let had = load(key), had.record.alive() else { return }
@@ -767,6 +787,7 @@ public final class Journal: @unchecked Sendable {
     public func receive(_ incoming: [(record: Record, version: Int64)]) throws -> [Record] {
         try queue.sync {
             var changed: [Record] = []
+            let was = clock.latest
             try transaction {
                 for (theirs, version) in incoming {
                     for stamp in theirs.stamps.values { clock.observe(stamp) }
@@ -777,14 +798,21 @@ public final class Journal: @unchecked Sendable {
                     let dirty = had.map { $0.dirty && merged != theirs } ?? false
                     try save(merged, dirty: dirty, version: max(version, had?.version ?? 0))
                     if let had {
-                        if had.record.visible != merged.visible || had.record.alive(kind) != merged.alive(kind) {
+                        // A record removed already that was changed after
+                        // that removal and removed again (a visit's cut) is
+                        // news too: its mirror reads why it went. A closed
+                        // tab seen since stays closed: no news.
+                        let said = !merged.alive(kind) && merged.deleted != had.record.deleted && had.record.deleted.map { gone in
+                            merged.stamps.contains { $0.value > gone && !(merged.fields[$0.key]?.isNull ?? true) }
+                        } ?? false
+                        if had.record.visible != merged.visible || had.record.alive(kind) != merged.alive(kind) || said {
                             changed.append(merged)
                         }
                     } else if merged.alive(kind) {
                         changed.append(merged)
                     }
                 }
-                persistClock()
+                if clock.latest != was { persistClock() }
             }
             return changed
         }

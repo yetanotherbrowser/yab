@@ -54,16 +54,40 @@ enum SyncShapes {
     /// marked with when, for the flush to tell before it removes them: a
     /// removal alone also means a place left the two weeks or this Mac
     /// stopped syncing history, which the other devices must not follow.
-    /// Only places no longer in `now` and still alive in the journal.
+    /// Only places no longer in `now`. One already removed (another Mac
+    /// stopped syncing history) is cut too, or the others keep it.
     static func cut(_ cuts: [String: Date], in journal: Journal, keeping now: Collection) -> Collection {
         var out: Collection = [:]
         for (key, at) in cuts where now[key] == nil {
-            guard let record = journal.record(.init(collection: visit, id: key)), record.alive() else { continue }
-            var fields = record.visible
+            guard let record = journal.record(.init(collection: visit, id: key)) else { continue }
+            // A removed one keeps what it said, so it is never up without
+            // its address between the mark and the removal.
+            var fields = record.alive() ? record.visible : record.fields.filter { !$0.value.isNull }
             fields["cut"] = .number(at.timeIntervalSince1970.rounded(.down))
             out[key] = fields
         }
         return out
+    }
+
+    /// This Mac's places told to the journal. Deleted by hand: marked
+    /// first, then removed, so the other devices tell it from a place that
+    /// only left the two weeks. Three-way (Journal.reconcile's `shown`):
+    /// a place goes up when it changed here, not because this Mac's copy
+    /// differs from the record. Two Macs that last searched different
+    /// things under one key (google.com/search) each sent theirs back on
+    /// every flush, forever.
+    /// A place another Mac removed without deleting it (it left the two
+    /// weeks there, or history sync was turned off there) is still this
+    /// Mac's, and goes up again whole. One deleted by hand stays gone unless
+    /// this Mac has been there since, as History.dropSynced keeps it.
+    static func reconcileVisits(_ journal: Journal, _ now: Collection, cuts: [String: Date]) throws {
+        let revive: (SyncKit.Record, [String: Value]) -> Bool = { record, fields in
+            guard let cut = cutVisits(from: [record]).first else { return true }
+            return (fields["last"]?.number ?? 0) > cut.at.timeIntervalSince1970 + 1
+        }
+        let cut = cut(cuts, in: journal, keeping: now)
+        if !cut.isEmpty { try journal.reconcile(visit, now.merging(cut) { mine, _ in mine }, shown: true, revive: revive) }
+        try journal.reconcile(visit, now, shown: true, revive: revive)
     }
 
     /// Places deleted by hand on another device, by key and when: a removed
@@ -249,10 +273,23 @@ enum SyncShapes {
         var out: Collection = [:]
         for path in files {
             guard let data = try? Data(contentsOf: folder.appendingPathComponent(path)), data.count < 48_000,
-                  let json = try? JSONDecoder().decode(Value.self, from: data) else { continue }
+                  var json = try? JSONDecoder().decode(Value.self, from: data) else { continue }
+            // The profile's `edited` is a set: a file written before it was
+            // sorted says the same in another order.
+            if path == "profile.json", case .object(var profile) = json, let edited = profile["edited"]?.array {
+                profile["edited"] = .array(edited.sorted { ($0.string ?? "") < ($1.string ?? "") })
+                json = .object(profile)
+            }
             out[path] = ["json": json]
         }
         return out
+    }
+
+    /// The profile a `profile.json` record carries, as its file reads.
+    static func profile(from record: SyncKit.Record) -> Profile? {
+        guard let json = record["json"], let data = try? JSONEncoder().encode(json) else { return nil }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(Profile.self, from: data)
     }
 
     /// Pictures you gave tabs and folders (custom-icons/), each one whole.
