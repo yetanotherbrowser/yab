@@ -144,12 +144,22 @@ static void ExtensionWithWorker(Tab& control, NSString* extension, std::function
     });
   });
 }
-static NSString* ExtensionRead(NSString* root, NSString* relative) {
+static NSString* ExtensionResolved(NSString* root, NSString* relative) {
   if(!relative.length||[relative isAbsolutePath])return nil;
   NSString* base=root.stringByResolvingSymlinksInPath, *file=[[root stringByAppendingPathComponent:relative] stringByResolvingSymlinksInPath];
   if(![file hasPrefix:[base stringByAppendingString:@"/"]])return nil;
-  NSDictionary* attributes=[NSFileManager.defaultManager attributesOfItemAtPath:file error:nil];if([attributes fileSize]>2*1024*1024)return nil;
+  NSDictionary* attributes=[NSFileManager.defaultManager attributesOfItemAtPath:file error:nil];
+  return [attributes fileSize]>2*1024*1024?nil:file;
+}
+static NSString* ExtensionRead(NSString* root, NSString* relative) {
+  NSString* file=ExtensionResolved(root,relative);if(!file)return nil;
   return [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
+}
+// An image or a font is not text: the bridge carries it base64-wrapped,
+// with the same root and size checks as the text read.
+static NSData* ExtensionReadData(NSString* root, NSString* relative) {
+  NSString* file=ExtensionResolved(root,relative);if(!file)return nil;
+  return [NSData dataWithContentsOfFile:file];
 }
 // Worker session -> a release in flight (1), another owed after it (2).
 static std::map<std::string, int> extensionConsoleRelease;
@@ -255,7 +265,14 @@ static bool ExtensionBridgeCommand(Tab& tab, NSString* method, NSDictionary* p, 
   }
   if([method isEqual:@"ext.bridge.register"]){
     NSString* identity=S(p,@"virtual"),*document=S(p,@"document"),*url=S(p,@"url");int frame=[p[@"frame"] intValue];
-    if(!identity.length||!document.length||![@[@"http",@"https"] containsObject:[NSURL URLWithString:url].scheme]){Reply(request,nil,@"Invalid virtual frame");return true;}
+    // An extension's own page frame registers under its real address, as
+    // Chrome reports sender.url; every other frame needs a web address it
+    // holds a grant for (checked on invoke).
+    NSURL* frameURL=[NSURL URLWithString:url];
+    NSString* extension=S(p,@"extension");
+    BOOL ownPage=frame>0&&[frameURL.scheme isEqual:@"chrome-extension"]&&[frameURL.host isEqual:extension]
+      &&!frameURL.port&&!frameURL.user&&!frameURL.password&&extensionCatalogs[@(profile.c_str())][extension];
+    if(!identity.length||!document.length||(!ownPage&&![@[@"http",@"https"] containsObject:frameURL.scheme])){Reply(request,nil,@"Invalid virtual frame");return true;}
     std::string key=profile+":"+Key(identity)+":"+std::to_string(frame);
     if(!extensionVirtuals.count(key)){
       // Frame numbers only grow within a tab's document set, so the lowest
@@ -298,7 +315,7 @@ static bool ExtensionBridgeCommand(Tab& tab, NSString* method, NSDictionary* p, 
   if([method isEqual:@"ext.bridge.files"]){
     if(![p[@"files"] isKindOfClass:NSArray.class]||[p[@"files"] count]>128){Reply(request,nil,@"Invalid extension file list");return true;}
     NSMutableDictionary* files=[NSMutableDictionary new];NSString* root=extensionRoots[@(profile.c_str())][extension];
-    for(id path in p[@"files"]){if(![path isKindOfClass:NSString.class]){Reply(request,nil,@"Invalid extension file");return true;}NSString* source=ExtensionRead(root,path);if(!source){Reply(request,nil,@"Extension file is missing or outside its root");return true;}files[path]=source;}
+    for(id path in p[@"files"]){if(![path isKindOfClass:NSString.class]){Reply(request,nil,@"Invalid extension file");return true;}NSString* source=ExtensionRead(root,path);if(!source){NSData* raw=ExtensionReadData(root,path);if(raw)source=[NSString stringWithFormat:@"{\"b64\":\"%@\"}",[raw base64EncodedStringWithOptions:0]];}if(!source){Reply(request,nil,@"Extension file is missing or outside its root");return true;}files[path]=source;}
     Reply(request,files);return true;
   }
   if([method isEqual:@"ext.bridge.reply"]){
@@ -309,8 +326,11 @@ static bool ExtensionBridgeCommand(Tab& tab, NSString* method, NSDictionary* p, 
   NSString* op=S(p,@"op");NSDictionary* sender=nil;
   if(![op isEqual:@"dnr.snapshot"]){
     std::string key=profile+":"+Key(S(p,@"virtual"))+":"+std::to_string([p[@"frame"] intValue]);auto v=extensionVirtuals.find(key);
-    if(v==extensionVirtuals.end()||v->second.control!=tab.id||v->second.document!=Key(S(p,@"document"))||!ExtensionAllowed(entry,v->second.url)){Reply(request,nil,@"Extension has no access to this virtual document");return true;}
-    NSURL* url=[NSURL URLWithString:v->second.url];NSString* origin=[NSString stringWithFormat:@"%@://%@%@",url.scheme,url.host,url.port?[@":" stringByAppendingString:url.port.stringValue]:@""];
+    if(v==extensionVirtuals.end()||v->second.control!=tab.id||v->second.document!=Key(S(p,@"document"))){Reply(request,nil,@"Extension has no access to this virtual document");return true;}
+    NSURL* url=[NSURL URLWithString:v->second.url];
+    BOOL ownPage=[url.scheme isEqual:@"chrome-extension"]&&[url.host isEqual:extension];
+    if(!ExtensionAllowed(entry,ownPage?v->second.topURL:v->second.url)){Reply(request,nil,@"Extension has no access to this virtual document");return true;}
+    NSString* origin=[NSString stringWithFormat:@"%@://%@%@",url.scheme,url.host,url.port?[@":" stringByAppendingString:url.port.stringValue]:@""];
     sender=@{@"id":extension,@"tab":@{@"id":@(v->second.number),@"url":v->second.topURL,@"incognito":@(profiles[profile].privateMode),@"active":@YES,@"windowId":@1},@"frameId":@(v->second.frame),@"documentId":@(v->second.document.c_str()),@"url":v->second.url,@"origin":origin};
   }
   if(![method isEqual:@"ext.bridge.invoke"]){Reply(request,nil,@"Unknown bridge method");return true;}

@@ -13,6 +13,8 @@ final class ChromiumDRMExtensionSession {
     private var control: String?
     private var opening: Task<(YabCoreClient, String), Error>?
     private var retired = false
+    private var resourceHosts: [String: Task<String?, Error>] = [:]
+    private var identityPages: [String: ChromiumExtensionPage] = [:]
     var entries: [[String: Any]] = []
     var pages: [UUID: WeakBridge] = [:]
     struct WeakBridge { weak var value: ChromiumDRMExtensions? }
@@ -47,6 +49,8 @@ final class ChromiumDRMExtensionSession {
     private static func retire(_ profile: String, _ value: ChromiumDRMExtensionSession) {
         value.retired = true
         value.opening?.cancel(); value.opening = nil
+        for lookup in value.resourceHosts.values { lookup.cancel() }
+        value.clearIdentityPages()
         if let core = value.core, let id = value.control, ChromiumProcess.shared.isCurrent(core) {
             Task { try? await core.closeTab(id) }
         }
@@ -68,6 +72,7 @@ final class ChromiumDRMExtensionSession {
             // Wire tab/virtual IDs restart from zero in a replacement helper.
             // Existing WebKit worlds must reload before they regain a bridge.
             entries = []
+            clearIdentityPages()
             for page in pages.values { page.value?.helperReplaced() }
         }
         let task = Task { @MainActor in
@@ -116,11 +121,59 @@ final class ChromiumDRMExtensionSession {
         let result = try await request("ext.bridge.catalog")
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any]
         entries = object?["extensions"] as? [[String: Any]] ?? []
+        let enabled = Set(entries.compactMap { $0["id"] as? String })
+        for id in identityPages.keys where !enabled.contains(id) { identityPages.removeValue(forKey: id)?.close() }
         return entries
+    }
+    private func clearIdentityPages() {
+        for page in identityPages.values { page.close() }
+        identityPages.removeAll()
+    }
+    func dynamicResourceHost(_ id: String, prepare: Bool = false) async throws -> String? {
+        guard !retired, ChromiumExtensions.validID(id) else { return nil }
+        if let lookup = resourceHosts[id] { return try await lookup.value }
+        let lookup = Task<String?, Error> { @MainActor in
+            let (core, _) = try await endpoint()
+            if prepare, identityPages[id] == nil {
+                let page = try await ChromiumExtensionStorage.open(id, profile: profile, store: store)
+                guard !retired, self.core === core, ChromiumProcess.shared.isCurrent(core) else {
+                    page.close()
+                    return nil
+                }
+                identityPages[id] = page
+            }
+            guard let page = identityPages[id] else { return nil }
+            // The native runtime of the browser's inert manifest document
+            // identifies its extension without running the extension's code
+            // or opening and closing a native tab for each resource read.
+            let result = try? await page.run("""
+                const runtime = globalThis.chrome?.runtime;
+                if (location.pathname !== '/manifest.json' || document.contentType !== 'application/json'
+                    || document.scripts.length !== 0 || !runtime) return null;
+                return {id: runtime.id, host: runtime.dynamicId};
+                """) as? [String: String]
+            guard !retired, !Task.isCancelled, self.core === core, ChromiumProcess.shared.isCurrent(core),
+                  result?["id"] == id, let host = result?["host"],
+                  UUID(uuidString: host)?.uuidString.lowercased() == host else {
+                if identityPages[id] === page { identityPages.removeValue(forKey: id)?.close() }
+                return nil
+            }
+            return host
+        }
+        resourceHosts[id] = lookup
+        defer { resourceHosts[id] = nil }
+        return try await lookup.value
     }
     static func owns(control: String?, core: AnyObject?, eventTab: String, activeCore: AnyObject?) -> Bool {
         guard let core, let activeCore else { return false }
         return control == eventTab && core === activeCore
+    }
+    private func activeVirtualTab(_ extensionID: String) -> Any {
+        guard let browser = BrowserWindows.shared.activeBrowser, browser.windowPurpose == .normal,
+              let tab = browser.active, !tab.gone, tab.engineKind == .webKit else { return NSNull() }
+        // Zero means the browser selected a WebKit tab, but this worker can't address it.
+        guard tab.chromiumProfile == profile, let bridge = pages[tab.id]?.value else { return 0 }
+        return bridge.activeNumber(for: extensionID) ?? 0
     }
     static func receive(_ event: YabCoreEvent, from activeCore: YabCoreClient?) -> Bool {
         guard event.name == "ext.bridge.call" else { return false }
@@ -141,11 +194,15 @@ final class ChromiumDRMExtensionSession {
                 return
             }
             var value: Any = NSNull(), error: String?
-            do {
-                guard let number = call["tab"] as? Int,
-                      let bridge = bridges.first(where: { $0.number == number }) else { throw YabCoreError.remote("Virtual tab is closed") }
-                value = try await bridge.reverse(extensionID, call)
-            } catch let failure { error = String(describing: failure) }
+            if call["op"] as? String == "tabs.active" {
+                value = session.activeVirtualTab(extensionID)
+            } else {
+                do {
+                    guard let number = call["tab"] as? Int,
+                          let bridge = bridges.first(where: { $0.number == number }) else { throw YabCoreError.remote("Virtual tab is closed") }
+                    value = try await bridge.reverse(extensionID, call)
+                } catch let failure { error = String(describing: failure) }
+            }
             var reply: [String: Any] = ["extension": extensionID, "session": payload["session"] ?? "", "call": call["id"] ?? "", "value": value]
             if let error { reply["error"] = error }
             // A page's answer JSON has no form for (a Date, NaN) fails the
@@ -173,11 +230,12 @@ final class ChromiumDRMExtensions {
     weak var tab: Tab?
     weak var web: WKWebView?
     let session: ChromiumDRMExtensionSession
-    private var epoch = UUID().uuidString
+    private(set) var epoch = UUID().uuidString
     private var scripts: [WKUserScript] = []
     private var handlers: [String: Handler] = [:]
-    private var entries: [String: [String: Any]] = [:]
+    private(set) var entries: [String: [String: Any]] = [:]
     private var documents: [String: Document] = [:]
+    private var resourceNavigations = ResourceNavigations()
     private var nextFrame = 0
     private var rules: [String: WKContentRuleList] = [:]
     private(set) var number: Int?
@@ -189,6 +247,15 @@ final class ChromiumDRMExtensions {
     static let answerLimit = 8 * 1024 * 1024
     static let changeLimit = 256 * 1024
     private struct Document { let id: String; let nonce: String; let frame: Int; let info: WKFrameInfo; let url: URL; let epoch: String }
+    func recordResourceNavigation(frame: UInt64, url: URL, source: URL?) {
+        resourceNavigations.record(frame: frame, url: url, source: source)
+    }
+    func clearResourceNavigation(frame: UInt64, redirectingTo url: URL) -> Bool {
+        resourceNavigations.clear(frame: frame, redirectingTo: url)
+    }
+    func takeResourceNavigation(frame: UInt64, url: URL) -> ResourceNavigations.Answer {
+        resourceNavigations.take(frame: frame, url: url)
+    }
     final class Handler: NSObject, WKScriptMessageHandlerWithReply {
         weak var owner: ChromiumDRMExtensions?
         let extensionID: String
@@ -203,6 +270,22 @@ final class ChromiumDRMExtensions {
             }
         }
     }
+    /// The bootstrap injected into an extension page the resource handler
+    /// serves: the page's own scripts reach the bridge through the world
+    /// Yab already keeps on that page, over the document they share.
+    func pageBootstrap(for id: String) -> String? {
+        guard let entry = entries[id], let manifest = entry["manifest"] as? [String: Any] else { return nil }
+        let config = scriptConfig(id, entry: entry, manifest: manifest)
+        return try? "(()=>{try{\(try ChromiumDRMExtensionScripts.bootstrap(config, page: true))}catch(error){}})();"
+    }
+    private func scriptConfig(_ id: String, entry: [String: Any], manifest: [String: Any]) -> [String: Any] {
+        var config: [String: Any] = ["id": id, "epoch": epoch, "manifest": manifest, "messages": entry["messages"] ?? [:], "language": Locale.current.identifier.replacingOccurrences(of: "_", with: "-")]
+        if let host = entry["resourceHost"] as? String {
+            config["resourceHost"] = host
+            config["dynamicResources"] = ChromiumDRMExtensionScripts.dynamicResources(manifest)
+        }
+        return config
+    }
     init(tab: Tab, web: WKWebView) throws {
         self.tab = tab; self.web = web; session = try .of(tab)
         session.pages[tab.id] = .init(value: self)
@@ -214,9 +297,16 @@ final class ChromiumDRMExtensions {
             let folders = ExtensionOneList.webKitFolders(Extensions.of(store: tab.pageStore).installed)
             catalog.removeAll { ($0["id"] as? String).map(folders.contains) == true }
         }
+        for index in catalog.indices {
+            guard let id = catalog[index]["id"] as? String, let manifest = catalog[index]["manifest"] as? [String: Any],
+                  !ChromiumDRMExtensionScripts.dynamicResources(manifest).isEmpty else { continue }
+            do { catalog[index]["resourceHost"] = try await session.dynamicResourceHost(id, prepare: true) }
+            catch { NSLog("DRM extension resource origin %@ unavailable: %@", id, String(describing: error)) }
+        }
         guard !tab.gone, tab.chromiumProfile == session.profile else { throw CancellationError() }
         _ = try await session.request("ext.bridge.unregister", ["virtual": tab.id.uuidString])
         documents = [:]; nextFrame = 0
+        resourceNavigations.removeAll()
         let controller = web.configuration.userContentController
         let revision = Self.revision(catalog)
         if revision == installed, scripts.allSatisfy({ mine in controller.userScripts.contains { $0 === mine } }) {
@@ -254,8 +344,8 @@ final class ChromiumDRMExtensions {
             let handler = Handler(self, id); handlers[id] = handler
             controller.addScriptMessageHandler(handler, contentWorld: world(id), name: "yabChromiumExtension")
             let grants = entry["grants"] as? [String] ?? []
-            let config: [String: Any] = ["id": id, "epoch": epoch, "manifest": manifest, "messages": entry["messages"] ?? [:], "language": Locale.current.identifier.replacingOccurrences(of: "_", with: "-")]
-            let bootstrap = "(()=>{\(try ChromiumDRMExtensionScripts.guardSource(matches: grants, excludes: [], globs: [], excludeGlobs: []))\(try ChromiumDRMExtensionScripts.bootstrap(config))})();"
+            let config = scriptConfig(id, entry: entry, manifest: manifest)
+            let bootstrap = "(()=>{\(try ChromiumDRMExtensionScripts.pageGuard(id: id, grants: grants))\(try ChromiumDRMExtensionScripts.bootstrap(config))})();"
             add(bootstrap, time: .atDocumentStart, main: false, world: world(id), controller: controller)
             for script in manifest["content_scripts"] as? [[String: Any]] ?? [] {
                 let matches = script["matches"] as? [String] ?? [], excludes = script["exclude_matches"] as? [String] ?? []
@@ -319,15 +409,58 @@ final class ChromiumDRMExtensions {
     }
     private func world(_ id: String) -> WKContentWorld { .world(name: "yab-chromium-extension-" + id) }
     private func allowed(_ id: String, _ url: URL) -> Bool {
-        (entries[id]?["grants"] as? [String] ?? []).contains { ChromiumDRMExtensionScripts.matches($0, url: url) }
+        // An extension's own pages are its own trust domain, as in Chrome;
+        // every other address needs a site grant.
+        url.scheme == "chrome-extension" && url.host == id
+            || (entries[id]?["grants"] as? [String] ?? []).contains { ChromiumDRMExtensionScripts.matches($0, url: url) }
+    }
+    func activeNumber(for id: String) -> Int? {
+        guard let url = web?.url, entries[id] != nil, allowed(id, url),
+              documents.contains(where: { key, document in
+                  key.hasPrefix(id + ":") && document.frame == 0 && document.epoch == epoch
+              }) else { return nil }
+        return number
+    }
+    /// An extension's own page registers under its real chrome-extension
+    /// URL, the way Chrome reports sender.url. Cores from before the registry
+    /// took those URLs reject them, and the page embedding the frame stands
+    /// in for the sender there.
+    private func register(_ id: String, _ url: URL, document: Document, frame: Int, topURL: URL) async throws -> JSONValue {
+        func params(_ sender: URL) -> [String: Any] {
+            ["virtual": tab?.id.uuidString ?? "", "document": document.id, "frame": frame,
+             "url": sender.absoluteString, "topURL": topURL.absoluteString, "extension": id]
+        }
+        do { return try await session.request("ext.bridge.register", params(url)) }
+        catch YabCoreError.remote("Invalid virtual frame") where url.scheme == "chrome-extension" {
+            return try await session.request("ext.bridge.register", params(topURL))
+        }
+    }
+    /// A message's claimed address has to be the frame's own. WebKit tells
+    /// the frame either through its request or its security origin; a page
+    /// can name an extension's page, but it cannot make WebKit say its frame
+    /// is one.
+    private func identityHolds(_ id: String, _ url: URL, _ message: WKScriptMessage) -> Bool {
+        let frame = message.frameInfo, origin = frame.securityOrigin
+        if url.scheme == "chrome-extension" {
+            guard #available(macOS 15.4, *), let requestURL = frame.request.url,
+                  requestURL.scheme == "chrome-extension", requestURL.host == id, requestURL.port == nil,
+                  let manifest = entries[id]?["manifest"] as? [String: Any],
+                  !ChromiumDRMResources.sandboxed(String(requestURL.path.dropFirst()), manifest: manifest)
+            else { return false }
+            return !frame.isMainFrame && url.host == id && origin.protocol == "chrome-extension"
+                && origin.host == id && origin.port == 0
+        }
+        guard frame.request.url != nil else { return false }
+        return url.scheme == origin.protocol && url.host == origin.host
+            && (url.port ?? (url.scheme == "https" ? 443 : 80)) == (origin.port == 0 ? (url.scheme == "https" ? 443 : 80) : origin.port)
     }
     private func message(_ id: String, _ message: WKScriptMessage) async throws -> Any {
         guard let tab, !tab.gone, tab.chromiumProfile == session.profile, message.webView === web,
               let body = message.body as? [String: Any], body["epoch"] as? String == epoch,
               let nonce = body["nonce"] as? String, let requestURL = message.frameInfo.request.url,
               let url = (body["url"] as? String).flatMap(URL.init(string:)) ?? Optional(requestURL), allowed(id, url),
-              url.scheme == message.frameInfo.securityOrigin.protocol, url.host == message.frameInfo.securityOrigin.host,
-              (url.port ?? (url.scheme == "https" ? 443 : 80)) == (message.frameInfo.securityOrigin.port == 0 ? (url.scheme == "https" ? 443 : 80) : message.frameInfo.securityOrigin.port) else { throw YabCoreError.remote("Extension document permission or identity expired") }
+              identityHolds(id, url, message)
+        else { throw YabCoreError.remote("Extension document permission or identity expired") }
         let key = id + ":" + nonce
         if body["op"] as? String == "hello" {
             // WebKit says nothing when a frame goes, so a page open all day
@@ -341,7 +474,8 @@ final class ChromiumDRMExtensions {
             let frame: Int
             if message.frameInfo.isMainFrame { frame = 0 } else { nextFrame += 1; frame = nextFrame }
             let document = Document(id: message.frameInfo.isMainFrame ? epoch : UUID().uuidString, nonce: nonce, frame: frame, info: message.frameInfo, url: url, epoch: epoch)
-            let result = try await session.request("ext.bridge.register", ["virtual": tab.id.uuidString, "document": document.id, "frame": frame, "url": url.absoluteString, "topURL": message.frameInfo.isMainFrame ? url.absoluteString : (web?.url?.absoluteString ?? url.absoluteString)])
+            let result = try await register(id, url, document: document, frame: frame,
+                topURL: message.frameInfo.isMainFrame ? url : web?.url ?? url)
             guard body["epoch"] as? String == epoch else { throw CancellationError() }
             number = result["tabId"].number.map(Int.init); documents[key] = document
             return true
@@ -351,7 +485,8 @@ final class ChromiumDRMExtensions {
         // URL text from that world may update only within WKFrameInfo's native origin.
         if document.url != url {
             document = Document(id: document.id, nonce: nonce, frame: document.frame, info: message.frameInfo, url: url, epoch: epoch)
-            _ = try await session.request("ext.bridge.register", ["virtual": tab.id.uuidString, "document": document.id, "frame": document.frame, "url": url.absoluteString, "topURL": message.frameInfo.isMainFrame ? url.absoluteString : (web?.url?.absoluteString ?? url.absoluteString)])
+            _ = try await register(id, url, document: document, frame: document.frame,
+                topURL: message.frameInfo.isMainFrame ? url : web?.url ?? url)
             guard document.epoch == epoch else { throw CancellationError() }
             documents[key] = document
         }
@@ -441,11 +576,13 @@ final class ChromiumDRMExtensions {
         installed = nil
         epoch = UUID().uuidString
         documents = [:]
+        resourceNavigations.removeAll()
         number = nil
     }
     func detach() {
         installed = nil
         epoch = UUID().uuidString; documents = [:]
+        resourceNavigations.removeAll()
         if let tab {
             session.pages[tab.id] = nil
             let identity = tab.id.uuidString
@@ -475,5 +612,41 @@ final class ChromiumDRMExtensions {
         let target = documents.first { $0.key.hasPrefix(id + ":") && $0.value.frame == frame }?.value.info
         if frame != 0 && target == nil { return NSNull() }
         return try await javascript(body, arguments: [:], in: target, in: world(id))
+    }
+}
+
+/// What a scheme task's frame last asked to load. WebKit drops the fragment
+/// from the task's URL but keeps it in the navigation action, and a frame
+/// already showing an extension page must not become its own asker, so a
+/// record that no longer matches is an answer, not a miss. The map is bounded
+/// per tab; the oldest record goes first, never the whole map at once.
+struct ResourceNavigations {
+    enum Answer: Equatable { case source(URL), stale, none }
+    private var records: [UInt64: (url: URL, source: URL?)] = [:]
+    private var order: [UInt64] = []
+    static func fragmentless(_ url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        return components?.url ?? url
+    }
+    mutating func removeAll() { records.removeAll(); order.removeAll() }
+    mutating func record(frame: UInt64, url: URL, source: URL?) {
+        if records[frame] == nil { order.append(frame) }
+        records[frame] = (Self.fragmentless(url), source)
+        while records.count > 128, let oldest = order.first {
+            order.removeFirst()
+            records[oldest] = nil
+        }
+    }
+    mutating func clear(frame: UInt64, redirectingTo url: URL) -> Bool {
+        guard let pending = records.removeValue(forKey: frame) else { return false }
+        order.removeAll { $0 == frame }
+        return pending.source == nil && pending.url == Self.fragmentless(url)
+    }
+    mutating func take(frame: UInt64, url: URL) -> Answer {
+        guard let pending = records.removeValue(forKey: frame) else { return .none }
+        order.removeAll { $0 == frame }
+        guard let source = pending.source, pending.url == Self.fragmentless(url) else { return .stale }
+        return .source(source)
     }
 }

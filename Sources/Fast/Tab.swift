@@ -217,6 +217,12 @@ enum Web {
         // page comes back.
         // yab://task, and the handler only that page can talk to.
         if !LinkGap.cut("diary") { MainActor.assumeIsolated { DiaryPage.attach(config) } }
+        // A DRM extension's overlay pages, iframes and assets a WebKit page
+        // of the site embeds. Inert everywhere else: only those scripts load
+        // that scheme.
+        if #available(macOS 15.4, *) {
+            config.setURLSchemeHandler(ChromiumDRMResources.shared, forURLScheme: "chrome-extension")
+        }
         if !LinkGap.cut("ua") { config.applicationNameForUserAgent = Web.userAgentName }
         if LinkGap.cut("prefs") {
             if !LinkGap.cut("localnet") { MainActor.assumeIsolated { LocalNetwork.protect(config.userContentController) } }

@@ -119,7 +119,12 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         // A new destination cancels recovery before async policy can hold it.
         if action.targetFrame?.isMainFrame == true { cancelLoadRetry() }
-        let decide: (WKNavigationActionPolicy) -> Void = { [weak self] policy in
+        let decide: (WKNavigationActionPolicy) -> Void = { [weak self, weak webView] policy in
+            if policy == .allow, #available(macOS 15.4, *), let webView,
+               !ChromiumDRMResources.recordNavigation(action, in: webView) {
+                decisionHandler(.cancel)
+                return
+            }
             if action.targetFrame?.isMainFrame == true {
                 if policy == .allow { self?.acceptNavigation(action.request) }
                 else { self?.cancelLoadRetry() }

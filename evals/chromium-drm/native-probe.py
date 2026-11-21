@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -89,7 +90,8 @@ def main(app, out):
                 ready(bootstrap, 'chrome://version/', 'bootstrap')
                 report['checks']['bootstrap_first_navigation'] = True
                 ask('tab.close', tab=bootstrap)
-                extension_path = Path(__file__).resolve().parent / 'extension'
+                extension_path = root / 'extension'
+                shutil.copytree(Path(__file__).resolve().parent / 'extension', extension_path)
                 ask('extension.load', tab=tab, path=str(extension_path))
                 catalog = ask('ext.bridge.catalog', tab=tab)['extensions']
                 report['catalog'] = catalog
@@ -107,6 +109,11 @@ def main(app, out):
                 report['checks']['worker_dnr'] = snapshot['enabled'] == ['acceptance']
                 report['checks']['storage_default'] = invoke('storage.local.get', [None]) == {}
                 report['checks']['worker_listener'] = invoke('runtime.sendMessage', [{'kind': 'storage-access', 'allow': False}]) is True
+                notification = {'kind': 'notification', 'nonce': 'synthetic-native-notification'}
+                report['checks']['worker_notification_without_reply'] = (
+                    invoke('runtime.sendMessage', [notification]) is None
+                    and invoke('runtime.sendMessage', [{'kind': 'last-notification'}]) == notification['nonce']
+                )
                 try:
                     invoke('storage.local.get', [None])
                     report['checks']['storage_trusted_denied'] = False
