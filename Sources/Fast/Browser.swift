@@ -4032,10 +4032,12 @@ final class Browser: NSObject, ObservableObject, Relaying {
         if let opening { opening(self) } else { BrowserWindows.shared.newWindow(from: self) }
     }
 
-    /// A separate private window, seeded before it can be shown or restored.
-    func newPrivateWindow() {
+    /// A separate private window, seeded before it can be shown or restored,
+    /// with `url` in it when there is one (a link menu's Open Link in Private Window).
+    func newPrivateWindow(opening url: URL? = nil) {
         if NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.isARepeat == true { return }
-        BrowserWindows.shared.newPrivateWindow(from: self)
+        let window = BrowserWindows.shared.newPrivateWindow(from: self)
+        if let url { window.arrive(url) }
     }
 
     /// The field, empty, asking where to go, with no tab in front: over

@@ -2399,6 +2399,11 @@ final class Tab: ObservableObject, Identifiable, Relaying {
             guard let self else { return }
             (self.delegate as? Browser)?.splitLink(url, from: self)
         }
+        if !shy {
+            web.onPrivateLink = { [weak self] url in
+                (self?.delegate as? Browser)?.newPrivateWindow(opening: url)
+            }
+        }
         web.onHideAt = { [weak self] point in
             guard let self else { return }
             self.page.runInYab("window.__yabVeil && window.__yabVeil.at(\(point.x), \(point.y))")

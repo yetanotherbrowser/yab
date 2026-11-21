@@ -205,7 +205,7 @@ final class PageView: WKWebView, NSTextContent {
         wrapContextLink(in: menu, event: event)
         defer {
             Self.dress(menu)
-            splitLinkHere(menu)
+            linkRowsHere(menu)
             Self.menuWatch?(menu)
         }
         if let (user, linked) = onAppleCodeContext?() {
@@ -379,13 +379,12 @@ final class PageView: WKWebView, NSTextContent {
         guard contextLinkItem === item,
               let command = objc_getAssociatedObject(item, &Self.contextLinkActionKey) as? ContextLinkAction else { return }
         menuOpen = nil
-        if let link = contextLink, link.at >= contextMenuStarted,
-           link.source == url, contextMenuSource == url {
+        if let link = currentContextLink {
             // Shift at either the context press or the native selection is
             // an explicit request to show the destination.
             let flags = (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).union(contextMenuFlags)
             let id = UUID()
-            menuOpen = (id, link.url, url, ProcessInfo.processInfo.systemUptime + 1, flags.contains(.shift))
+            menuOpen = (id, link, url, ProcessInfo.processInfo.systemUptime + 1, flags.contains(.shift))
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 if self?.menuOpen?.id == id { self?.menuOpen = nil }
             }
@@ -402,27 +401,57 @@ final class PageView: WKWebView, NSTextContent {
     /// Puts a link in Split View beside this page's tab.
     var onSplitLink: ((URL) -> Void)?
 
-    private func splitLinkHere(_ menu: NSMenu) {
-        guard onSplitLink != nil,
-              let tab = menu.items.first(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" }),
-              !menu.items.contains(where: { $0.identifier?.rawValue == Self.splitLinkID }) else { return }
-        let item = NSMenuItem(title: Self.splitLinkTitle, action: #selector(splitContextLink(_:)), keyEquivalent: "")
-        item.target = self
-        item.identifier = NSUserInterfaceItemIdentifier(Self.splitLinkID)
-        MenuMark.put(Self.marks[Self.splitLinkID], on: item)
-        menu.insertItem(item, at: menu.index(of: tab) + 1)
+    /// The link menu's Open Link in Private Window, under Open in Split
+    /// View: a private window of its own, as ⇧⌘N opens. Not from a private
+    /// tab, whose new tab rows already stay private.
+    static let privateLinkTitle = "Open Link in Private Window"
+    static let privateLinkID = "YabOpenLinkInPrivateWindow"
+    /// Opens a link in a new private window.
+    var onPrivateLink: ((URL) -> Void)?
+
+    /// Open in Split View, then Open Link in Private Window, under Open Link
+    /// in New Tab, each where this page has somewhere to send the link.
+    private func linkRowsHere(_ menu: NSMenu) {
+        guard let tab = menu.items.first(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" }) else { return }
+        var index = menu.index(of: tab)
+        let rows: [(on: Bool, title: String, id: String, action: Selector)] = [
+            (onSplitLink != nil, Self.splitLinkTitle, Self.splitLinkID, #selector(splitContextLink(_:))),
+            (onPrivateLink != nil, Self.privateLinkTitle, Self.privateLinkID, #selector(privateContextLink(_:))),
+        ]
+        for row in rows where row.on && !menu.items.contains(where: { $0.identifier?.rawValue == row.id }) {
+            let item = NSMenuItem(title: row.title, action: row.action, keyEquivalent: "")
+            item.target = self
+            item.identifier = NSUserInterfaceItemIdentifier(row.id)
+            MenuMark.put(Self.marks[row.id], on: item)
+            index += 1
+            menu.insertItem(item, at: index)
+        }
     }
 
-    /// The link is the page's contextmenu event's for this press, as Open
-    /// Link in New Tab reads it; without one (a link that isn't the web's),
-    /// the new tab row's own action.
+    /// The page's contextmenu event's link for this press, as Open Link in
+    /// New Tab reads it, or nil when none was heard for it.
+    private var currentContextLink: URL? {
+        guard let link = contextLink, link.at >= contextMenuStarted, link.source == url, contextMenuSource == url else { return nil }
+        return link.url
+    }
+
+    /// Without the page's link (a link that isn't the web's), the new tab
+    /// row's own action.
     @objc private func splitContextLink(_ item: NSMenuItem) {
-        if let link = contextLink, link.at >= contextMenuStarted, link.source == url, contextMenuSource == url {
+        if let link = currentContextLink {
             contextLink = nil
-            onSplitLink?(link.url)
+            onSplitLink?(link)
         } else if let tab = contextLinkItem {
             openContextLink(tab)
         }
+    }
+
+    /// Without the page's link, nothing opens: a link that isn't the web's
+    /// has no business in a private window.
+    @objc private func privateContextLink(_ item: NSMenuItem) {
+        guard let link = currentContextLink else { return }
+        contextLink = nil
+        onPrivateLink?(link)
     }
 
     func takeMenuOpen(for destination: URL?) -> Bool? {
@@ -443,6 +472,7 @@ final class PageView: WKWebView, NSTextContent {
         "WKMenuItemIdentifierOpenLink": "yab.arrowout",
         "WKMenuItemIdentifierOpenLinkInNewWindow": "yab.tab.plus",
         "YabOpenLinkInSplitView": "rectangle.split.2x1",
+        "YabOpenLinkInPrivateWindow": "incognito",
         "WKMenuItemIdentifierDownloadLinkedFile": "yab.download",
         "WKMenuItemIdentifierCopyLink": "link",
         "WKMenuItemIdentifierCopyLinkWithHighlight": "yab.text",

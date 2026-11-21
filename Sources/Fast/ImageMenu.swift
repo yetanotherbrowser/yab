@@ -28,6 +28,21 @@ final class ImageRelay: NSObject, PageScriptReceiving {
 
     weak var tab: Tab?
 
+    /// A link element's address, or "" for anything else. An SVG link's
+    /// href is an SVGAnimatedString, not a string, and isn't resolved
+    /// against the page.
+    static let linkOf = """
+    function (a) {
+      if (!a || (a.tagName !== 'A' && a.tagName !== 'a')) return '';
+      var href = a.href;
+      if (href && typeof href.baseVal === 'string') {
+        if (!href.baseVal) return '';
+        try { return new URL(href.baseVal, a.baseURI).href; } catch (err) { return ''; }
+      }
+      return typeof href === 'string' ? href : '';
+    }
+    """
+
     /// Every frame: an image inside an ad or a map embed is still an image.
     /// Only the ways a picture arrives, http, data and blob: file: and the
     /// rest are WebKit's to copy.
@@ -77,12 +92,12 @@ final class ImageRelay: NSObject, PageScriptReceiving {
         // A mailto: link under it, for the menu's Copy Email Address
         // (PageView.emailHere): the nearest link, in a shadow root too.
         var path = e.composedPath ? e.composedPath() : [];
-        var contextLink = '';
+        var contextLink = '', linkOf = \(linkOf);
         for (var i = 0; i < path.length; i++) {
-          var a = path[i];
-          if (!a || a.tagName !== 'A' || typeof a.href !== 'string' || !a.href) continue;
-          if (/^https?:/i.test(a.href)) contextLink = a.href;
-          if (/^mailto:/i.test(a.href)) window.webkit.messageHandlers.yabImages.postMessage({ link: a.href });
+          var href = linkOf(path[i]);
+          if (!href) continue;
+          if (/^https?:/i.test(href)) contextLink = href;
+          if (/^mailto:/i.test(href)) window.webkit.messageHandlers.yabImages.postMessage({ link: href });
           break;
         }
         // Empty too: a later menu on plain text must not reuse an old link.
