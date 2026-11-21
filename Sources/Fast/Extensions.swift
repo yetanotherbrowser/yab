@@ -135,8 +135,9 @@ final class Extensions: NSObject, ObservableObject {
     }
 
     /// `own`: thrown or rejected in the extension's own pages or worker.
-    func noteError(_ text: String, for id: String, own: Bool = false) {
-        FeedbackDiagnostics.shared.record(.extensionError, extensionID: id)
+    /// `counted`: false for Yab's own refusals, which aren't the extension's fault.
+    func noteError(_ text: String, for id: String, own: Bool = false, counted: Bool = true) {
+        if counted { FeedbackDiagnostics.shared.record(.extensionError, extensionID: id) }
         keep(text, for: id)
         if !own { notes[id] = Array(((notes[id] ?? []) + [text]).suffix(40)) }
     }
@@ -1406,7 +1407,6 @@ final class Extensions: NSObject, ObservableObject {
                     save()
                 }
             }
-            try WebKitIPCBoundary.validateExtensions(at: (Array(contexts.keys).filter { $0 != item.id } + [item.id]).map { Extensions.folder(for: $0) })
             let context = WKWebExtensionContext(for: found)
             context.uniqueIdentifier = item.id
             // The same origin every launch. WebKit picks a fresh one
@@ -1428,6 +1428,8 @@ final class Extensions: NSObject, ObservableObject {
             // and never the ones it was kept from.
             applyAccess(context)
             Extensions.allowPrivate(context, Store.settings.bool(forKey: "extensions.private"))
+            // After applyAccess: WebKit copies each script once per granted pattern.
+            try checkBudget(item.id, WebKitIPCBoundary.Grants(context))
             if signIn == nil { ExtensionRules.prepare(context, storage: storage(of: item.id), owner: controller) }
             let began = CACurrentMediaTime()
             do {
@@ -1628,6 +1630,7 @@ final class Extensions: NSObject, ObservableObject {
         guard let context = contexts[id] else { return }
         applyChoices(context)
         applyAccess(context)
+        noteIfOverBudget(id)
     }
 
     // MARK: - installing
@@ -2105,6 +2108,7 @@ final class Extensions: NSObject, ObservableObject {
                     // github.com with every site, though the extension
                     // still names it: given again, as a relaunch would.
                     self.applyAccess(context)
+                    self.noteIfOverBudget(id)
                 }
             }
         }
@@ -2766,13 +2770,91 @@ final class Extensions: NSObject, ObservableObject {
         Store.settings.stringArray(forKey: "extensions.allowed.\(id)") ?? []
     }
 
-    func allow(_ host: String, for id: String) {
+    /// What `applyAccess` gives an extension, from the settings above.
+    struct AccessPlan {
+        var access: SiteAccess
+        var allowed: [String]
+        var blocked: [String]
+        var choices: [String: Bool]
+    }
+
+    func accessPlan(_ id: String) -> AccessPlan {
+        AccessPlan(access: access(id), allowed: allowed(id), blocked: blocked(id), choices: Extensions.choices(id))
+    }
+
+    /// Every loaded extension's content scripts within WebKit's IPC budget,
+    /// `id`'s counted under `grants`.
+    private func checkBudget(_ id: String, _ grants: WebKitIPCBoundary.Grants) throws {
+        var catalogs: [(folder: URL, grants: WebKitIPCBoundary.Grants?)] = contexts.filter { $0.key != id }
+            .map { (folder: Extensions.folder(for: $0.key), grants: WebKitIPCBoundary.Grants($0.value)) }
+        catalogs.append((folder: Extensions.folder(for: id), grants: grants))
+        try WebKitIPCBoundary.validateExtensions(catalogs)
+    }
+
+    /// An unloaded copy of a loaded context's site grants, to try a change on.
+    func trial(of live: WKWebExtensionContext) -> WKWebExtensionContext {
+        let trial = WKWebExtensionContext(for: live.webExtension)
+        // Denials first: WebKit drops the grants a denial overlaps.
+        for (pattern, until) in live.deniedPermissionMatchPatterns {
+            trial.setPermissionStatus(.deniedExplicitly, for: pattern, expirationDate: until)
+        }
+        for (pattern, until) in live.grantedPermissionMatchPatterns {
+            trial.setPermissionStatus(.grantedExplicitly, for: pattern, expirationDate: until)
+        }
+        return trial
+    }
+
+    /// Whether `change` to a loaded extension's site grants keeps every
+    /// loaded extension's scripts in the budget. Tried on `trial(of:)`, so a
+    /// refusal leaves its grants and settings as they were.
+    func admits(_ id: String, _ change: (WKWebExtensionContext) -> Void) -> Bool {
+        guard let live = contexts[id] else { return true }
+        let trial = trial(of: live)
+        change(trial)
+        let fileAccess = WebKitIPCBoundary.Grants.fileAccess(of: live)
+        let proposed = WebKitIPCBoundary.Grants(trial, fileAccess: fileAccess)
+        do {
+            try checkBudget(id, proposed)
+            return true
+        } catch {
+            // Never refused for taking access away: no more scripts than it has now.
+            if let groups = try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: id)),
+               WebKitIPCBoundary.injectedScripts(groups, grants: proposed)
+                <= WebKitIPCBoundary.injectedScripts(groups, grants: WebKitIPCBoundary.Grants(live, fileAccess: fileAccess)) {
+                return true
+            }
+            noteError("Not given more sites: its content scripts would pass WebKit's limit for all extensions", for: id, counted: false)
+            return false
+        }
+    }
+
+    /// After access was taken away, which is never refused: losing all hosts
+    /// can still expand it into more scripts than before, so say so.
+    private func noteIfOverBudget(_ id: String) {
+        guard let live = contexts[id], (try? checkBudget(id, WebKitIPCBoundary.Grants(live))) == nil else { return }
+        NSLog("Extensions: %@ passed WebKit's script budget after access was taken away", id)
+        noteError("Its content scripts now pass WebKit's limit for all extensions; it won't load next launch", for: id, counted: false)
+    }
+
+    /// Whether choosing `picks` for its extras keeps it in the budget.
+    func admits(choices picks: [String: Bool], for id: String) -> Bool {
+        var plan = accessPlan(id)
+        plan.choices.merge(picks) { _, new in new }
+        return admits(id) { _ = Extensions.apply(plan, to: $0) }
+    }
+
+    @discardableResult
+    func allow(_ host: String, for id: String) -> Bool {
         let list = allowed(id)
-        guard !list.contains(host) else { return }
+        guard !list.contains(host) else { return true }
+        var plan = accessPlan(id)
+        plan.allowed.append(host)
+        guard admits(id, { _ = Extensions.apply(plan, to: $0) }) else { return false }
         Store.settings.set(list + [host], forKey: "extensions.allowed.\(id)")
         objectWillChange.send()
         Extensions.listsChanged.send()
         if let context = contexts[id] { applyAccess(context) }
+        return true
     }
 
     func disallow(_ host: String, for id: String) {
@@ -2782,19 +2864,45 @@ final class Extensions: NSObject, ObservableObject {
         guard let context = contexts[id] else { return }
         for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
         applyAccess(context)
+        noteIfOverBudget(id)
     }
 
-    func setAccess(_ id: String, _ access: SiteAccess) {
+    @discardableResult
+    func setAccess(_ id: String, _ access: SiteAccess) -> Bool {
+        var plan = accessPlan(id)
+        plan.access = access
+        // The chosen sites go back to what the manifest says of them.
+        let reset = { (context: WKWebExtensionContext) in
+            for host in plan.allowed {
+                for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+            }
+        }
+        // Only all its sites can widen past the budget: chosen sites are cut to fit.
+        guard access != .asked || self.access(id) == .asked
+              || admits(id, { reset($0); _ = Extensions.apply(plan, to: $0) }) else {
+            // The picker bound to it goes back to the access it still has.
+            objectWillChange.send()
+            return false
+        }
         if access == .asked { Store.settings.removeObject(forKey: "extensions.access.\(id)") }
         else { Store.settings.set(access.rawValue, forKey: "extensions.access.\(id)") }
         objectWillChange.send()
         Extensions.listsChanged.send()
-        guard let context = contexts[id] else { return }
-        // The chosen sites go back to what the manifest says of them.
-        for host in allowed(id) {
-            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
-        }
+        guard let context = contexts[id] else { return true }
+        reset(context)
         applyAccess(context)
+        noteIfOverBudget(id)
+        return true
+    }
+
+    /// Sites chosen on another engine, kept whole: WebKit is given those that fit.
+    func adopt(sites hosts: [String], for id: String) {
+        var list = allowed(id)
+        for host in hosts where !list.contains(host) { list.append(host) }
+        Store.settings.set(list, forKey: "extensions.allowed.\(id)")
+        objectWillChange.send()
+        Extensions.listsChanged.send()
+        if let context = contexts[id] { applyAccess(context) }
     }
 
     func block(_ host: String, for id: String) {
@@ -2802,15 +2910,25 @@ final class Extensions: NSObject, ObservableObject {
         guard !list.contains(host) else { return }
         Store.settings.set(list + [host], forKey: "extensions.blocked.\(id)")
         objectWillChange.send()
-        if let context = contexts[id] { applyAccess(context) }
+        guard let context = contexts[id] else { return }
+        applyAccess(context)
+        noteIfOverBudget(id)
     }
 
-    func unblock(_ host: String, for id: String) {
-        Store.settings.set(blocked(id).filter { $0 != host }, forKey: "extensions.blocked.\(id)")
+    @discardableResult
+    func unblock(_ host: String, for id: String) -> Bool {
+        var plan = accessPlan(id)
+        plan.blocked.removeAll { $0 == host }
+        let reset = { (context: WKWebExtensionContext) in
+            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        }
+        guard admits(id, { reset($0); _ = Extensions.apply(plan, to: $0) }) else { return false }
+        Store.settings.set(plan.blocked, forKey: "extensions.blocked.\(id)")
         objectWillChange.send()
-        guard let context = contexts[id] else { return }
-        for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        guard let context = contexts[id] else { return true }
+        reset(context)
         applyAccess(context)
+        return true
     }
 
     /// A host and everything under it.
@@ -2832,9 +2950,58 @@ final class Extensions: NSObject, ObservableObject {
     private func applyAccess(_ context: WKWebExtensionContext) {
         let id = context.uniqueIdentifier
         if ExtensionShims.portTrace { noteError("yab trace: applyAccess", for: id) }
+        var plan = accessPlan(id)
+        let fit = sitesThatFit(plan, on: context)
+        let left = Array(plan.allowed.dropFirst(fit))
+        plan.allowed = Array(plan.allowed.prefix(fit))
+        for host in left {
+            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        }
+        take(Extensions.apply(plan, to: context), from: id)
+        guard !left.isEmpty else { return }
+        let note = "Not running on \(left.joined(separator: ", ")): its content scripts would pass WebKit's limit for all extensions"
+        guard errors[id]?.contains(note) != true else { return }
+        NSLog("Extensions: %@ runs on %d of its chosen sites under WebKit's script budget", id, fit)
+        noteError(note, for: id, counted: false)
+    }
+
+    /// How many of `plan`'s chosen sites, in the order chosen, fit the
+    /// budget beside every other loaded extension. All of them when even
+    /// none would fit: that is over for another reason, `noteIfOverBudget`'s.
+    private func sitesThatFit(_ plan: AccessPlan, on live: WKWebExtensionContext) -> Int {
+        let id = live.uniqueIdentifier
+        guard plan.access == .sites, !plan.allowed.isEmpty,
+              let groups = try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: id)) else { return plan.allowed.count }
+        let others = contexts.filter { $0.key != id }.reduce(0) { total, other in
+            let theirs = (try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: other.key))) ?? []
+            return total + WebKitIPCBoundary.injectedScripts(theirs, grants: WebKitIPCBoundary.Grants(other.value))
+        }
+        let fileAccess = WebKitIPCBoundary.Grants.fileAccess(of: live)
+        func fits(_ count: Int) -> Bool {
+            var some = plan
+            some.allowed = Array(plan.allowed.prefix(count))
+            let trial = trial(of: live)
+            for host in plan.allowed.dropFirst(count) {
+                for pattern in Extensions.patterns(for: host) { trial.setPermissionStatus(.unknown, for: pattern) }
+            }
+            _ = Extensions.apply(some, to: trial)
+            let own = WebKitIPCBoundary.injectedScripts(groups, grants: WebKitIPCBoundary.Grants(trial, fileAccess: fileAccess))
+            return others + own <= WebKitIPCBoundary.scriptLimit
+        }
+        if fits(plan.allowed.count) || !fits(0) { return plan.allowed.count }
+        // Each site only adds scripts, so the ones that fit are a prefix.
+        var low = 0, high = plan.allowed.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if fits(mid) { low = mid } else { high = mid - 1 }
+        }
+        return low
+    }
+
+    /// `plan` set on `context`'s site grants; returns the keys it keeps from it.
+    static func apply(_ plan: AccessPlan, to context: WKWebExtensionContext) -> [String] {
         var taken: [String] = []
-        defer { take(taken, from: id) }
-        let status: WKWebExtensionContext.PermissionStatus = access(id) == .asked ? .grantedExplicitly : .unknown
+        let status: WKWebExtensionContext.PermissionStatus = plan.access == .asked ? .grantedExplicitly : .unknown
         let named = context.webExtension.allRequestedMatchPatterns
         for pattern in named {
             // Given, a pattern inside another it names is given already:
@@ -2856,7 +3023,7 @@ final class Extensions: NSObject, ObservableObject {
         // A site kept from it that overlaps one it names, every site over
         // github.com, is only not given: denied, it would take the named
         // one with it, and a denial wins where two meet.
-        for (key, on) in Extensions.choices(id) {
+        for (key, on) in plan.choices {
             guard let pattern = try? WKWebExtension.MatchPattern(string: key) else { continue }
             let overlaps = named.contains { $0.matches(pattern) || pattern.matches($0) }
             let kept: WKWebExtensionContext.PermissionStatus = overlaps ? .unknown : .deniedExplicitly
@@ -2867,20 +3034,21 @@ final class Extensions: NSObject, ObservableObject {
         // Only the sites chosen: given whether or not its manifest names
         // them one by one, as Chrome gives them; an extension that names
         // every site names these too.
-        if access(id) == .sites {
-            for host in allowed(id) {
+        if plan.access == .sites {
+            for host in plan.allowed {
                 for pattern in Extensions.patterns(for: host) {
                     context.setPermissionStatus(.grantedExplicitly, for: pattern)
                     taken.removeAll { $0 == pattern.string }
                 }
             }
         }
-        for host in blocked(id) {
+        for host in plan.blocked {
             for pattern in Extensions.patterns(for: host) {
                 context.setPermissionStatus(.deniedExplicitly, for: pattern)
                 taken.append(pattern.string)
             }
         }
+        return taken
     }
 
     /// A key someone gave one of its commands, or none. WebKit leaves
@@ -3286,11 +3454,15 @@ final class Extensions: NSObject, ObservableObject {
 
     /// Sites it was given after asking: kept, so it still has them after a
     /// relaunch, as in Chrome, and given now if it reaches sites at all.
-    func give(sites patterns: [WKWebExtension.MatchPattern], to context: WKWebExtensionContext) {
+    @discardableResult
+    func give(sites patterns: [WKWebExtension.MatchPattern], to context: WKWebExtensionContext) -> Bool {
         let id = context.uniqueIdentifier
-        Extensions.choose(Dictionary(patterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a }), for: id)
-        guard access(id) == .asked else { return }
+        let picks = Dictionary(patterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a })
+        guard admits(choices: picks, for: id) else { return false }
+        Extensions.choose(picks, for: id)
+        guard access(id) == .asked else { return true }
         applyAccess(context)
+        return true
     }
 
     /// For the bench, in a test run only: answer every question this way
@@ -3741,8 +3913,15 @@ extension Extensions: WKWebExtensionControllerDelegate {
     func webExtensionController(_ controller: WKWebExtensionController, promptForPermissionMatchPatterns matchPatterns: Set<WKWebExtension.MatchPattern>, in tab: (any WKWebExtensionTab)?, for extensionContext: WKWebExtensionContext) async -> (Set<WKWebExtension.MatchPattern>, Date?) {
         let choices = Extensions.choices(extensionContext.uniqueIdentifier)
         guard !matchPatterns.contains(where: { choices[$0.string] == false }) else { return ([], nil) }
+        // What this returns WebKit grants itself, whatever the site access.
+        let fits = { self.admits(extensionContext.uniqueIdentifier) { trial in
+            for pattern in matchPatterns { trial.setPermissionStatus(.grantedExplicitly, for: pattern) }
+        } }
+        guard fits() else { return ([], nil) }
         let sites = matchPatterns.sorted { $0.string < $1.string }
         guard await ask(wants: Extensions.wants(sites: sites, permissions: []), context: extensionContext) else { return ([], nil) }
+        // Again: another grant may have taken the room while the card waited.
+        guard fits() else { return ([], nil) }
         Extensions.choose(Dictionary(matchPatterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a }), for: extensionContext.uniqueIdentifier)
         return (matchPatterns, nil)
     }
