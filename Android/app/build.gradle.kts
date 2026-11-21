@@ -8,7 +8,10 @@ plugins {
 }
 android {
     namespace = "dev.yab.android"
+    // geckoview 158 AAR metadata demands compileSdk 37.2 (minCompileSdk=37,
+    // minCompileMinorSdk=2); AGP 9.4 enforces the minor where 9.1 did not.
     compileSdk = 37
+    compileSdkMinor = 2
     defaultConfig {
         applicationId = "dev.yab.android"
         minSdk = 29
