@@ -30,7 +30,7 @@ enum Cli {
                                      "--access", "--permission", "--resume", "--socket", "--no-person", "--wait-person"]
 
     /// Words less where to reach Yab: `yab status --socket X` is still `status`.
-    private static func unsocketed(_ words: [String]) -> [String] {
+    static func unsocketed(_ words: [String]) -> [String] {
         guard let at = words.firstIndex(of: "--socket") else { return words }
         var kept = words
         kept.removeSubrange(at..<min(at + 2, kept.count))
@@ -53,7 +53,7 @@ enum Cli {
         case "serve": return words.allSatisfy { ["--no-person", "--stop"].contains($0) } ? first : ""
         // "yab import chrome"; "yab import my contacts from gmail" is a task.
         case "import": return words.count <= 1 ? first : ""
-        case "guide": return rest.count <= 1 ? first : ""
+        case "guide": return words.count <= 1 ? first : ""
         case "session", "sessions": return fits(["list", "resume", "steer", "queue", "stop"]) ? first : ""
         case "memory": return fits(["search", "list", "show", "read", "path", "setup"]) ? first : ""
         case "skills", "skill": return fits(["list", "show", "read", "path"]) ? first : ""
@@ -65,7 +65,7 @@ enum Cli {
         case "mail": return rest.first?.lowercased() == "flush" || CliFiles.mailWords(words) ? first : ""
         // "yab files search lease"; "yab files from last week" is a task.
         case "files": return CliFiles.filesWords(words) ? first : ""
-        case "setup", "remove": return rest.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
+        case "setup", "remove": return words.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
         default: return first
         }
     }
@@ -76,13 +76,12 @@ enum Cli {
     /// written as, a joined name (`yab list-tabs`) or a command's near miss
     /// (`yab sesion`, `yab stauts`). Any other single word is a task
     /// (`yab continue`, `yab summarize`), whatever its case. Nil for a task,
-    /// and for the words the agent answers itself (`yab list`, `yab stop
-    /// ID`). Asked only of a bare `yab …` line: the words after `yab agent`
+    /// `yab list` and `yab stop ID` among them. Asked only of a bare `yab …` line: the words after `yab agent`
     /// or `yab session resume ID` are the task's own, and a one-word
     /// follow-up ("yes") is one.
     static func mistyped(_ args: [String]) -> String? {
         let words = unsocketed(args)
-        guard let first = words.first, !first.hasPrefix("-"), !agentWords.contains(first.lowercased()) else { return nil }
+        guard let first = words.first, !first.hasPrefix("-") else { return nil }
         if words.dropFirst().contains(where: { $0 == "-h" || $0 == "--help" }) { return first }
         guard words.count == 1 else { return nil }
         let word = first.lowercased()
@@ -90,9 +89,6 @@ enum Cli {
         if commandWords.contains(where: { nearMiss(word, of: $0) }) { return first }
         return nil
     }
-
-    /// What `AgentCLI.run` answers itself as a first word, not as a task.
-    private static let agentWords: Set = ["list", "stop", "steer", "queue", "memory"]
 
     /// Every first word `command` or the agent answers, for near misses.
     static let commandWords: Set = ["help", "version", "status", "quit", "serve", "import", "guide", "session",
@@ -127,6 +123,7 @@ enum Cli {
         setvbuf(stdout, nil, _IOLBF, 0)
         let rest = Array(args.dropFirst())
         let first = args.first ?? ""
+        let words = unsocketed(rest)
         let word = command(args)
         guard !args.isEmpty else { print(usage); exit(0) }
         switch word {
@@ -162,8 +159,8 @@ enum Cli {
             print("Quitting.")
             exit(0)
         case "guide":
-            guard let text = Guide.text(rest.first) else {
-                fail("No guide on \(rest.first ?? ""). There are: mcp, setup.", code: 2)
+            guard let text = Guide.text(words.first) else {
+                fail("No guide on \(words.first ?? ""). There are: mcp, setup.", code: 2)
             }
             print(text)
             exit(0)
@@ -176,9 +173,9 @@ enum Cli {
         case "every":
             every(rest)
         case "setup":
-            setup(rest, removing: false)
+            setup(words, removing: false)
         case "remove":
-            setup(rest, removing: true)
+            setup(words, removing: true)
         case let first where first.hasPrefix("http://") || first.hasPrefix("https://"):
             openTab(first)
         default:
@@ -186,7 +183,7 @@ enum Cli {
             if let typo = mistyped(args) {
                 fail("yab: no command \(typo); see yab help. A task is a sentence: yab \"what to do\"", code: 2)
             }
-            AgentCLI.run(args)
+            AgentCLI.run(args, verbs: false)
         }
     }
 
@@ -252,7 +249,7 @@ enum Cli {
     /// is running; with --no-person, nobody is at this Mac to sign in or
     /// say yes. --stop quits it.
     private static func serve(_ args: [String]) -> Never {
-        let socket = Wire.socket([])
+        let socket = Wire.socket(args)
         if args.contains("--stop") {
             let got = Wire.ask(socket, ["do": "app-quit", "force": true])
             if let error = got["error"] as? String { fail(Wire.running ? error : "Yab isn't running.") }
@@ -263,6 +260,8 @@ enum Cli {
         let nobody = args.contains("--no-person")
         var got = Wire.ask(socket, ["do": "app-serve", "nobody": nobody])
         if got["error"] != nil, !Wire.running {
+            // Only the default world can be started from here, as Wire.wake does.
+            guard socket == Wire.socket([]) else { fail("Nothing answers at \(socket). Start that Yab first.") }
             guard Wire.launch(socket, ["--headless", "--serve"] + (nobody ? ["--no-person"] : [])) else { fail("Yab didn't start.") }
             got = Wire.ask(socket, ["do": "app-status"])
         }
@@ -282,8 +281,8 @@ enum Cli {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
             fail("Ask the user to run `\(AgentSetup.command) import` in a terminal: it brings another browser's sign-ins into Yab.", code: 2)
         }
-        let socket = Wire.socket([])
-        guard let name = args.first else {
+        let socket = Wire.socket(args)
+        guard let name = unsocketed(args).first else {
             let got = Wire.ask(socket, ["do": "app-import"])
             if let error = got["error"] as? String { fail(error) }
             let browsers = got["browsers"] as? [String] ?? []

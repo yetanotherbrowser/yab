@@ -83,12 +83,7 @@ enum CliFiles {
     }
 
     static func run(_ noun: String, _ args: [String]) -> Never {
-        let words: [String] = {
-            guard let at = args.firstIndex(of: "--socket") else { return args }
-            var kept = args
-            kept.removeSubrange(at..<min(at + 2, kept.count))
-            return kept
-        }()
+        let words = Cli.unsocketed(args)
         guard let (tool, input, wantsPath) = call(noun, words) else {
             FileHandle.standardError.write(Data((usage + "\n").utf8))
             exit(2)

@@ -5088,7 +5088,16 @@ enum Shell {
 /// `yab agent "task"`: a task started in the running browser, followed here
 /// the way `aside "…"` is.
 enum AgentCLI {
-    static func run(_ args: [String]) -> Never {
+    static let verbs: Set<String> = ["steer", "queue", "memory", "stop", "list"]
+
+    /// Whether `arg` is one of `verbs` rather than a task's first word:
+    /// only after `yab agent` or from `yab session`, so "yab list my open
+    /// pull requests" is a task.
+    static func isVerb(_ arg: String, first: Bool, verbs allowed: Bool) -> Bool {
+        allowed && first && verbs.contains(arg)
+    }
+
+    static func run(_ args: [String], verbs allowed: Bool = true) -> Never {
         // Each step as it happens, even into a pipe.
         setvbuf(stdout, nil, _IOLBF, 0)
         let socket = Wire.socket(args)
@@ -5112,12 +5121,12 @@ enum AgentCLI {
             case "--wait-person": skip = true
             // The word other agent CLIs use for it, so the same flag works here.
             case "--permission": access = args[safe: i + 1] == "full-access" ? "full" : "browser"; skip = true
-            case "steer" where words.isEmpty, "queue" where words.isEmpty:
+            case "steer" where isVerb(arg, first: words.isEmpty, verbs: allowed), "queue" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let text = args.dropFirst(i + 2).filter { $0 != "--socket" && $0 != socket }.joined(separator: " ")
                 let got = Wire.ask(socket, ["do": arg == "steer" ? "agent-steer" : "agent-queue", "session": args[safe: i + 1] ?? "", "text": text])
                 print(got["error"] as? String ?? (arg == "steer" ? "Steered." : "Queued."))
                 exit(got["error"] == nil ? 0 : 1)
-            case "memory" where words.isEmpty:
+            case "memory" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let query = args.dropFirst(i + 1).filter { $0 != "--socket" && $0 != socket }.joined(separator: " ")
                 if query.isEmpty {
                     let got = Wire.ask(socket, ["do": "agent-memory-read", "file": "memory"])
@@ -5127,11 +5136,11 @@ enum AgentCLI {
                     for hit in got["hits"] as? [[String: Any]] ?? [] { print("\(hit["file"] ?? ""):\(hit["line"] ?? "")  \(hit["text"] ?? "")") }
                 }
                 exit(0)
-            case "stop" where words.isEmpty:
+            case "stop" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let got = Wire.ask(socket, ["do": "agent-stop", "session": args[safe: i + 1] ?? ""])
                 print(got["error"] as? String ?? "Stopped.")
                 exit(got["error"] == nil ? 0 : 1)
-            case "list" where words.isEmpty:
+            case "list" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let got = Wire.ask(socket, ["do": "agents"])
                 if let error = got["error"] as? String { FileHandle.standardError.write(Data((error + "\n").utf8)); exit(1) }
                 let all = got["agents"] as? [[String: Any]] ?? []

@@ -18,7 +18,7 @@ struct CliMistypedTests {
                       // Near a command's letters, but a word of its own.
                       ["email"], ["save"], ["very"], ["hello"],
                       ["what's new?"], ["https://example.com"], [],
-                      // What the agent answers itself.
+                      // What only `yab agent` answers itself.
                       ["list"], ["stop", "a1b2"], ["steer", "a1b2", "slower"], ["memory"],
                       // A flag first is the task's own, or a mistake the agent names.
                       ["--model", "opus", "tabs"]])
