@@ -8707,7 +8707,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
 
         let target: URL?
         if ending != nil {
-            target = Address.url(from: completed)
+            target = Browser.completionTarget(completed, among: offers)
         } else {
             target = searchEngine.destination(for: typed)
         }
@@ -8718,6 +8718,16 @@ final class Browser: NSObject, ObservableObject, Relaying {
         }
         if ending != nil || Address.url(from: typed) != nil { url = meant(url) }
         send(url, way)
+    }
+
+    /// Where Return on the gray ending goes. History keys drop the port
+    /// (Address.pretty), so nas:5000 is finished as "nas" and
+    /// localhost:3000 as "localhost": the row the ending finishes keeps the
+    /// address it was (#761). Otherwise the finished words, read as typed.
+    static func completionTarget(_ completed: String, among offers: [Suggestion]) -> URL? {
+        let whole = completed.lowercased()
+        let row = offers.first { $0.isPlace && $0.key == whole }?.url
+        return row?.port != nil ? row : Address.url(from: completed) ?? row
     }
 
     /// A place the field settled on, sent the way asked. A new tab from a

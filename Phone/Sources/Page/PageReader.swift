@@ -27,10 +27,14 @@ enum PageReader {
       if (window.__yabPhoneReader) return;
       var now = null;
       var AROUND = /(^|\s)(comments?|reply|replies|sidebar|related|recommend\w*|footer|promo|newsletter|share|social|advert\w*|sponsor\w*)([\s_-]|$)/i;
-      function around(el) {
+      // With `inline`, as the copy asks: a link set in a sentence is part of
+      // it (#706); a link that holds blocks is still a teaser card.
+      var CARD = 'p,div,section,article,h1,h2,h3,h4,h5,h6,ul,ol,li,table,blockquote,pre,figure';
+      function around(el, inline) {
         for (var up = el; up && up !== document.body && up !== document.documentElement; up = up.parentElement) {
           var tag = up.tagName;
-          if (tag === 'ASIDE' || tag === 'NAV' || tag === 'FOOTER' || tag === 'A' || tag === 'DIALOG') return true;
+          if (tag === 'ASIDE' || tag === 'NAV' || tag === 'FOOTER' || tag === 'DIALOG') return true;
+          if (tag === 'A' && (!inline || up.querySelector(CARD))) return true;
           var role = up.getAttribute('role');
           if (role === 'complementary' || role === 'navigation' || role === 'dialog' || role === 'alertdialog') return true;
           var name = (typeof up.className === 'string' ? up.className : '') + ' ' + (up.id || '');
@@ -126,7 +130,7 @@ enum PageReader {
           budget.letters += node.nodeValue.length;
           return document.createTextNode(node.nodeValue);
         }
-        if (node.nodeType !== 1 || blocked.has(node.tagName) || node.tagName === 'H1' || around(node)) return null;
+        if (node.nodeType !== 1 || blocked.has(node.tagName) || node.tagName === 'H1' || around(node, true)) return null;
         if (node.getAttribute('aria-hidden') === 'true' || node.hidden || !visible(node)) return null;
         var tag = allowed.has(node.tagName) ? node.tagName.toLowerCase() : 'div';
         var out = document.createElement(tag);
@@ -231,7 +235,8 @@ enum PageReader {
         window.scrollTo({left:0,top:0,behavior:'instant'});
         return true;
       }
-      window.__yabPhoneReader={readable:readable,on:on,enter:enter,leave:leave,theme:theme,documentID:String(Date.now())+':'+String(Math.random()),originalY:function(){return on()?now.y:null;}};
+      // html: what the closed reader shows, for tests in this isolated world.
+      window.__yabPhoneReader={readable:readable,on:on,enter:enter,leave:leave,theme:theme,documentID:String(Date.now())+':'+String(Math.random()),originalY:function(){return on()?now.y:null;},html:function(){return on()?now.article.innerHTML:null;}};
     })();
     """#
 }
