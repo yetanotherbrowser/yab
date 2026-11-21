@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<!-- The document Yab shows instead of a site whose certificate it cannot
+     vouch for. GeckoView grants error-page documents two privileged methods,
+     document.getFailedCertSecurityInfo() and document.addCertException(), and
+     this page is loaded as that error page, so it holds them. The browser
+     speaks back over window.prompt: the load URI carries a one-time nonce,
+     and the page asks with it before continuing, so no other page can ask as
+     this page does. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connection is not trusted</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    background: #f7f5f2;
+    color: #1c1b20;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #141318; color: #f2f0ec; }
+    .well { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.10); }
+    button.primary { background: #ece9e4; color: #1c1b20; }
+    button.primary:disabled { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.35); }
+    p, .muted, details.block, button.quiet { color: #a9a5ad; }
+    .continue { color: #f2f0ec; }
+    .continue:disabled { color: rgba(255,255,255,0.35); }
+  }
+  main { max-width: 420px; width: 100%; }
+  .well {
+    width: 72px; height: 72px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 16px; background: rgba(28,27,32,0.05);
+    border: 0.5px solid rgba(28,27,32,0.08);
+    margin-bottom: 20px;
+  }
+  .well svg { width: 34px; height: 34px; stroke: #c4442a; fill: none; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+  p { font-size: 14px; line-height: 1.5; margin: 0; color: #6d6a75; }
+  .row { display: flex; gap: 10px; margin-top: 22px; align-items: center; }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 10px; padding: 10px 18px; }
+  button.primary { background: #1c1b20; color: #f7f5f2; }
+  button.primary:disabled { background: rgba(28,27,32,0.12); color: rgba(28,27,32,0.35); cursor: default; }
+  button.quiet { background: transparent; color: #6d6a75; padding: 10px 4px; }
+  details.block, .block { margin-top: 10px; font-size: 13px; line-height: 1.5; color: #6d6a75; }
+  .block .names { margin-bottom: 6px; }
+  .block .trust { margin-bottom: 12px; }
+  .continue {
+    background: none; border: 0; padding: 0;
+    font: inherit; text-decoration: underline; cursor: pointer;
+    color: #1c1b20;
+  }
+  .continue:disabled { color: rgba(28,27,32,0.35); cursor: default; text-decoration: none; }
+</style>
+</head>
+<body>
+<main id="main" hidden>
+  <div class="well" aria-hidden="true">
+    <svg viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/>
+      <path d="M12 8v4"/>
+      <path d="M12 15.5h.01"/>
+    </svg>
+  </div>
+  <h1 id="title"></h1>
+  <p id="why"></p>
+  <div class="row">
+    <button class="primary" id="back">Go Back</button>
+    <button class="quiet" id="details">Details</button>
+  </div>
+  <div class="block" id="block" hidden>
+    <div class="names" id="names"></div>
+    <div class="trust" id="trust"></div>
+    <button class="continue" id="continue"></button>
+  </div>
+</main>
+<script>
+"use strict";
+(function () {
+  // documentURI is this resource URI; the parameters ride on its query.
+  var query = new URLSearchParams((document.documentURI || location.href).split("?")[1] || "");
+  var nonce = query.get("nonce") || "";
+  var auto = query.get("auto") === "1";
+  var failed = query.get("url") || "";
+  var info = null;
+  var ready = false;
+
+  function host() { try { return new URL(failed).hostname; } catch (e) { return ""; } }
+  function port() { try { var p = new URL(failed).port; return p ? Number(p) : 443; } catch (e) { return 443; } }
+
+  // What is wrong, in one sentence, as the Mac names it.
+  function whyText() {
+    if (!info) return "Yab doesn't trust whoever signed its certificate";
+    switch (info.overridableErrorCategory) {
+      case "expired-or-not-yet-valid": return "Its certificate has run out";
+      case "domain-mismatch": return "Its certificate is for another site";
+      default: return "Yab doesn't trust whoever signed its certificate";
+    }
+  }
+
+  function namesText() {
+    var issuer = info && info.issuerCommonName ? info.issuerCommonName : "";
+    var site = host();
+    if (!issuer) return site ? "Issued to " + site + "." : "";
+    return "Issued to " + site + ", by " + issuer + ".";
+  }
+
+  function trustText() {
+    return "Yab will trust this certificate on port " + port() + " until it changes.";
+  }
+
+  function draw(barred) {
+    document.getElementById("title").textContent = host() + " may not be who it says";
+    document.getElementById("why").textContent =
+      whyText() + ", so this device can't tell who is on the other end. Someone could read or change what you send here.";
+    document.getElementById("names").textContent = namesText();
+    document.getElementById("trust").textContent = trustText();
+    var onward = document.getElementById("continue");
+    onward.textContent = "Continue to " + host();
+    document.getElementById("main").hidden = false;
+    ready = true;
+    if (auto && !barred) askToContinue(true);
+  }
+
+  // The one channel a resource page has to the browser: window.prompt
+  // reaches Yab's prompt delegate, which answers allow/deny by the nonce
+  // without showing anything.
+  function ask(message) {
+    try { return window.prompt(message); } catch (e) { return null; }
+  }
+
+  function payload(action) {
+    return JSON.stringify({
+      nonce: nonce,
+      action: action,
+      host: host(),
+      port: port(),
+      chain: (info && info.certChainStrings) || []
+    });
+  }
+
+  function askToContinue(automatic) {
+    var answer = ask(payload(automatic ? "auto" : "continue"));
+    if (answer !== "allow") return; // Stay on the warning; the person decides.
+    // A double tap cannot fire a second ask while the override is recorded.
+    document.getElementById("continue").disabled = true;
+    // Gecko resolves the promise when the override is recorded and rejects
+    // when it is not; the resolved value carries nothing to check.
+    document.addCertException(true).then(function () {
+      location.reload();
+    }, function () {
+      if (ready) document.getElementById("continue").disabled = true;
+    });
+  }
+
+  document.getElementById("back").addEventListener("click", function () {
+    ask(payload("back"));
+    history.back();
+  });
+  document.getElementById("details").addEventListener("click", function () {
+    document.getElementById("block").hidden = false;
+    document.getElementById("details").hidden = true;
+  });
+  document.getElementById("continue").addEventListener("click", function () { askToContinue(false); });
+
+  try { info = document.getFailedCertSecurityInfo() || null; } catch (e) { info = null; }
+  // HSTS says nobody may continue, whatever the certificate.
+  var barred = info && info.hasHSTS === true;
+  if (barred) document.getElementById("continue").disabled = true;
+  draw(barred);
+})();
+</script>
+</body>
+</html>

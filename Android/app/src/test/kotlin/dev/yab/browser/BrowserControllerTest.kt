@@ -43,6 +43,7 @@ class BrowserControllerTest {
         val closed = mutableListOf<String>()
         val events = mutableListOf<String>()
         val endedPrivate = mutableListOf<WebsiteProfile>()
+        val forgottenPardons = mutableListOf<String>()
         var onEndPrivate: ((WebsiteProfile) -> Unit)? = null
         var onActivate: (() -> Unit)? = null
         var back: String? = null
@@ -70,6 +71,7 @@ class BrowserControllerTest {
         override fun endPrivateSession(profile: WebsiteProfile) {
             endedPrivate += profile; events += "end:${profile.id}"; onEndPrivate?.invoke(profile)
         }
+        override fun forgetWebsitePardons(profile: String) { forgottenPardons += profile }
         override suspend fun clearWebsiteData(profileIds: Set<String>) {}
     }
 
@@ -394,6 +396,25 @@ class BrowserControllerTest {
         assertEquals(BrowserSpace.SHARED_PROFILE, engine.activated.last().second.id)
         runCurrent()
         assertFalse(repository.value!!.spaces.first { it.id == id }.ownSignIns)
+    }
+
+    @Test fun aDeletedSpaceForgetsItsPardonsWhateverItsSignInSetting() = runTest {
+        val engine = Engine()
+        val controller = BrowserController(Repository(), engine, backgroundScope)
+        runCurrent()
+        controller.addSpace("Work")
+        val id = controller.state.value.space!!.id
+        // The space once had its own sign-ins, then went back to shared: its
+        // old profile's decisions still went with it when it was deleted.
+        controller.changeSignIns(id, true)
+        controller.changeSignIns(id, false)
+        controller.deleteSpace(id)
+        assertTrue(engine.forgottenPardons.contains("space-$id"))
+        // A space that never had its own sign-ins forgets too, harmlessly.
+        controller.addSpace("Later")
+        val later = controller.state.value.space!!.id
+        controller.deleteSpace(later)
+        assertTrue(engine.forgottenPardons.contains("space-$later"))
     }
 
     @Test fun syncImportPreservesPrivateMemoryAndNeverExportsIt() = runTest {

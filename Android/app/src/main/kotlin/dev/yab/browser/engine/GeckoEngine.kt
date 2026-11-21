@@ -54,6 +54,7 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.StorageController
 import org.mozilla.geckoview.WebExtension
 import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.WebResponse
@@ -81,6 +82,7 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
         var document: String = UUID.randomUUID().toString(), var savedState: String? = null, var alive: Boolean = true,
         var observed: Boolean = false, var editing: Boolean = false, var permissions: Int = 0, var fullScreen: Boolean = false,
         var mediaAccessGranted: Boolean = false, var domPlaying: Boolean = false,
+        var interstitial: Boolean = false,
         var contentDocument: String? = null,
         var iconObservation: Pair<String, String?>? = null,
         val thumbnailSession: String = UUID.randomUUID().toString(),
@@ -200,6 +202,8 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
     var permissionRequest: (Array<String>, (Boolean) -> Unit) -> Unit = { _, answer -> answer(false) }
     private var foreground = true
     val siteSettings = SiteSettingsStore(File(context.filesDir, "site-settings.json")) { stateWriter.execute(it) }
+    val certificateExceptions = CertificateExceptionsStore(File(context.filesDir, "certificate-exceptions.json")) { stateWriter.execute(it) }
+    val untrustedCertificates = UntrustedCertificates(certificateExceptions)
     private val mutableConnections = MutableStateFlow<Map<String, SiteConnection>>(emptyMap())
     val connections = mutableConnections.asStateFlow()
     private data class OwnedContextMenu(val request: PageContextMenu, val entry: Entry, val document: String)
@@ -361,6 +365,21 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
                 return result
             }
             override fun onLoadError(s: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
+                // A certificate this device cannot vouch for stands in for the
+                // site as Yab's own interstitial, which can continue past the
+                // warning. HSTS and HTTPS-only upgrades are policy, not a
+                // certificate question, and keep the plain failure card; so
+                // does plain http, whose errors carry no certificate to excuse.
+                val failed = uri ?: entry.page.url ?: entry.tab.url
+                if (error.category == WebRequestError.ERROR_CATEGORY_SECURITY &&
+                    error.code != WebRequestError.ERROR_BAD_HSTS_CERT &&
+                    error.code != WebRequestError.ERROR_HTTPS_ONLY &&
+                    webHost(failed) != null &&
+                    runCatching { URI(failed).scheme == "https" }.getOrDefault(false)) {
+                    val pardon = untrustedCertificates.pardoned(profile.id, failed)
+                    update(tab.id, entry) { it.copy(loading = false, error = null) }
+                    return GeckoResult.fromValue(untrustedCertificates.interstitialUri(profile.id, failed, pardon))
+                }
                 update(tab.id, entry) { it.copy(loading = false, error = "This page couldn't load. Check the connection and try again.") }
                 return null
             }
@@ -369,6 +388,14 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
             override fun onPageStart(s: GeckoSession, url: String) {
                 if (pages[tab.id] !== entry || !entry.alive) return
                 trace("start ${tab.place} $url")
+                // The untrusted-certificate interstitial is Yab's own document
+                // standing in for the site; the address keeps naming the site.
+                if (url.startsWith(UntrustedCertificates.INTERSTITIAL)) {
+                    entry.interstitial = true
+                    update(tab.id, entry) { it.copy(loading = false, progress = 0f, error = null) }
+                    return
+                }
+                entry.interstitial = false
                 (views[tab.id]?.get() as? HistorySwipeView)?.revokeAutofill(cancelFramework = selected == tab.id)
                 revokePagingFrame()
                 dismissContextMenu(tab.id)
@@ -400,6 +427,10 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
             override fun onProgressChange(s: GeckoSession, progress: Int) { update(tab.id, entry) { it.copy(progress = progress / 100f) } }
             override fun onPageStop(s: GeckoSession, success: Boolean) {
                 if (pages[tab.id] !== entry || !entry.alive) return
+                if (entry.interstitial) {
+                    update(tab.id, entry) { it.copy(loading = false, progress = 1f) }
+                    return
+                }
                 if (success && entry.page.loading && (entry.tab.isBlank || entry.page.url?.let {
                         Uri.parse(it).scheme in setOf("http", "https") } == true)) entry.recovery.succeeded()
                 if (entry.page.url?.let { Uri.parse(it).scheme in setOf("http", "https") } == true) entry.popupOrigin = null
@@ -978,6 +1009,12 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
     fun rebindPrompts(next: NativePagePrompts?) {
         prompts?.dismiss()
         prompts = next
+        // The interstitial document speaks with the browser through the text
+        // prompt channel: asks with its nonce, answered allow or deny with no
+        // dialog. Every other prompt stays the page's own dialog.
+        next?.textBridge = { prompt ->
+            untrustedCertificates.respond(prompt.message)?.let { GeckoResult.fromValue(prompt.confirm(it)) }
+        }
         pages.values.filter { it.alive }.forEach { it.session.promptDelegate = next }
     }
     fun releaseViews() {
@@ -1053,7 +1090,7 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
         historyCaptureScope.cancel(); historyPaintCallbacks.clear()
         old.forEach { retireBridge(it); onSessionClosed(it.session); if (it.alive) it.session.close() }
         privateKeepers.toMap().forEach { (profile, keeper) -> retirePrivateKeeper(profile, keeper) }
-        mutableConnections.value = emptyMap(); siteSettings.forgetPrivate()
+        mutableConnections.value = emptyMap(); siteSettings.forgetPrivate(); certificateExceptions.forgetPrivate()
         stateWriter.shutdown()
     }
 
@@ -1776,10 +1813,22 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
             onState(id, stopped)
         }
     }
+    override fun forgetWebsitePardons(profile: String) {
+        // The profile's decisions are gone; Gecko's overrides behind them go
+        // on the same trip. The base-domain clear is the only public API that
+        // reaches a remembered override, and it carries other data of that
+        // host (cookies, site data, both privacy jars) with it, which a
+        // deleted space's remaining footprint warrants.
+        certificateExceptions.pardonedHosts(profile).forEach { host ->
+            runtime.storageController.clearDataFromBaseDomain(host, StorageController.ClearFlags.ALL)
+        }
+        certificateExceptions.forgetProfile(profile)
+    }
+
     private fun closeUnusedPrivateKeepers() {
         privateKeepers.keys.filter { profile -> pages.values.none { it.profile.id == profile } &&
             suspended.values.none { it.profile.id == profile } && closedMemories.none { it.profile.id == profile } }.forEach { profile -> privateKeepers[profile]?.let { retirePrivateKeeper(profile, it) } }
-        if (pages.values.none { it.profile.isPrivate } && suspended.values.none { it.profile.isPrivate } && closedMemories.none { it.profile.isPrivate }) siteSettings.forgetPrivate()
+        if (pages.values.none { it.profile.isPrivate } && suspended.values.none { it.profile.isPrivate } && closedMemories.none { it.profile.isPrivate }) { siteSettings.forgetPrivate(); certificateExceptions.forgetPrivate() }
     }
     /** Cancel the old OS proposal before a successor can supply a new structure. */
     private fun revokeAutofill(privateOnly: Boolean = false) {
@@ -1802,6 +1851,20 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
                 pages.filterValues { it.profile.id == profile }.keys.toList().forEach(::close)
                 suspended.filterValues { it.profile.id == profile }.keys.toList().forEach(::close)
                 runtime.storageController.clearDataForSessionContext(profile)
+                // A cleared profile's pardons are gone, so Gecko's overrides
+                // behind them must go too: without this, a later load of the
+                // same host succeeds on the dead decision without ever
+                // reaching the warning. deleteBySite revokes every port of the
+                // host, and no finer key exists in the public API. The hosts
+                // are collected before the ledger forgets the profile.
+                val pardoned = certificateExceptions.pardonedHosts(profile)
+                certificateExceptions.forgetProfile(profile)
+                pardoned.forEach { host ->
+                    val done = CompletableDeferred<Unit>()
+                    runtime.storageController.clearDataFromBaseDomain(host, StorageController.ClearFlags.ALL)
+                        .accept({ done.complete(Unit) }, { done.complete(Unit) })
+                    done.await()
+                }
             }
         }
         // FIFO barrier also covers onSessionStateChange writes queued before close().

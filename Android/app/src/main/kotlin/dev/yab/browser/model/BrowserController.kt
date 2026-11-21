@@ -1566,6 +1566,10 @@ class BrowserController(
         val space = public.firstOrNull { it.id == id } ?: return
         if (public.size <= 1 || public.first().id == id) return
         space.tabs.forEach { engine.close(it.id) }
+        // Whatever this space ever excused went with it, under the profile its
+        // own sign-ins once used; forgetting a profile that never had one is
+        // a no-op.
+        engine.forgetWebsitePardons("space-" + space.id)
         update(persist = true) { it.copy(spaces = it.spaces.filterNot { item -> item.id == id }, selectedSpaceId = if (it.selectedSpaceId == id) public.first().id else it.selectedSpaceId, workspace = null) }
         activate()
     }

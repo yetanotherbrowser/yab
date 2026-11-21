@@ -20,6 +20,8 @@ interface BrowserEngine {
     fun releaseUndo(memory: BrowserPageMemento) {}
     /** Last logical Private tab closed: expire native Undo state from that RAM-only session. */
     fun endPrivateSession(profile: WebsiteProfile) {}
+    /** A profile's website data erased: the endpoints it excused ask again. */
+    fun forgetWebsitePardons(profile: String) {}
     fun reconcileTabs(spaces: List<BrowserSpace>) {}
     fun invalidateTransientOwnership() {}
     suspend fun clearWebsiteData(profileIds: Set<String>)

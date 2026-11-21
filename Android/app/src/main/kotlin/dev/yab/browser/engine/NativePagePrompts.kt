@@ -37,6 +37,10 @@ class NativePagePrompts(
     private val canPresent: () -> Boolean = { true },
     private val requestFiles: (Array<String>, (List<Uri>) -> Unit) -> Unit,
 ) : GeckoSession.PromptDelegate {
+    /** The interstitial bridge: asked before any dialog shows, so a resource
+     * error page can speak with the browser without a dialog. Null answer
+     * falls through to the page's own dialog. */
+    var textBridge: ((GeckoSession.PromptDelegate.TextPrompt) -> GeckoResult<GeckoSession.PromptDelegate.PromptResponse>?)? = null
     private var dialog: AlertDialog? = null
     private val mutablePending = kotlinx.coroutines.flow.MutableStateFlow(false)
     val pending: kotlinx.coroutines.flow.StateFlow<Boolean> = mutablePending
@@ -136,11 +140,14 @@ class NativePagePrompts(
             .setPositiveButton("OK") { _, _ -> done { prompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE) } }
             .setNegativeButton("Cancel") { _, _ -> done { prompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE) } }
     }
-    override fun onTextPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.TextPrompt) = respond(session, prompt) { builder, done ->
-        val input = EditText(activity).apply { setText(prompt.defaultValue) }
-        builder.setMessage(prompt.message).setView(input)
-            .setPositiveButton("OK") { _, _ -> done { prompt.confirm(input.text.toString()) } }
-            .setNegativeButton("Cancel") { _, _ -> done { prompt.dismiss() } }
+    override fun onTextPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.TextPrompt): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+        textBridge?.let { bridge -> bridge(prompt)?.let { return it } }
+        return respond(session, prompt) { builder, done ->
+            val input = EditText(activity).apply { setText(prompt.defaultValue) }
+            builder.setMessage(prompt.message).setView(input)
+                .setPositiveButton("OK") { _, _ -> done { prompt.confirm(input.text.toString()) } }
+                .setNegativeButton("Cancel") { _, _ -> done { prompt.dismiss() } }
+        }
     }
 
     override fun onBeforeUnloadPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.BeforeUnloadPrompt) =
