@@ -1794,6 +1794,7 @@ final class SyncCenter: ObservableObject {
                 if record.id.hasPrefix(SyncShapes.shortcutPrefix) || (split && record.id == SyncShapes.shortcutsKey) { continue }
                 // A Mac in use joining keeps its pins apart (SharedPins.joining).
                 if record.id == SharedPins.key, SharedPins.holdsApart(Store.settings) { continue }
+                if record.id == LinkRoutes.manualKey, !record.alive() { continue }
                 if [LinkRoutes.key, LinkRoutes.manualKey, LinkRoutes.keptKey, LinkRoutes.declinedKey].contains(record.id) {
                     routeKeys.insert(record.id)
                 }
