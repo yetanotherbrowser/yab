@@ -173,6 +173,16 @@ struct SyncShapesTests {
         #expect((back["shortcuts"] as? [String: String]) == ["newTab": "cmd+t"])
     }
 
+    @Test func routePriorityTravelsWithRulesButNotAnOldLocalOrder() throws {
+        let rules = Data([1, 2, 3])
+        let out = SyncShapes.settings([LinkRoutes.key: rules, LinkRoutes.manualKey: true,
+                                       "links.routes.display-order": ["old.example"]])
+        let back = out.compactMapValues { $0["value"].flatMap(SyncShapes.plist) }
+        #expect(back[LinkRoutes.key] as? Data == rules)
+        #expect(back[LinkRoutes.manualKey] as? Bool == true)
+        #expect(back["links.routes.display-order"] == nil)
+    }
+
     /// A key changed on one Mac and another on a second both stay.
     @Test func shortcutsFromTwoMacsAddUp() throws {
         let ja = try Journal(path: nil, device: "a"), jb = try Journal(path: nil, device: "b")

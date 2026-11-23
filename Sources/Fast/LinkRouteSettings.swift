@@ -22,8 +22,10 @@ struct LinkRouteSettings: View {
                     selection: Binding(get: { routes.defaultSpace }, set: { routes.setDefaultSpace($0) }), trailing: true)
             }
             .settingsAnchor("link-routes-default")
+            SettingsSwitch("Use manual rule priority", isOn: $routes.manualPriority)
+                .settingsAnchor("link-routes-manual")
             if !routes.routes.isEmpty {
-                LinkRouteList(items: routes.displayedRoutes, spaces: spaces, move: { routes.move($0, to: $1) })
+                LinkRouteList(items: routes.displayedRoutes, spaces: spaces, manual: routes.manualPriority, move: { routes.move($0, to: $1) })
                     // The form's inset round a cell traded for the
                     // list's own air, as the spaces' list does.
                     .padding(.vertical, SettingsList.air - 10) // design: the form's own inset round a cell, traded for the list's air
@@ -46,7 +48,11 @@ struct LinkRouteSettings: View {
             .textCase(nil)
             .settingsAnchor("link-routes")
         } footer: {
-            SettingsNote("The first matching rule wins. Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
+            if routes.manualPriority {
+                SettingsNote("The first matching rule wins. Drag to reorder. Rules override the default.")
+            } else {
+                SettingsNote("Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
+            }
         }
     }
 }
@@ -54,6 +60,7 @@ struct LinkRouteSettings: View {
 private struct LinkRouteList: View {
     let items: [LinkRoute]
     let spaces: [Space]
+    let manual: Bool
     let move: (String, Int) -> Void
     @State private var lifted: String?
     @State private var lift: CGFloat = 0
@@ -63,9 +70,9 @@ private struct LinkRouteList: View {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, route in
                 LinkRouteRow(route: route, spaces: spaces,
                              lifted: lifted == route.id, rule: index > 0 && lifted != route.id,
-                             grip: items.count > 1 ? reorder(route) : nil,
-                             moveUp: index > 0 ? { move(route.id, index - 1) } : nil,
-                             moveDown: index < items.count - 1 ? { move(route.id, index + 1) } : nil)
+                             grip: manual && items.count > 1 ? reorder(route) : nil,
+                             moveUp: manual && index > 0 ? { move(route.id, index - 1) } : nil,
+                             moveDown: manual && index < items.count - 1 ? { move(route.id, index + 1) } : nil)
                     .settingsAnchor("link-route:" + route.site)
                     .offset(y: shift(index))
                     .zIndex(lifted == route.id ? 1 : 0)

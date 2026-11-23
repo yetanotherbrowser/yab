@@ -1787,18 +1787,23 @@ final class SyncCenter: ObservableObject {
 
         if let settings = by[SyncShapes.setting] {
             let split = Store.settings.bool(forKey: SyncShapes.shortcutsSplit)
+            var routeKeys = Set<String>()
             for record in settings where SyncShapes.syncs(record.id) && (SyncAddons.on || !SyncShapes.extensionSetting(record.id)) {
                 // Keys come one an action once this Mac has split them, and
                 // until then as the whole dictionary (SyncShapes, shortcuts).
                 if record.id.hasPrefix(SyncShapes.shortcutPrefix) || (split && record.id == SyncShapes.shortcutsKey) { continue }
                 // A Mac in use joining keeps its pins apart (SharedPins.joining).
                 if record.id == SharedPins.key, SharedPins.holdsApart(Store.settings) { continue }
+                if [LinkRoutes.key, LinkRoutes.manualKey, LinkRoutes.keptKey, LinkRoutes.declinedKey].contains(record.id) {
+                    routeKeys.insert(record.id)
+                }
                 if record.alive(), let value = record["value"].flatMap(SyncShapes.plist) {
                     Store.settings.set(value, forKey: record.id)
                 } else {
                     Store.settings.removeObject(forKey: record.id)
                 }
             }
+            if !routeKeys.isEmpty { LinkRoutes.shared.adoptSyncedSettings(routeKeys) }
             let fresh = Preferences()
             for browser in BrowserWindows.shared.browsers {
                 let paint = fresh.usesSpaces ? browser.space.paint : nil

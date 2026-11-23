@@ -86,6 +86,7 @@ struct NativeSetting {
     /// Mail's and Sync's settings, the field's, the icon's and the
     /// snippets', each written the way its row in Settings writes it.
     static var kept: [Self] { [
+        flag("link-routes-manual", "Use manual rule priority", key: LinkRoutes.manualKey, default: false) { LinkRoutes.shared.manualPriority = $0 },
         flag("suggestions", "Suggestions under the field", key: "hints.noticing", default: true) { Hints.shared.suggesting = $0 },
         flag("site-search-space", "Space after a site's alias starts its search, as Tab does (Chrome's Space or Tab; off is Tab alone)",
              key: Scopes.spaceKey, default: true),
