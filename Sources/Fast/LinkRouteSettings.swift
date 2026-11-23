@@ -46,7 +46,7 @@ struct LinkRouteSettings: View {
             .textCase(nil)
             .settingsAnchor("link-routes")
         } footer: {
-            SettingsNote("Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
+            SettingsNote("The first matching rule wins. Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
         }
     }
 }
