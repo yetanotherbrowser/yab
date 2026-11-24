@@ -1,9 +1,16 @@
 import Foundation
 
-/// Cursor's Agent Client Protocol, JSON-RPC over newline-delimited stdio.
-/// No login, force flag or permission policy is changed by this client.
+/// An agent's Agent Client Protocol, JSON-RPC over newline-delimited stdio.
+/// Cursor first; OpenCode's `opencode acp` speaks the same protocol. No
+/// login, force flag or permission policy is changed by this client.
 @MainActor
 final class CursorServer {
+    /// The provider's name, in every word people read.
+    private let name: String
+    /// The read-only mode a text-only run is set to before its prompt, or
+    /// nil when the provider has no mode worth setting (OpenCode has no
+    /// "ask"; its session/new answer is taken as it comes).
+    private let askMode: String?
     enum Heard {
         case ready(String)
         case delta(item: String, words: String, thinking: Bool)
@@ -33,7 +40,11 @@ final class CursorServer {
     private var textOnly = false
     private(set) var thread: String?
 
-    init(write: @escaping (Data) -> Void) { self.write = write }
+    init(write: @escaping (Data) -> Void, name: String = "Cursor", askMode: String? = "ask") {
+        self.write = write
+        self.name = name
+        self.askMode = askMode
+    }
 
     func open(thread: String?, cwd: String, mcp: [[String: Any]], textOnly: Bool = false) {
         self.textOnly = textOnly
@@ -91,7 +102,7 @@ final class CursorServer {
                    let data = try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys]) {
                     detail += (detail.isEmpty ? "" : "\n\n") + String(decoding: data, as: UTF8.self)
                 }
-                return [.permission(id: key, title: tool["title"] as? String ?? "Cursor asks for permission",
+                return [.permission(id: key, title: tool["title"] as? String ?? "\(name) asks for permission",
                                     detail: detail, options: options)]
             }
             guard method == "session/update", !loading, params["sessionId"] as? String == thread,
@@ -101,12 +112,12 @@ final class CursorServer {
                 guard let content = update["content"] as? [String: Any], content["type"] as? String == "text",
                       let text = content["text"] as? String else { return [] }
                 let thinking = update["sessionUpdate"] as? String == "agent_thought_chunk"
-                return [.delta(item: "cursor.\(streamID).\(turn).\(thinking ? "thinking" : "answer")", words: text, thinking: thinking)]
+                return [.delta(item: "\(name.lowercased()).\(streamID).\(turn).\(thinking ? "thinking" : "answer")", words: text, thinking: thinking)]
             case "tool_call", "tool_call_update":
                 guard let id = update["toolCallId"] as? String else { return [] }
                 let status = update["status"] as? String ?? "in_progress"
-                return [.tool(ChatItem(id: "cursor.tool.\(streamID)." + id, kind: .tool,
-                    name: update["title"] as? String ?? "Cursor tool", text: Self.text(update["content"]),
+                return [.tool(ChatItem(id: "\(name.lowercased()).tool.\(streamID)." + id, kind: .tool,
+                    name: update["title"] as? String ?? "\(name) tool", text: Self.text(update["content"]),
                     state: status == "failed" ? .failed : status == "completed" ? .done : .running))]
             default: return []
             }
@@ -114,9 +125,9 @@ final class CursorServer {
         guard let id = message["id"] as? Int, let what = pending.removeValue(forKey: id) else { return [] }
         if let error = message["error"] as? [String: Any] {
             busy = false
-            let words = error["message"] as? String ?? "Cursor turned the request down."
+            let words = error["message"] as? String ?? "\(name) turned the request down."
             if error["code"] as? Int == -32000 {
-                return [.failed("Cursor needs you to sign in again. Sign in from Settings › AI › Models, then try again.")]
+                return [.failed("\(name) needs you to sign in again. Sign in from Settings › AI › Models, then try again.")]
             }
             return [.failed(words)]
         }
@@ -126,31 +137,32 @@ final class CursorServer {
         switch what {
         case .initialize:
             guard result["protocolVersion"] as? Int == 1, let opening else {
-                return [.failed("This Cursor is too old for Yab. Update it, then try again.")]
+                return [.failed("This \(name) is too old for Yab. Update it, then try again.")]
             }
             var params: [String: Any] = ["cwd": opening.cwd, "mcpServers": opening.mcp]
             loading = opening.thread != nil
             if let thread = opening.thread {
                 guard (result["agentCapabilities"] as? [String: Any])?["loadSession"] as? Bool == true else {
-                    return [.failed("Cursor can't pick this chat up again. Start a new chat.")]
+                    return [.failed("\(name) can't pick this chat up again. Start a new chat.")]
                 }
                 params["sessionId"] = thread
             }
             request(loading ? "session/load" : "session/new", params, .session)
         case .session:
             guard let id = opening?.thread ?? result["sessionId"] as? String, !id.isEmpty else {
-                return [.failed("Cursor didn't start the chat. Try again.")]
+                return [.failed("\(name) didn't start the chat. Try again.")]
             }
             thread = id
             opening = nil
             if textOnly {
+                guard let askMode else { return ready(id) }
                 loading = true
-                request("session/set_mode", ["sessionId": id, "modeId": "ask"], .mode)
+                request("session/set_mode", ["sessionId": id, "modeId": askMode], .mode)
                 return []
             }
             return ready(id)
         case .mode:
-            guard let thread else { return [.failed("Cursor didn't start the chat. Try again.")] }
+            guard let thread else { return [.failed("\(name) didn't start the chat. Try again.")] }
             return ready(thread)
         case .prompt:
             busy = false
