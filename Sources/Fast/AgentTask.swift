@@ -205,7 +205,7 @@ extension Agents {
     /// Where a task would find it (AgentLaunch.here): files alone don't
     /// rule out a connected Claude or Codex on the login shell's PATH.
     static var installed: Bool {
-        ["claude", "codex", "cursor"].contains { AgentLaunch.here($0) == true }
+        ["claude", "codex", "cursor", "opencode"].contains { AgentLaunch.here($0) == true }
             || (GeminiSupport.toolsProven && GeminiAccount.shared.ready)
     }
 

@@ -388,7 +388,7 @@ enum NativeActions {
         "show-yab", "experimental-notes", "notes-root", "notes-new", "notes-daily", "notes-writing", "shield-lists", "experimental-mail",
         "experimental-requests", "experimental-menu-commands", "agents-row", "site-search", "quick-action:new-document", "quick-action:new-meeting",
         "reachable", "bring-in", "engine-default", "bring-tabs", "import-firefox", "import-bookmarks-file", "import-history-file", "other-history",
-        "import-extensions", "agents-ask-sound", "dev-agents-allowed", "agents-claude", "agents-codex", "agents-cursor", "agents-details",
+        "import-extensions", "agents-ask-sound", "dev-agents-allowed", "agents-claude", "agents-codex", "agents-cursor", "agents-opencode", "agents-details",
         "dev-measure", "dev-servers", "dev-command", "dev-claude", "dev-codex", "dev-mcp", "agents-skills", "agents-model-tasks",
         "agents-model-commands", "agents-model-drafts", "agents-model-field", "models-add", "models-mac", "models-lists", "memory-notes",
         "memory-finder", "skills-new", "skills-yours", "skills-built-in", "space-dots", "field-size", "reading-mode", "site-notifications",

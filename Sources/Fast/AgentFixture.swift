@@ -50,6 +50,6 @@ enum AgentFixture {
         let env = ["HOME": home.path, "ZDOTDIR": home.path, "SHELL": "/bin/sh", "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
                    "TMPDIR": tmp.path, "CLAUDE_CONFIG_DIR": home.path, "CODEX_HOME": home.path + "/.codex",
                    "YAB_CONSENT_FIXTURE_LOG": home.path + "/cli.jsonl", "YAB_CONSENT_FIXTURE_IDENTITY": manifest.metadata[0].path]
-        return Shell.Found(claude: binaries["claude"], codex: binaries["codex"], cursor: binaries["cursor"], gemini: binaries["gemini"], env: env)
+        return Shell.Found(claude: binaries["claude"], codex: binaries["codex"], cursor: binaries["cursor"], gemini: binaries["gemini"], opencode: binaries["opencode"], env: env)
     }
 }

@@ -56,7 +56,7 @@ final class ProviderConsent {
     /// consent, or none on purpose, is not touched. Test runs only.
     static func standIns(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Set<String> {
         guard Store.testing, !Store.unitTests else { return [] }
-        let names = ["claude": "YAB_AGENT_CLAUDE", "codex": "YAB_AGENT_CODEX", "cursor": "YAB_AGENT_CURSOR", "gemini": "YAB_AGENT_GEMINI"]
+        let names = ["claude": "YAB_AGENT_CLAUDE", "codex": "YAB_AGENT_CODEX", "cursor": "YAB_AGENT_CURSOR", "gemini": "YAB_AGENT_GEMINI", "opencode": "YAB_AGENT_OPENCODE"]
         return Set(names.filter { environment[$0.value]?.isEmpty == false }.keys)
     }
 

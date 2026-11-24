@@ -200,7 +200,7 @@ struct CursorPlanTests {
     @Test func everyPlanSaysItselfFromOneTable() {
         // Connect's plans are the table's, less Gemini, which signs in from its own row.
         #expect(AgentPlan.connectable.map(\.cli) == AgentSetupModel.clis)
-        #expect(AgentPlan.all.map(\.name) == ["Claude", "ChatGPT", "Cursor", "Gemini"])
+        #expect(AgentPlan.all.map(\.name) == ["Claude", "ChatGPT", "Cursor", "Gemini", "OpenCode"])
         // One mark for Cursor everywhere a plan's mark shows.
         #expect(FieldAnswer.mark("cursor") == "brand.cursor")
         #expect(FieldAnswer.mark("claude") == "brand.claude")

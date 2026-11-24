@@ -260,6 +260,7 @@ final class PlanAccounts: ObservableObject {
     static func environment(_ account: PlanAccount, base: [String: String],
                             secret: ((String) -> String?)?) -> [String: String] {
         if account.cli == "cursor" { return CursorRunner.environment(base) }
+        if account.cli == "opencode" { return OpenCodeRunner.environment(base) }
         var env = base
         if account.cli == "claude", !account.usual {
             env[Shell.claudeToken] = nil
@@ -425,6 +426,13 @@ final class PlanAccounts: ObservableObject {
             // Cursor has no quota endpoint. Refresh its actual login when
             // the model picker opens rather than guessing from keychain names.
             let account = account("cursor") ?? PlanAccount(id: "cursor", cli: "cursor")
+            await remember(account, binary: binary, base: found.env, permit: permit)
+            return
+        }
+        if cli == "opencode" {
+            // OpenCode's catalog is its account's, and its auth list says
+            // nothing of quotas. Refresh its login as Cursor's is.
+            let account = account("opencode") ?? PlanAccount(id: "opencode", cli: "opencode")
             await remember(account, binary: binary, base: found.env, permit: permit)
             return
         }
@@ -784,6 +792,7 @@ final class PlanAccounts: ObservableObject {
             return (named, account["emailAddress"]?.nilIfEmpty, nil)
         }
         if cli == "cursor" { return CursorRunner.identity(env: env) }
+        if cli == "opencode" { return OpenCodeRunner.identity(env: env) }
         let given = { (key: String) in !(env[key] ?? "").isEmpty }
         if cli == "codex" { return codexAuth(home: env["CODEX_HOME"]) }
         let folder = env["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
@@ -900,6 +909,7 @@ final class PlanAccounts: ObservableObject {
     static func identify(_ account: PlanAccount, binary: String, env: [String: String], permit: ProviderLaunchPermit? = nil) async -> (signedIn: Bool, email: String?, plan: String?) {
         guard let permit = permit ?? ProviderConsent.shared.permit(account.cli) ?? ProviderConsent.shared.connectionPermit(account.cli), permit.valid else { return (false, nil, nil) }
         if account.cli == "cursor" { return await CursorRunner.identify(binary: binary, env: env, permit: permit) }
+        if account.cli == "opencode" { return await OpenCodeRunner.identify(binary: binary, env: env, permit: permit) }
         if account.cli == "codex" {
             let (code, _) = await Shell.run(binary, ["login", "status"], env: env, permit: permit)
             guard permit.valid else { return (false, nil, nil) }
@@ -926,7 +936,7 @@ final class PlanAccounts: ObservableObject {
     /// Renewals write to a fresh folder. Neither cancellation nor a
     /// different identity can replace the account whose login was renewed.
     func prepareSignIn(_ cli: String, replacing id: String? = nil) -> PlanAccount {
-        if cli == "cursor" { return account("cursor") ?? PlanAccount(id: "cursor", cli: "cursor") }
+        if cli == "cursor" || cli == "opencode" { return account(cli) ?? PlanAccount(id: cli, cli: cli) }
         // A first-ever login can still connect the CLI on this Mac. Once
         // its identity is known, every renewal gets a separate folder.
         if let first = account(id), first.email == nil, first.home == nil { return first }
@@ -1023,7 +1033,7 @@ final class PlanAccounts: ObservableObject {
     /// (so the account the site already knows you by doesn't answer), and
     /// the new one last in the order.
     func add(_ cli: String, _ browser: Browser) {
-        if cli == "cursor" { AgentSetupModel.shared.connect([cli], browser); return }
+        if cli == "cursor" || cli == "opencode" { AgentSetupModel.shared.connect([cli], browser); return }
         guard adding == nil else { return }
         let authority = consent ?? ProviderConsent.shared
         authority.beginConnection(cli)

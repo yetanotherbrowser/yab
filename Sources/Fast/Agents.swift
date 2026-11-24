@@ -24,7 +24,7 @@ import SyncKit
 /// from outside, or a chat brought from Aside. The raw values are what
 /// Session.cli holds. (AgentCLI is the `yab agent` command line.)
 enum AgentKind: String, Sendable {
-    case claude, codex, cursor, gemini, external, aside
+    case claude, codex, cursor, gemini, opencode, external, aside
 }
 
 @MainActor
@@ -117,6 +117,8 @@ final class Agents: ObservableObject {
         var memoryOnly = false
         /// Codex through `codex app-server`, for as long as its process is up.
         var server: CodexServer?
+        /// Cursor and OpenCode, through the Agent Client Protocol
+        /// (CursorServer), for as long as their process is up.
         var cursor: CursorServer?
         var cursorAlert: NSAlert?
         /// Retiring this provider conversation before a follow-up resumes it.
@@ -1128,9 +1130,18 @@ final class Agents: ObservableObject {
                 return session
             }
         }
+        if cli == "opencode" {
+            session.movable = false
+            if let refusal = OpenCodeRunner.unavailable(textOnly: session.textOnly,
+                    unattended: quiet || sealed || background || parent != nil, fork: profile == "fork_self") {
+                session.result = refusal
+                finish(session, .failed)
+                return session
+            }
+        }
         // An explicit provider never falls through to another: Gemini, or
         // an agent this build doesn't know (a newer Mac's saved chat), fails.
-        if cli != "cursor", let refusal = GeminiSupport.launchRefusal(cli, textOnly: session.textOnly, remote: session.remoteTask != nil) {
+        if cli != "cursor", cli != "opencode", let refusal = GeminiSupport.launchRefusal(cli, textOnly: session.textOnly, remote: session.remoteTask != nil) {
             session.movable = false
             session.result = refusal
             finish(session, .failed)
@@ -1389,6 +1400,9 @@ final class Agents: ObservableObject {
                 }
             }
         }
+        // OpenCode's own config is left as it is: its ACP session is given
+        // Yab's tools as an MCP server of the task's own (start).
+        if session.agent == .opencode { session.env = OpenCodeRunner.environment(env) }
         guard dispatchAllowed(session) else { return }
         if session.agent == .codex { await Agents.learnServer(codex: binary, env: env, permit: session.providerPermit) }
         guard dispatchAllowed(session) else { return }
@@ -1943,6 +1957,10 @@ final class Agents: ObservableObject {
             if let model = session.model, !model.isEmpty { args += ["--model", model] }
             if session.textOnly { args += ["--mode", "ask"] }
             args += ["acp"]
+        } else if session.agent == .opencode {
+            // OpenCode's ACP takes no mode or model flag here: its session's
+            // own defaults run, and a tool asks before it does anything.
+            args = ["acp"]
         } else if session.agent == .codex {
             var browserOnly: [String] = []
             if !session.full {
@@ -2082,15 +2100,17 @@ final class Agents: ObservableObject {
                     session.server = server
                     queued = true
                     server.open(thread: session.thread, fork: from, instructions: brief, cwd: process.currentDirectoryURL?.path ?? room.path)
-                } else if session.agent == .cursor {
+                } else if session.agent == .cursor || session.agent == .opencode {
                     let writer = input.fileHandleForWriting
-                    let server = CursorServer { try? writer.write(contentsOf: $0) }
+                    let server = session.agent == .opencode
+                        ? CursorServer(name: "OpenCode", askMode: nil) { try? writer.write(contentsOf: $0) }
+                        : CursorServer { try? writer.write(contentsOf: $0) }
                     session.cursor = server
                     queued = true
                     server.open(thread: session.thread, cwd: room.path,
                         mcp: session.textOnly ? [] : [["name": Mcp.name, "command": me, "args": mcpArgs(session), "env": []]], textOnly: session.textOnly)
                 }
-                send(session, session.agent == .cursor && session.thread == nil ? brief + "\n\n" + message : message)
+                send(session, (session.agent == .cursor || session.agent == .opencode) && session.thread == nil ? brief + "\n\n" + message : message)
             }
             // Written to Claude Code's stdin above; a Codex exec has it in
             // its arguments, handed over by the launch. Codex's and Cursor's
@@ -3327,7 +3347,7 @@ final class Agents: ObservableObject {
             case .tool(let item):
                 var next = item
                 if let previous = session.items.first(where: { $0.id == item.id }) {
-                    if next.name == "Cursor tool" { next.name = previous.name }
+                    if next.name == AgentSetupModel.plan(session.cli) + " tool" { next.name = previous.name }
                     if next.text.isEmpty { next.text = previous.text }
                 }
                 session.items.put(next, at: Date())
@@ -3341,7 +3361,7 @@ final class Agents: ObservableObject {
                     continue
                 }
                 let alert = NSAlert()
-                alert.messageText = "Cursor: " + String(title.prefix(300))
+                alert.messageText = AgentSetupModel.plan(session.cli) + ": " + String(title.prefix(300))
                 alert.informativeText = String(detail.prefix(2500))
                 // Close/escape/default Return cancel. A grant needs an
                 // explicit click and applies only to this exact request.
@@ -3351,7 +3371,7 @@ final class Agents: ObservableObject {
                     button.keyEquivalent = ""
                 }
                 session.cursorAlert = alert
-                note(session, "Cursor is waiting for your permission")
+                note(session, AgentSetupModel.plan(session.cli) + " is waiting for your permission")
                 alert.beginSheetModal(for: window) { [weak self, weak session] response in
                     guard let session, session.cursor === server else { return }
                     session.cursorAlert = nil
@@ -3948,6 +3968,7 @@ final class Agents: ObservableObject {
     private func signedIn(_ session: Session, binary: String, env: [String: String]) async -> Bool {
         guard dispatchAllowed(session), let permit = session.providerPermit else { return false }
         if session.agent == .cursor { return await CursorRunner.identify(binary: binary, env: env, permit: permit).signedIn }
+        if session.agent == .opencode { return await OpenCodeRunner.identify(binary: binary, env: env, permit: permit).signedIn }
         let ran = await Shell.timed(binary, Agents.signInCheck(session.cli), env: env, permit: permit, captureErrors: true)
         let (code, output) = (ran.code, ran.output)
         guard dispatchAllowed(session) else { return false }
@@ -4210,6 +4231,7 @@ final class Agents: ObservableObject {
         }
         let process = Process()
         if cli == "cursor" { env = CursorRunner.environment(env); env["NO_OPEN_BROWSER"] = "1" }
+        if cli == "opencode" { env = OpenCodeRunner.environment(env) }
         Agents.throughShell(process, binary, (AgentPlan.of(cli) ?? .claude).signIn)
         process.environment = env
         // What it says is read, not dropped: the page's address is in it,
@@ -4626,6 +4648,8 @@ enum Shell {
         var cursor: String?
         /// Google's Antigravity CLI (agy), for Gemini.
         var gemini: String?
+        /// OpenCode's CLI, whose `acp` command speaks the Agent Client Protocol.
+        var opencode: String?
         var env: [String: String]
         /// The login shell ran out of time: what it says may be missing.
         var late = false
@@ -4725,6 +4749,9 @@ enum Shell {
                         + AgentCopies.places("cursor-agent", home: own["HOME"] ?? NSHomeDirectory()))
             .first { FileManager.default.isExecutableFile(atPath: $0) }
         found.gemini = AgentCopies.newest(copies("agy"))?.path
+        found.opencode = (AgentCopies.onPath("opencode", shellPath)
+                          + AgentCopies.places("opencode", home: own["HOME"] ?? NSHomeDirectory()))
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
         // A test run can be given stand-ins that speak the same streams.
         if Store.testing {
             let given = ProcessInfo.processInfo.environment
@@ -4734,6 +4761,7 @@ enum Shell {
             if let codex = given["YAB_AGENT_CODEX"] { found.codex = there(codex) }
             if let cursor = given["YAB_AGENT_CURSOR"] { found.cursor = there(cursor) }
             if let gemini = given["YAB_AGENT_GEMINI"] { found.gemini = there(gemini) }
+            if let opencode = given["YAB_AGENT_OPENCODE"] { found.opencode = there(opencode) }
         }
         return found
     }

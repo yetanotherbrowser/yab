@@ -99,6 +99,9 @@ enum PlanText {
             } else if cli == "cursor", let cursor = launch?.binary {
                 text = await CursorRunner.once(binary: cursor, message: system + "\n\n" + prompt, environment: env,
                                                room: folder.appendingPathComponent("cursor", isDirectory: true), limit: limit, permit: permit)
+            } else if cli == "opencode", let opencode = launch?.binary {
+                text = await OpenCodeRunner.once(binary: opencode, message: system + "\n\n" + prompt, environment: env,
+                                                 room: folder.appendingPathComponent("opencode", isDirectory: true), limit: limit, permit: permit)
             }
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return (text, cli) }
         }

@@ -92,6 +92,7 @@ enum AgentSetup {
         var claude = false
         var codex = false
         var cursor = false
+        var opencode = false
         /// GeminiAccount owns Google sign-in separately from skill installation.
         var gemini = false
         /// The skills on disk say other than this build's: older, or worded
@@ -102,6 +103,7 @@ enum AgentSetup {
     static func status() -> Status {
         var status = Status()
         status.cursor = CursorRunner.connected
+        status.opencode = OpenCodeRunner.connected
         status.command = (try? String(contentsOf: shim, encoding: .utf8))?.contains("\"\(executable)\"") == true
         let claudeServer = (readJSON(claudeConfig)?["mcpServers"] as? [String: Any])?[server] as? [String: Any]
         status.claude = FileManager.default.fileExists(atPath: claudeSkill.path) && claudeServer?["command"] as? String == executable
@@ -573,6 +575,13 @@ enum AgentSetup {
                 else { troubles.append(ProviderConsent.refusal) }
             } }
         }
+        if wanted("opencode"), found.opencode != nil || only != nil {
+            if found.opencode == nil { troubles.append("OpenCode isn't installed.") }
+            else { ProviderLaunchPermit.atomic {
+                if permits == nil || permits?["opencode"]?.valid == true { Store.settings.set(true, forKey: OpenCodeRunner.connectionKey) }
+                else { troubles.append(ProviderConsent.refusal) }
+            } }
+        }
         return troubles
     }
 
@@ -586,6 +595,7 @@ enum AgentSetup {
         }
         if wanted("codex") { commit("codex") { removeCodex() } }
         if wanted("cursor") { commit("cursor") { Store.settings.removeObject(forKey: CursorRunner.connectionKey) } }
+        if wanted("opencode") { commit("opencode") { Store.settings.removeObject(forKey: OpenCodeRunner.connectionKey) } }
         if wanted("command") {
             ProviderLaunchPermit.atomic {
                 guard disconnects == nil || (disconnects?.isEmpty == false && disconnects?.values.allSatisfy({ $0.valid }) == true) else { return }

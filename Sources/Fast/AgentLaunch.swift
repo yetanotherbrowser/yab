@@ -73,7 +73,7 @@ extension AgentLaunch {
 
     /// The agents whose readiness is a projection of their launch here:
     /// every one Yab connects (AgentSetupModel.clis).
-    nonisolated static let terminalCLIs = ["claude", "codex", "cursor", "gemini"]
+    nonisolated static let terminalCLIs = ["claude", "codex", "cursor", "gemini", "opencode"]
 
     /// How a task on `cli` starts in `found`: its copy, the first account
     /// with room in your order (PlanAccounts.pick), and that account's

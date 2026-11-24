@@ -112,13 +112,17 @@ enum AgentModels {
     /// Whether this Mac has the agent; not looked for yet counts as yes.
     static func here(_ cli: String) -> Bool {
         guard let plan = AgentPlan.of(cli) else { return true }
-        // Gemini is here once signed in (GeminiAccount); Cursor once
-        // connected: their models are their account's.
+        // Gemini is here once signed in (GeminiAccount); Cursor and OpenCode
+        // once connected: their models are their account's.
         if cli == "gemini" { return GeminiAccount.shared.ready }
         // Before the login shell has been asked (just after launch), a
         // connected Cursor counts as here, as the others do: else the first
         // task after a restart fell to Claude (evals/agent-providers).
-        if !plan.listedAway { return CursorRunner.connected && (Shell.cached.map { $0.cursor != nil } ?? true) }
+        if !plan.listedAway {
+            let runnerConnected = cli == "opencode" ? OpenCodeRunner.connected : CursorRunner.connected
+            let binaryThere = { (found: Shell.Found) in cli == "opencode" ? found.opencode != nil : found.cursor != nil }
+            return runnerConnected && (Shell.cached.map { binaryThere($0) } ?? true)
+        }
         if let assumed = Agents.assumedInTests, Store.testing { return assumed }
         return AgentLaunch.here(cli) ?? true
     }
@@ -1235,7 +1239,7 @@ private struct PlanAccountRow: View {
         if signedOut {
             entries.append(.item("Sign In", enabled: !setup.busy) { setup.connect([account.cli], browser, account: account.id) })
         }
-        if account.cli != "cursor" {
+        if account.cli != "cursor" && account.cli != "opencode" {
             entries.append(.item("Add Another \(AgentSetupModel.plan(account.cli)) Account", enabled: accounts.adding == nil) {
                 accounts.add(account.cli, browser)
             })
