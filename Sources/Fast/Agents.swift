@@ -2108,7 +2108,8 @@ final class Agents: ObservableObject {
                     session.cursor = server
                     queued = true
                     server.open(thread: session.thread, cwd: room.path,
-                        mcp: session.textOnly ? [] : [["name": Mcp.name, "command": me, "args": mcpArgs(session), "env": []]], textOnly: session.textOnly)
+                        mcp: session.textOnly ? [] : [["name": Mcp.name, "command": me, "args": mcpArgs(session), "env": []]], textOnly: session.textOnly,
+                        model: session.agent == .opencode ? session.model : nil)
                 }
                 send(session, (session.agent == .cursor || session.agent == .opencode) && session.thread == nil ? brief + "\n\n" + message : message)
             }

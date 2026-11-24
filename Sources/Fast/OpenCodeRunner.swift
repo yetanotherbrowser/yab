@@ -13,6 +13,11 @@ enum OpenCodeRunner {
     }
     /// Where OpenCode shows its plan's usage; it doesn't tell its CLI.
     static let usage = URL(string: "https://opencode.ai")!
+    /// The config content a text-only run launches with: a "helper" agent
+    /// that answers in words with every tool off, merged over OpenCode's
+    /// own config through `OPENCODE_CONFIG_CONTENT`.
+    static let helperConfig =
+        "{\"agent\":{\"helper\":{\"description\":\"Yab helper: answers in words, no tools\",\"mode\":\"primary\",\"build\":true,\"tools\":{\"*\":false}}}}"
     private static var refreshed = Date.distantPast
 
     static func refresh(binary: String, env: [String: String], permit: ProviderLaunchPermit) async {
@@ -81,8 +86,9 @@ enum OpenCodeRunner {
 
     /// One answer with no tools, for Yab's own helpers (PlanText): ACP, as
     /// a text command runs, in a room of the helper's own. OpenCode's ACP
-    /// has no "ask" mode; a tool it wants is turned down instead. "" when
-    /// it fails or takes past `limit`.
+    /// has no "ask" mode; the run launches as its no-tools helper agent,
+    /// and a tool it still wants is turned down instead. "" when it fails
+    /// or takes past `limit`.
     static func once(binary: String, message: String, model: String? = nil, environment base: [String: String],
                      room: URL, limit: Double = 120, permit: ProviderLaunchPermit? = nil) async -> String {
         guard let permit, permit.valid else { return "" }
@@ -90,10 +96,13 @@ enum OpenCodeRunner {
         final class Heard { var answer = ""; var over = false; var buffer = Data() }
         let heard = Heard()
         let process = Process(), input = Pipe(), out = Pipe()
-        // OpenCode's ACP takes no model flag: its session's own default runs.
+        // The model asked for goes through `session/set_config_option`
+        // once the ACP session is open, so the CLI takes no model flag.
+        // A text-only run also launches as the no-tools helper agent,
+        // merged over OpenCode's own config.
         let args = ["acp"]
         Agents.throughShell(process, binary, args)
-        process.environment = environment(base)
+        process.environment = environment(base).merging(["OPENCODE_CONFIG_CONTENT": helperConfig]) { ours, _ in ours }
         process.currentDirectoryURL = room
         process.standardInput = input
         process.standardOutput = out
@@ -134,7 +143,7 @@ enum OpenCodeRunner {
                 }
             }
             do { guard try permit.start(process) else { finish(""); return } } catch { finish(""); return }
-            server.open(thread: nil, cwd: room.path, mcp: [], textOnly: true)
+            server.open(thread: nil, cwd: room.path, mcp: [], textOnly: true, model: model)
             server.say(message)
             DispatchQueue.main.asyncAfter(deadline: .now() + limit) {
                 MainActor.assumeIsolated { finish("") }

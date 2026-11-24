@@ -52,9 +52,19 @@ struct OpenCodeTests {
         #expect(env == ["HOME": "/test", "PATH": "/bin"])
     }
 
-    /// OpenCode's ACP has no "ask" mode: a text-only run prompts as soon as
-    /// its chat is open, without a session/set_mode round trip, and its
-    /// words carry OpenCode's own id and name.
+    /// The no-tools helper a text-only run launches with: an agent with
+    /// every tool turned off.
+    @Test func theHelperConfigTurnsEveryToolOff() throws {
+        let config = try JSONSerialization.jsonObject(with: Data(OpenCodeRunner.helperConfig.utf8)) as? [String: Any]
+        let helper = (config?["agent"] as? [String: Any])?["helper"] as? [String: Any]
+        #expect(helper?["mode"] as? String == "primary")
+        #expect(helper?["build"] as? Bool == true)
+        #expect((helper?["tools"] as? [String: Any])?["*"] as? Bool == false)
+    }
+
+    /// OpenCode's ACP has no "ask" mode: a text-only run takes its
+    /// no-tools helper through session/set_config_option first, then
+    /// prompts, and its words carry OpenCode's own id and name.
     @Test func opencodeACPHasNoAskModeRoundTrip() {
         final class Wire {
             var lines: [[String: Any]] = []
@@ -70,7 +80,12 @@ struct OpenCodeTests {
         wire.server.say("text only")
         _ = wire.reply(["protocolVersion": 1])
         #expect(wire.lines.last?["method"] as? String == "session/new")
-        let events = wire.reply(["sessionId": "ses_1"])
+        #expect(wire.reply(["sessionId": "ses_1"]).isEmpty)
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        let args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "mode")
+        #expect(args?["value"] as? String == CursorServer.helperMode)
+        let events = wire.reply([:])
         guard case .ready("ses_1") = events.first else { Issue.record("no conversation"); return }
         #expect(wire.lines.last?["method"] as? String == "session/prompt")
         #expect(!wire.lines.contains { $0["method"] as? String == "session/set_mode" })

@@ -68,6 +68,52 @@ struct CursorServerTests {
         #expect(wire.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "other"]], thread: "other").isEmpty)
     }
 
+    @Test func theModelAskedForGoesThroughSetConfigOption() {
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [], model: "opencode-go/glm-5.3-flash")
+        wire.server.say("hello")
+        _ = wire.reply(["protocolVersion": 1])
+        _ = wire.reply(["sessionId": "C1"])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        var args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["sessionId"] as? String == "C1")
+        #expect(args?["configId"] as? String == "model")
+        #expect(args?["value"] as? String == "opencode-go/glm-5.3-flash")
+        let events = wire.reply([:])
+        guard case .ready("C1") = events.first else { Issue.record("no conversation"); return }
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+        let prompt = (wire.lines.last?["params"] as? [String: Any])?["prompt"] as? [[String: Any]]
+        #expect(prompt?.first?["text"] as? String == "hello")
+    }
+
+    @Test func aServerWithNoModelSendsNoConfigOption() {
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [])
+        _ = wire.reply(["protocolVersion": 1])
+        let events = wire.reply(["sessionId": "C1"])
+        guard case .ready("C1") = events.first else { Issue.record("no conversation"); return }
+        #expect(!wire.lines.contains { $0["method"] as? String == "session/set_config_option" })
+    }
+
+    @Test func aTextOnlyRunTakesTheNoToolsHelperThenTheModel() {
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [], textOnly: true, model: "opencode-go/glm-5.3-flash")
+        wire.server.say("text only")
+        _ = wire.reply(["protocolVersion": 1])
+        _ = wire.reply(["sessionId": "C1"])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        var args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "mode")
+        #expect(args?["value"] as? String == CursorServer.helperMode)
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "model")
+        #expect(args?["value"] as? String == "opencode-go/glm-5.3-flash")
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+    }
+
     @Test func permissionsRequireAnExactOnceOnlyChoice() {
         let wire = Wire()
         wire.ready()

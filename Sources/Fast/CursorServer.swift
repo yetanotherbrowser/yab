@@ -8,8 +8,8 @@ final class CursorServer {
     /// The provider's name, in every word people read.
     private let name: String
     /// The read-only mode a text-only run is set to before its prompt, or
-    /// nil when the provider has no mode worth setting (OpenCode has no
-    /// "ask"; its session/new answer is taken as it comes).
+    /// nil when the provider has no "ask" of its own (OpenCode: a
+    /// text-only run takes its no-tools helper instead, see `helperMode`).
     private let askMode: String?
     enum Heard {
         case ready(String)
@@ -25,7 +25,7 @@ final class CursorServer {
         let title: String
     }
 
-    private enum Pending { case initialize, session, mode, prompt }
+    private enum Pending { case initialize, session, mode, config, prompt }
     private let write: (Data) -> Void
     private var next = 0
     private var pending: [Int: Pending] = [:]
@@ -38,7 +38,14 @@ final class CursorServer {
     private let streamID = UUID().uuidString
     private var turn = 0
     private var textOnly = false
+    /// The model asked for, taken through `session/set_config_option`
+    /// once the chat is open. Cursor never names one.
+    private var configModel: String?
     private(set) var thread: String?
+
+    /// OpenCode's no-tools agent, what a text-only run without an "ask"
+    /// mode is switched to before its prompt.
+    static let helperMode = "helper"
 
     init(write: @escaping (Data) -> Void, name: String = "Cursor", askMode: String? = "ask") {
         self.write = write
@@ -46,8 +53,9 @@ final class CursorServer {
         self.askMode = askMode
     }
 
-    func open(thread: String?, cwd: String, mcp: [[String: Any]], textOnly: Bool = false) {
+    func open(thread: String?, cwd: String, mcp: [[String: Any]], textOnly: Bool = false, model: String? = nil) {
         self.textOnly = textOnly
+        configModel = model
         opening = (thread, cwd, mcp)
         request("initialize", ["protocolVersion": 1,
             "clientInfo": ["name": "yab", "version": "1"],
@@ -155,21 +163,42 @@ final class CursorServer {
             thread = id
             opening = nil
             if textOnly {
-                guard let askMode else { return ready(id) }
+                guard let askMode else {
+                    // No "ask" of its own (OpenCode): a text-only run
+                    // takes the no-tools helper first, then its model.
+                    loading = true
+                    request("session/set_config_option",
+                            ["sessionId": id, "configId": "mode", "value": Self.helperMode], .mode)
+                    return []
+                }
                 loading = true
                 request("session/set_mode", ["sessionId": id, "modeId": askMode], .mode)
                 return []
             }
-            return ready(id)
-        case .mode:
+            return afterConfig(id)
+        case .mode, .config:
             guard let thread else { return [.failed("\(name) didn't start the chat. Try again.")] }
-            return ready(thread)
+            return afterConfig(thread)
         case .prompt:
             busy = false
             for key in Array(requests.keys) { reply(key, option: nil) }
             return [.ended]
         }
         return []
+    }
+
+    /// The model asked for, then ready. OpenCode takes its model through
+    /// `session/set_config_option` after the chat opens, new or resumed;
+    /// Cursor never names one and lands here with nothing to set.
+    private func afterConfig(_ id: String) -> [Heard] {
+        if let model = configModel, !model.isEmpty {
+            configModel = nil
+            loading = true
+            request("session/set_config_option",
+                    ["sessionId": id, "configId": "model", "value": model], .config)
+            return []
+        }
+        return ready(id)
     }
 
     private func ready(_ id: String) -> [Heard] {
