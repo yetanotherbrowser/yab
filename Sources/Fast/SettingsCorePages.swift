@@ -288,6 +288,8 @@ struct AppearancePage: View {
             .settingsAnchor("sidebar")
             SettingsSwitch("Show sidebar button", isOn: $prefs.sidebarButton)
                 .settingsAnchor("sidebar-button")
+            MenuRow("Hidden sidebar opens", options: SideReveal.allCases.map { ($0.title, $0) }, selection: $prefs.sideReveal)
+                .settingsAnchor("sidebar-reveal")
             MenuRow("Tab icons", options: [("Letters", Glyph.letters), ("Site icons", Glyph.icons)], selection: $prefs.glyph)
                 .settingsAnchor("tab-icons")
             MenuRow("Spaces", options: [("Emoji", false), ("Dots", true)], selection: $prefs.spaceDots)

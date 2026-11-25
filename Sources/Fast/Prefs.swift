@@ -385,6 +385,21 @@ final class Preferences: ObservableObject, Relaying {
         }
     }
 
+    /// How long the pointer rests at the window's edge before the column
+    /// put away comes out (SideReveal).
+    var sideReveal: SideReveal {
+        willSet { relay.send(\.sideReveal, newValue) }
+        didSet {
+            guard sideReveal != oldValue else { return }
+            store.set(sideReveal.rawValue, forKey: SideReveal.key)
+            // One choice for the app: each window has its own settings and
+            // its edge waits by them, so a choice made in one reaches the rest.
+            for browser in BrowserWindows.shared.browsers where browser.prefs !== self && browser.prefs.sideReveal != sideReveal {
+                browser.prefs.sideReveal = sideReveal
+            }
+        }
+    }
+
     /// Those watching `path` told again, now that it holds its new value.
     ///
     /// The column has a hosting view of its own inside the window's, and
@@ -1127,6 +1142,7 @@ final class Preferences: ObservableObject, Relaying {
             ?? (store.string(forKey: "manner") == "side")
         sideShut = store.bool(forKey: "sidebar.shut")
         sidebarButton = store.object(forKey: "sidebar.button") as? Bool ?? true
+        sideReveal = store.string(forKey: SideReveal.key).flatMap(SideReveal.init) ?? .moment
         stripShut = store.bool(forKey: "strip.shut")
         spaceDots = store.bool(forKey: "spaces.dots")
         spaceNames = store.object(forKey: "spaces.names") as? Bool ?? true

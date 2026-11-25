@@ -736,8 +736,9 @@ enum EdgeReach {
 
     /// Only the side edge reveals the column. The lights become accessible
     /// with it; their old corner target overlaps the page's own controls.
-    static func rest(edge: Bool) -> CFTimeInterval? {
-        edge ? edgeRest : nil
+    /// How long that rest lasts is the person's choice (SideReveal).
+    static func rest(edge: Bool, reveal: SideReveal = .moment) -> CFTimeInterval? {
+        edge ? reveal.rest : nil
     }
 
     /// A pass through the edge brings nothing; a rest does, from either side.
@@ -775,6 +776,38 @@ enum EdgeReach {
     /// was visible in every matched take. Menus and held cards still use
     /// the guards above; the top strip retains its own existing grace.
     static let columnLetGo: CFTimeInterval = 0
+}
+
+/// How long the pointer rests at the window's edge before the column put
+/// away comes out: Arc's moment unless asked otherwise (Settings ›
+/// Appearance › Hidden sidebar opens, #249). Only the wait changes; the
+/// slide that follows, and the edge that counts, are the same for each.
+enum SideReveal: String, CaseIterable {
+    case moment, quick, instant
+
+    static let key = "sidebar.reveal"
+
+    var rest: CFTimeInterval {
+        switch self {
+        case .moment: EdgeReach.edgeRest
+        // The top strip's own rest, which already tells a pointer that
+        // stopped from one passing through.
+        case .quick: TopReach.edgeRest
+        // At the first look at the edge: a pass through it brings the
+        // column out too. Going over to a display beside the window still
+        // doesn't (EdgeReach.away).
+        case .instant: 0
+        }
+    }
+
+    /// The words Settings offers, read after "Hidden sidebar opens".
+    var title: String {
+        switch self {
+        case .moment: "After a moment"
+        case .quick: "Quickly"
+        case .instant: "Instantly"
+        }
+    }
 }
 
 // MARK: - the top edge
@@ -1417,7 +1450,7 @@ final class Brim {
                     past = false
                 }
                 let now = CACurrentMediaTime()
-                let rest = belowMenu ? EdgeReach.rest(edge: edge) : nil
+                let rest = belowMenu ? EdgeReach.rest(edge: edge, reveal: browser.prefs.sideReveal) : nil
                 let before = dwell.until
                 let remaining = dwell.remaining(rest: held ? nil : rest, now: now)
                 if dwell.until != before || remaining == nil {

@@ -237,6 +237,8 @@ struct SettingsItem: Identifiable, Hashable {
                      words: "tabs in a sidebar top vertical horizontal left right column side bar layout off"),
         SettingsItem(id: "sidebar-button", page: .appearance, title: "Show sidebar button",
                      words: "hide show sidebar toggle button toolbar narrow reload overflow"),
+        SettingsItem(id: "sidebar-reveal", page: .appearance, title: "Hidden sidebar opens",
+                     words: "hover edge reveal show hidden auto hide collapsed sidebar delay wait pause slow fast faster quickly instantly instant pop out peek"),
         SettingsItem(id: "tab-icons", page: .appearance, title: "Tab icons",
                      words: "letter favicon site icon glyph pinned"),
         SettingsItem(id: "space-dots", page: .appearance, title: "Spaces",
