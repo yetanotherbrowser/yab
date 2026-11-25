@@ -255,11 +255,16 @@ extension Agents {
     /// brings out if it should show now. `said` is what its chat shows as
     /// your message when the words are Yab's own (Do It's), with
     /// `carrying` over it, and `name` the folder's until the agent names it.
+    /// `origin` is the window it was asked in, which everything of it
+    /// keeps: its chat, its tabs, its notices (#1009). Nil only for one
+    /// asked nowhere in particular (Settings' Connect), which takes the
+    /// bound browser as before.
     @discardableResult
     func task(_ words: String, context: [TaskContext], on tab: Tab?, choice: ModelChoice? = nil,
-              said: String? = nil, carrying: [String] = [], name: String? = nil, project: String? = nil) -> Session? {
+              said: String? = nil, carrying: [String] = [], name: String? = nil, project: String? = nil,
+              in origin: Browser? = nil) -> Session? {
         let words = words.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !words.isEmpty, let browser else { return nil }
+        guard !words.isEmpty, let browser = origin ?? self.browser else { return nil }
         // "Every weekday at 10, tell me…": a routine on the tabs it was
         // asked about, not a task now.
         if let (when, rest) = Routines.phrase(words) {
@@ -395,7 +400,7 @@ extension Agents {
               session.state.live, !session.quiet else { return }
         session.task = true
         objectWillChange.send()
-        if let browser, browser.active?.guest == session.id { browser.showChat(session.id) }
+        if let browser = window(of: id) ?? browser, browser.active?.guest == session.id { browser.showChat(session.id) }
     }
 
     /// Ask more, on the answer's page: the same task, only what the words
@@ -489,10 +494,11 @@ extension Agents {
         return lines.isEmpty ? "" : lines.joined(separator: " ") + " "
     }
 
-    /// A task in tabs of its own came to its end: the corner says so once,
-    /// unless you are looking at it, and Now keeps its pick.
+    /// A task in tabs of its own came to its end: the corner of the window
+    /// it began in says so once, unless you are looking at it there, and Now
+    /// keeps its pick.
     func taskEnded(_ session: Session, _ state: State) {
-        guard let browser else { return }
+        guard let browser = window(of: session.id) ?? browser else { return }
         // A routine's run: quiet unless it asks to say so, and gone when
         // it found nothing (Routines.finished).
         if session.routine != nil {
@@ -531,13 +537,13 @@ extension Agents {
         Hints.shared.compose()
     }
 
-    /// A task in tabs of its own asks: the folder lifts, and the corner
-    /// says so when you are elsewhere, with the way there. It is asked in
-    /// its chat: Show opens that, where the question and its choices are,
-    /// not the tab it stopped in.
+    /// A task in tabs of its own asks: the folder lifts, and the corner of
+    /// the window it began in says so when you are elsewhere, with the way
+    /// there. It is asked in its chat: Show opens that, where the question
+    /// and its choices are, not the tab it stopped in.
     func taskAsks(_ tab: Tab, _ session: Session) {
         // Work out of sight asks nobody: its tab can't be brought forward.
-        guard session.task, !session.sealed, let browser, browser.active !== tab else { return }
+        guard session.task, !session.sealed, let browser = window(of: session.id) ?? browser, browser.active !== tab else { return }
         if browser.chatOpen, browser.chatShown == Agents.shared.root(of: session.id) { return }
         browser.toaster.pop("\(session.name) needs you", mark: "agent.face", undo: { [weak browser] in
             browser?.showChat(session.id)
@@ -745,7 +751,8 @@ final class TaskLine: ObservableObject {
         let picked = ModelDefaults.shared.pickNow(.chats)
         let choice = ModelChoice(cli: picked.cli, model: picked.model, effort: picked.effort)
         let textOnly = picked.cli == "gemini" && !GeminiSupport.toolsProven
-        let session = Agents.shared.task(words, context: context, on: onPage && !textOnly ? tab : nil, choice: choice)
+        let session = Agents.shared.task(words, context: context, on: onPage && !textOnly ? tab : nil, choice: choice,
+                                         in: TaskLine.browser(of: tab))
         if textOnly, let session, let browser = TaskLine.browser(of: tab) { browser.showChat(session.id) }
     }
 

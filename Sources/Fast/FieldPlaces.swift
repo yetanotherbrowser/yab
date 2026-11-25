@@ -1200,7 +1200,7 @@ extension Browser {
             close()
             // In tabs of its own, worked in the chat column.
             if Agents.ready {
-                if let session = Agents.shared.task(words, context: [], on: nil) { showChat(session.id) }
+                if let session = Agents.shared.task(words, context: [], on: nil, in: self) { showChat(session.id) }
             } else { TaskLine.connect() }
             return true
         case .ask:
@@ -1837,7 +1837,7 @@ extension Browser {
             // with the words the agent is told (Browser.handed).
             guard let session = Agents.shared.task(Browser.doItWords(hint, now: Hints.now), context: [], on: nil,
                                                    said: "Do It", carrying: [Browser.handed(hint, now: Hints.now).label],
-                                                   name: hint.title) else { return }
+                                                   name: hint.title, in: self) else { return }
             if Hints.promise(hint) { Promises.shared.acted(hint.id) }
             // The row's end says it, the row chosen where it was: only its
             // word changes in the rows on screen, nothing is listed anew.

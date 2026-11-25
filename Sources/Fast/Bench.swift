@@ -490,7 +490,7 @@ final class Bench {
             WelcomeEnd.allowContext(WelcomeStage.shared)
         case "question-yes": Questions.shared.answer(true)
         case "question-no": Questions.shared.answer(false)
-        case "ask-fixture-task": _ = Agents.shared.task("Explain this synthetic fixture", context: [], on: nil)
+        case "ask-fixture-task": _ = Agents.shared.task("Explain this synthetic fixture", context: [], on: nil, in: browser)
         case "daily-suggestions": AgentSetupModel.shared.turnOnSuggestions(browser.prefs)
         case "recurring-checks":
             guard !browser.welcoming, let hint = Hints.shared.rows.first(where: { $0.id == "setup.watch" }) else { answer(["error": "recurring-checks row is not shown"]); return }
@@ -9709,8 +9709,17 @@ final class Bench {
     }
 
     /// The window a call runs in when the call doesn't pick one.
+    /// A task's calls work in the window its task began in (#1009):
+    /// the tabs it opens, the person's tabs it reads, its questions.
+    /// A private window keeps agents out of private tabs (benchOpen
+    /// forces every tab there to be shy, which agent calls hide and
+    /// refuse), so a task started in one falls back to the bound normal
+    /// browser. One that began nowhere in particular (a routine's run,
+    /// a task from the iPhone, an agent that attached itself) keeps the
+    /// bound browser, as does one whose window has closed.
     private func target(_ request: [String: Any]) -> Browser? {
-        browser.map { holder(of: request, in: BrowserWindows.shared.live($0)) }
+        let preferred = (request["session"] as? String).flatMap { Agents.shared.browsingWindow(of: $0) } ?? browser
+        return preferred.map { holder(of: request, in: BrowserWindows.shared.live($0)) }
     }
 
     @available(macOS 15.4, *)

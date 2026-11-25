@@ -2117,7 +2117,7 @@ enum AgentWords {
         }
         // Busy, but its last step was in another of its tabs: that one.
         let feed = AgentFeed.shared
-        let theirs = Agents.shared.browser?.tabs.filter { $0.worker == session.id } ?? []
+        let theirs = Agents.shared.liveBrowsingWindow(of: session.id)?.tabs.filter { $0.worker == session.id } ?? []
         if let latest = theirs.max(by: { (feed.last[$0.id]?.count ?? 0) < (feed.last[$1.id]?.count ?? 0) }),
            latest.id != tab.id, feed.last[latest.id] != nil {
             return "Working in \(latest.label)"

@@ -491,7 +491,7 @@ extension Browser {
         selectionCommands.close()
         close()
         guard Agents.ready else { TaskLine.connect(); return true }
-        Agents.shared.task(words, context: tab.shy ? [] : [.page(tab)], on: nil)
+        Agents.shared.task(words, context: tab.shy ? [] : [.page(tab)], on: nil, in: self)
         return true
     }
 
@@ -640,10 +640,10 @@ extension Browser {
         close()
         guard Agents.ready else { TaskLine.connect(); return }
         if asked, snap.url.isEmpty {
-            if let session = Agents.shared.task(words, context: [], on: nil) { showChat(session.id) }
+            if let session = Agents.shared.task(words, context: [], on: nil, in: self) { showChat(session.id) }
         } else {
             let context = asked ? [TaskContext.page(tab)] : [TaskContext(kind: .selection, title: "Selection", url: tab.address, tab: tab.id, text: snap.text)]
-            Agents.shared.task(words, context: context, on: tab)
+            Agents.shared.task(words, context: context, on: tab, in: self)
         }
     }
 

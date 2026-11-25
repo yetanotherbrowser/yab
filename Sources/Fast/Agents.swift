@@ -631,7 +631,7 @@ final class Agents: ObservableObject {
     /// Its tabs in the row, and those parked in their own space while
     /// another is on screen (Browser.placeAssistantTab).
     func tabs(of session: Session) -> [Tab] {
-        browser?.everyTab.filter { $0.agent == session.id } ?? []
+        windowTabs.filter { $0.agent == session.id }
     }
 
     /// Every tab of every window, parked ones too: a task's guest or
@@ -640,6 +640,33 @@ final class Agents: ObservableObject {
         var seen = Set<ObjectIdentifier>()
         return ([browser].compactMap { $0 } + BrowserWindows.shared.browsers)
             .flatMap(\.everyTab).filter { seen.insert(ObjectIdentifier($0)).inserted }
+    }
+
+    /// The window a session's work belongs to: the one the task at the top
+    /// of its parents began in (task), while that window is still open.
+    /// Nil for work that began nowhere in particular: a routine's run, a
+    /// task from the iPhone, an agent that attached itself, or a task
+    /// whose window has closed.
+    func window(of id: String?) -> Browser? {
+        guard let root = session(root(of: id)), let held = root.nativeWindowID else { return nil }
+        return BrowserWindows.shared.browsers.first { ($0.windowID ?? BrowserWindows.primaryID) == held }
+    }
+
+    /// The window a session's browsing tabs belong to: its originating
+    /// window when that is a normal window, or nil for a private window
+    /// (where benchOpen forces every tab to be shy, which agent calls hide
+    /// and refuse), an originless session, or a closed window.
+    func browsingWindow(of id: String?) -> Browser? {
+        guard let origin = window(of: id), origin.windowPurpose != .privateOnly else { return nil }
+        return origin
+    }
+
+    /// The live normal window a session's browsing tabs belong to, applying
+    /// BrowserWindows.live so a closed launch-bound window resolves to the
+    /// live normal window Bench opens its tabs in (#1119).
+    func liveBrowsingWindow(of id: String?) -> Browser? {
+        if let origin = browsingWindow(of: id) { return BrowserWindows.shared.live(origin) }
+        return browser.map { BrowserWindows.shared.live($0) }
     }
 
     // MARK: - chats
@@ -680,7 +707,7 @@ final class Agents: ObservableObject {
         let everyone = Set([session.id] + subs.map(\.id))
         // A sealed run's tabs are in a folder nobody goes into: its chat
         // doesn't lead there either.
-        let tabs = session.sealed ? [] : (browser?.tabs ?? []).filter { $0.agent.map(everyone.contains) ?? false }
+        let tabs = session.sealed ? [] : (liveBrowsingWindow(of: session.id)?.tabs ?? []).filter { $0.agent.map(everyone.contains) ?? false }
         let first = session.items.first { $0.kind == .asked }?.text ?? session.asked.first ?? session.prompt
         let old = Chats.shared.chat(session.id)
         return Chat(id: session.id, title: session.title ?? old?.title ?? Chat.title(from: first), began: session.origin, cli: session.cli,
@@ -3139,7 +3166,7 @@ final class Agents: ObservableObject {
         tabs(of: session).first?.countWordsForWrapped()
     }
 
-    private func finish(_ session: Session, _ state: State) {
+    func finish(_ session: Session, _ state: State) {
         session.turnPermit.revoke()
         // Stopped at its deadline, not by you: done, with what it has.
         let state = session.overtime && state == .stopped ? State.done : state
@@ -3172,16 +3199,17 @@ final class Agents: ObservableObject {
             // Stopped by you: its page goes with its folder.
             if was != .stopped { knew(session, state) } else if let browser { KnowPage.drop(session.id, in: browser) }
         }
+        let target = window(of: session.id) ?? browser
         // Said once in the corner, for a task the browser ran; an agent that
         // came on its own says it where it came from.
         if session.agent != .external, !session.quiet, !session.sealed, session.parent == nil, was != .stopped {
             if state == .done { NoticeFeedback.success.play() }
             // On one of its tabs, the dock at the page's foot says it instead.
-            let here = browser?.active.map { $0.agent == session.id || Boosts.shared.carded($0, by: session.id) } ?? false
+            let here = target?.active.map { $0.agent == session.id || Boosts.shared.carded($0, by: session.id) } ?? false
             if session.task { taskEnded(session, state) }
             else {
-                if state == .done, !here { browser?.toaster.pop("\(session.name) is done", mark: "checkmark.circle") }
-                if state == .failed { browser?.toaster.pop("\(session.name) couldn’t finish", mark: "exclamationmark.triangle") }
+                if state == .done, !here { target?.toaster.pop("\(session.name) is done", mark: "checkmark.circle") }
+                if state == .failed { target?.toaster.pop("\(session.name) couldn’t finish", mark: "exclamationmark.triangle") }
             }
         }
         note(session, state == .done ? "Done" : state == .stopped ? "Stopped" : "Failed")
@@ -3197,17 +3225,18 @@ final class Agents: ObservableObject {
             session.draft = nil
         }
         if sent {
-            browser?.toaster.pop("Sent", mark: "paperplane")
-        } else if (state == .done && !session.task || state == .failed), !said.isEmpty, !session.quiet, !session.sealed, session.parent == nil, session.agent != .external, let browser {
-            let there = browser.everyTab.first { $0.guest == session.id }
-                ?? browser.active.flatMap { $0.agent == session.id ? $0 : nil }
+            target?.toaster.pop("Sent", mark: "paperplane")
+        } else if (state == .done && !session.task || state == .failed), !said.isEmpty, !session.quiet, !session.sealed, session.parent == nil, session.agent != .external,
+                  let target {
+            let there = target.everyTab.first { $0.guest == session.id }
+                ?? target.active.flatMap { $0.agent == session.id ? $0 : nil }
             there?.answer = (session.id, said)
         }
         leave(session)
         // yab's own quiet work leaves nothing open behind it, and nor does
         // work out of sight: its folder goes with it.
-        if session.quiet || session.sealed, let browser {
-            for tab in tabs(of: session) { browser.close(tab) }
+        if session.quiet || session.sealed, let target {
+            for tab in tabs(of: session) { target.close(tab) }
         }
         Hints.shared.ended(session.id)
         Hints.shared.refresh()
@@ -4549,7 +4578,7 @@ final class Agents: ObservableObject {
 
     /// The tab where a chat's agent waits for you to pick, if it does.
     func pick(for chat: String) -> Tab? {
-        browser?.everyTab.first { $0.handoff != nil && !$0.choices.isEmpty && root(of: $0.askedBy) == chat }
+        windowTabs.first { $0.handoff != nil && !$0.choices.isEmpty && root(of: $0.askedBy) == chat }
     }
 
     /// You picked one of what it asked you to pick from.
@@ -4569,7 +4598,7 @@ final class Agents: ObservableObject {
         // The pick a terminal could answer is over with it.
         for session in sessions where session.asking == tab.id { session.asking = nil }
         // A sign-in's window and the page that opened it are one request.
-        let pair = (browser?.everyTab ?? []).filter {
+        let pair = windowTabs.filter {
             $0.id != tab.id && tab.handoffNotice != nil && $0.handoffNotice == tab.handoffNotice
         }
         // What it could do without, answered while it worked on: kept for

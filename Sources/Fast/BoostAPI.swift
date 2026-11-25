@@ -236,7 +236,7 @@ final class BoostAPI {
             }
             try stillAllowed()
             try BoostAI.shared.charge(package)
-            guard let task = Agents.shared.task(prompt, context: [.page(tab)], on: nil) else { throw BoostPackage.Invalid("An agent is not connected.") }
+            guard let task = Agents.shared.task(prompt, context: [.page(tab)], on: nil, in: browser) else { throw BoostPackage.Invalid("An agent is not connected.") }
             task.boostOrigin = id; return ["session": task.id]
         default: throw BoostPackage.Invalid("Unsupported Yab API: \(method)")
         }

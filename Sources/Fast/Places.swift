@@ -1460,7 +1460,8 @@ extension Browser {
             out.append(FieldAction(id: "hand", title: "Do It: Don’t Renew", keys: Keymap.shared.text(.fieldCopy), symbol: "agent.face", featured: true) {
                 let hint = Purchases.hint(item, now: Date())
                 guard let session = Agents.shared.task(Browser.doItWords(hint, now: Date()), context: [], on: nil, said: "Do It",
-                                                       carrying: [Browser.handed(hint, now: Date()).label], name: "Don’t renew \(p.merchant)") else { return }
+                                                       carrying: [Browser.handed(hint, now: Date()).label], name: "Don’t renew \(p.merchant)",
+                                                       in: self) else { return }
                 Hints.shared.hand(hint.id, to: session.id)
                 self.close()
             })

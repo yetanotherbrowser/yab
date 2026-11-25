@@ -466,7 +466,7 @@ extension Browser {
             _ = open(url, foreground: true)
         case .task(let prompt):
             if Agents.ready {
-                if let session = Agents.shared.task(prompt, context: [], on: nil) { showChat(session.id) }
+                if let session = Agents.shared.task(prompt, context: [], on: nil, in: self) { showChat(session.id) }
             } else {
                 TaskLine.connect()
             }

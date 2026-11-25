@@ -250,7 +250,7 @@ extension Agents {
     /// opened, the one in front of you too. Done is finished with them;
     /// ⌥ is the way to keep them.
     func leftovers(_ id: String) -> [Tab] {
-        guard let browser else { return [] }
+        guard let browser = liveBrowsingWindow(of: id) else { return [] }
         return leftovers(id, among: browser.tabs)
     }
 
@@ -261,13 +261,28 @@ extension Agents {
         return tabs.filter { $0.agent != nil && self.root(of: $0.agent) == root }
     }
 
+    /// The browser holding `id`'s work tabs when acting from `browser`:
+    /// its live browsing window, any open normal window holding its tabs,
+    /// or the live normal fallback when the chat lives in a private window.
+    func tabBrowser(of id: String, from browser: Browser) -> Browser {
+        if let origin = browsingWindow(of: id) { return BrowserWindows.shared.live(origin) }
+        if let holder = BrowserWindows.shared.browsers.first(where: { $0.windowPurpose != .privateOnly && !leftovers(id, among: $0.tabs).isEmpty }) {
+            return holder
+        }
+        if browser.windowPurpose == .privateOnly, let fallback = self.browser.map({ BrowserWindows.shared.live($0) }) {
+            return fallback
+        }
+        return browser
+    }
+
     /// Done, pressed in a finished task's chat: the column goes, and the
     /// task's tabs with it unless ⌥ keeps them. Kept, a tab you were
     /// driving is handed back: there is nobody left to hand it to.
     func finish(_ id: String, in browser: Browser, keepingTabs: Bool) {
-        let tabs = leftovers(id, among: browser.tabs)
+        let host = tabBrowser(of: id, from: browser)
+        let tabs = leftovers(id, among: host.tabs)
         for tab in tabs { AgentFeed.shared.handBack(tab) }
-        if !keepingTabs { browser.close(tabs) }
+        if !keepingTabs { host.close(tabs) }
         browser.moveChat(open: false)
     }
 

@@ -599,7 +599,7 @@ extension Bench {
     func handleAgentTask(_ c: AgentCall) {
         guard Store.testing else { c.answer(["error": "agent-task only works on a --test run"]); return }
         guard let words = c.request["words"] as? String, !words.isEmpty else { c.answer(["error": "agent-task needs words"]); return }
-        guard let made = c.agents.task(words, context: [], on: nil) else { c.answer(["error": "not started"]); return }
+        guard let made = c.agents.task(words, context: [], on: nil, in: c.browser) else { c.answer(["error": "not started"]); return }
         c.answer(["session": made.id, "cli": made.cli, "space": c.browser.space.name, "prompt": made.prompt])
     }
 

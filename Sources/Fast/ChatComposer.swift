@@ -700,7 +700,7 @@ struct ChatComposer: View {
         let prompt = files.isEmpty && folders.isEmpty ? asked
             : asked + "\n\n" + ChatAttachment.said(tabs: [], files: files, folders: folders, in: browser)
         let context = mail.map(TaskContext.mail) + tabs.map(TaskContext.tab) + quotes.map(TaskContext.selection)
-        guard let session = Agents.shared.task(prompt, context: context, on: nil, choice: browser.chatChoice, project: project) else { return nil }
+        guard let session = Agents.shared.task(prompt, context: context, on: nil, choice: browser.chatChoice, project: project, in: browser) else { return nil }
         if !session.saying.isEmpty { session.saying[session.saying.count - 1] = text }
         session.carrying.append(ChatAttachment.labels(tabs: tabs, files: files, quotes: quotes, mail: mail, folders: folders, in: browser))
         session.attaching.append(items)
@@ -2502,7 +2502,7 @@ private struct ChatDone: View {
     @ObservedObject private var keepDone = Keymap.shared.slot(.chatDoneKeep)
 
     var body: some View {
-        let left = Agents.shared.leftovers(chat, among: browser.tabs).count
+        let left = Agents.shared.leftovers(chat, among: Agents.shared.tabBrowser(of: chat, from: browser).tabs).count
         let keep = option.down && left > 0
         Button { Agents.shared.finish(chat, in: browser, keepingTabs: keep) } label: {
             HStack(spacing: 6) {
