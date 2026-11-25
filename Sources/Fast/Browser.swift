@@ -973,8 +973,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
         willSet { relay.send(\.menuOut, newValue) }
     }
     /// In full screen the lights are macOS's own, in the title bar it
-    /// brings down with the menu bar, and ours are gone; not with the tabs
-    /// down the left, whose column keeps ours in its corner. Set by Brim.
+    /// brings down with the menu bar, and ours are gone, from the strip and
+    /// the column alike. Set by Brim.
     var titleLights = false {
         willSet { relay.send(\.titleLights, newValue) }
     }

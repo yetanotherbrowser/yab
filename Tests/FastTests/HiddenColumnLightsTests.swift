@@ -100,4 +100,21 @@ struct HiddenColumnLightsTests {
             #expect(hidden.allSatisfy { $0.isHidden } && visible.allSatisfy { !$0.isHidden })
         }
     }
+
+    /// Full screen with the column put away: macOS's lights are the ones in
+    /// the band under the menu bar. The card coming out brings a row of ours
+    /// into the window, and that row must not put macOS's away again.
+    @Test func aRowAttachingLeavesTheTitleBarsOwnLightsOnDuty() throws {
+        try world { column, window, _ in
+            try #require(Lights.own(of: window).count == 3, "titled window must have its own lights")
+            Lights.showOwn(true, of: window)
+            defer { Lights.showOwn(false, of: window) }
+            column.slide(out: true, animated: false)
+            _ = try row(in: column)
+            #expect(Lights.own(of: window).allSatisfy { !$0.isHidden })
+            Lights.showOwn(false, of: window)
+            Lights.hideOwn(of: window)
+            #expect(Lights.own(of: window).allSatisfy { $0.isHidden })
+        }
+    }
 }

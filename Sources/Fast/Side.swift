@@ -302,7 +302,10 @@ struct SideBar: View {
                 // it; with the column on the right, the lights over the page,
                 // at the outer end, and the doors at the inner one.
                 HStack(spacing: 0) {
-                    if browser.flank == .left {
+                    // In full screen the lights are macOS's, under its menu
+                    // bar (Brim.light): the corner gives their room to the
+                    // door, at the column's margin.
+                    if browser.flank == .left, !browser.titleLights {
                         Lights(handle: true)
                             .frame(width: Lights.run)
                             // Lights.first in from the window's edge to the
@@ -315,12 +318,18 @@ struct SideBar: View {
                                 DragStrip().frame(width: Lights.first - Lights.lead).offset(x: -SideBar.margin)
                             }
                             .frame(width: Metrics.sideLights, alignment: .leading)
-                            .opacity(browser.stillLights || browser.titleLights ? 0 : 1)
-                            .allowsHitTesting(!browser.titleLights)
+                            .opacity(browser.stillLights ? 0 : 1)
                         if columnDoored {
                             ColumnDoor(browser: browser, prefs: prefs)
                                 .environment(\.doorSize, .header)
                                 .padding(.leading, ColumnHead.doorX() - SideBar.margin - Metrics.sideLights)
+                        }
+                        Spacer(minLength: 0)
+                        headDoors
+                    } else if browser.flank == .left {
+                        if columnDoored {
+                            ColumnDoor(browser: browser, prefs: prefs)
+                                .environment(\.doorSize, .header)
                         }
                         Spacer(minLength: 0)
                         headDoors
@@ -2090,7 +2099,7 @@ struct SideBar: View {
     private var columnDoorNotch: CGRect {
         guard columnDoored else { return .zero }
         let door = Door.Size.header.side
-        let x = browser.flank == .right ? SideBar.margin : ColumnHead.doorX()
+        let x = browser.flank == .right || browser.titleLights ? SideBar.margin : ColumnHead.doorX()
         return CGRect(x: x, y: (Metrics.strip - door) / 2, width: door, height: door)
     }
 

@@ -552,17 +552,30 @@ final class LightsRow: NSView {
 extension Lights {
     /// The title bar's own three stay out of sight in a window, whatever
     /// AppKit does to the title bar: it puts them back on show when it
-    /// rebuilds it for full screen and on the way out of it.
+    /// rebuilds it for full screen and on the way out of it. Not while they
+    /// are the lights (showOwn): a row of ours coming into the window then,
+    /// the column out as a card, would put them away under the menu bar.
     @MainActor
     static func hideOwn(of window: NSWindow) {
-        showOwn(false, of: window)
+        guard ownShown[ObjectIdentifier(window)]?.window !== window else { return }
+        own(of: window).forEach { $0.isHidden = true }
     }
 
     /// In full screen the title bar's own three are the lights, in the band
     /// macOS brings down with its menu bar, and ours are gone.
     @MainActor
     static func showOwn(_ shown: Bool, of window: NSWindow) {
+        ownShown[ObjectIdentifier(window)] = shown ? Shown(window) : nil
         own(of: window).forEach { $0.isHidden = !shown }
+    }
+
+    /// The windows whose title bar's own three are the lights now, held
+    /// weakly: a window opened where a closed one stood in memory has its
+    /// address, and must not take its place here (feedback #168).
+    @MainActor private static var ownShown: [ObjectIdentifier: Shown] = [:]
+    private final class Shown {
+        weak var window: NSWindow?
+        init(_ window: NSWindow) { self.window = window }
     }
 
     /// The title bar's own three, as the window has them now. Asked while
@@ -850,10 +863,11 @@ enum TopReach {
 /// edge below macOS's menu bar slides the
 /// column in over the page, and moving away from it lets it go again. With
 /// the tabs across the top, the strip stays, and steps down out of the way of
-/// the menu bar while it is down. The lights are macOS's own there, in the
-/// title bar it brings down under the menu bar, not ours in the strip; with
-/// the tabs down the left they stay ours, in the column's corner, docked or
-/// out as a card, and the title bar stays put away.
+/// the menu bar while it is down. Whatever the tabs do, the lights in full
+/// screen are macOS's own, in the title bar it brings down under the menu
+/// bar, as Arc has them: not ours in the strip or in the column's corner,
+/// where they stood over the page all the time (#631), nor on the card,
+/// and not gone with a column put away.
 @MainActor
 final class Brim {
     private static var kept: [ObjectIdentifier: Brim] = [:]
@@ -1067,16 +1081,14 @@ final class Brim {
         light()
     }
 
-    /// Whose lights these are. In full screen with the tabs across the top
-    /// macOS's, in the title bar it brings down; with the tabs down the left
-    /// ours, in the column's corner as in a window, the column docked or out
-    /// as a card, with that title bar put away. Out of full screen always ours.
+    /// Whose lights these are. In full screen macOS's, in the title bar it
+    /// brings down with the menu bar; out of it ours, in the column's corner
+    /// or the strip. The title bar stays shown either way: out of full
+    /// screen nothing of it is in sight once its three are put away.
     private func light() {
         guard let window, let browser else { return }
-        // With the column on the right macOS's too: ours stand in the band
-        // across a window's top (HeadBand), and full screen has none.
-        let theirs = browser.fullScreen && (!browser.prefs.sidebar || browser.flank == .right)
-        Lights.showTitleBar(!browser.fullScreen || theirs, of: window)
+        let theirs = browser.fullScreen
+        Lights.showTitleBar(true, of: window)
         Lights.showOwn(theirs, of: window)
         if browser.titleLights != theirs { browser.titleLights = theirs }
     }
@@ -1195,15 +1207,16 @@ final class Brim {
     /// How far the menu bar and the title bar under it reach into the
     /// window when they come down. Only the title bar on a screen with a
     /// notch, where full screen stops below the menu bar, or with the menu
-    /// bar set to stay; no title bar when it is put away for the column's lights.
+    /// bar set to stay.
     /// The menu bar's own height is taken as the tallest of what AppKit
     /// says about it: the main menu's word for it, the status bar's, and
     /// how far the screen's usable area stops under its top. On a screen
     /// without a notch the menu bar comes down over the window, and the
     /// main menu's word alone can be short of the bar macOS draws there.
-    private var menuReach: CGFloat {
+    /// Without `title`, the menu bar's alone.
+    private func menuReach(title: Bool = true) -> CGFloat {
         guard let window, let screen = window.screen else { return 0 }
-        let bar = browser?.titleLights == true ? Lights.titleBarHeight(of: window) : 0
+        let bar = title && browser?.titleLights == true ? Lights.titleBarHeight(of: window) : 0
         guard window.frame.maxY >= screen.frame.maxY - 1 else { return bar }
         let inset = screen.frame.maxY - screen.visibleFrame.maxY
         let said = max(NSApp.mainMenu?.menuBarHeight ?? 0, NSStatusBar.system.thickness, inset <= 60 ? inset : 0)
@@ -1293,7 +1306,7 @@ final class Brim {
         // The vertical card clears the system menu. Horizontal tabs live
         // in that menu's native title-bar accessory instead; their state
         // is observed here only for controls anchored to the strip.
-        let menu = full ? menuReach : 0
+        let menu = full ? menuReach() : 0
         if full, browser.stripAway {
             // Downloads and background-tab notices need to know whether
             // their anchor is visible. Mirror AppKit; do not animate it.
@@ -1305,9 +1318,13 @@ final class Brim {
         // vertical column's clearance under the system menu.
         if full, browser.prefs.sidebar, !held {
             if fromTop <= 2, !browser.menuOut {
+                // The column steps down for the menu bar only. The title bar
+                // with the lights comes down over it, as over Arc's sidebar
+                // and every full-screen app's content, and goes back up
+                // once the pointer leaves it.
                 withAnimation(Motion.arrive) {
                     browser.menuOut = true
-                    browser.menuDown = menu
+                    browser.menuDown = menuReach(title: false)
                 }
             } else if fromTop > menu + (browser.prefs.sidebar ? Metrics.strip : Metrics.row), browser.menuOut,
                       !(browser.stripPeek && stripHeld(browser)) {

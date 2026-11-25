@@ -8219,6 +8219,9 @@ final class Bench {
                 "titleWindow": title?.window?.windowNumber ?? 0,
                 "menuOut": browser.menuOut, "menuDown": Double(browser.menuDown),
                 "stripPeek": browser.stripPeek, "full": browser.fullScreen,
+                // Whose lights: macOS's in the band under the menu bar, or ours.
+                "titleLights": browser.titleLights, "titleHidden": title?.isHidden ?? true,
+                "ownLightsShown": Lights.own(of: window).filter { !$0.isHidden }.count,
                 "accessories": window.titlebarAccessoryViewControllers.map { rect($0.view) },
             ])
 
