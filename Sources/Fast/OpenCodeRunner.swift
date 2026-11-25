@@ -53,6 +53,15 @@ enum OpenCodeRunner {
         }.joined(separator: " ")
     }
 
+    /// What an id's provider part reads as: everything before the model's
+    /// own name, as the id spells it, its `~` mark taken off. Rows use it
+    /// to say which part of the plan a model comes from.
+    static func providerName(_ id: String) -> String {
+        var parts = id.components(separatedBy: "/")
+        if parts.count > 1 { parts.removeLast() }
+        return parts.joined(separator: "/").replacingOccurrences(of: "~", with: "")
+    }
+
     typealias Identity = (signedIn: Bool, email: String?, plan: String?)
     private static var identities: [String: Identity] = [:]
 

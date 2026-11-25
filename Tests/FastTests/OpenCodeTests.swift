@@ -28,6 +28,16 @@ struct OpenCodeTests {
         #expect(models.map(\.model) == ["opencode/glm-5.3-flash"])
     }
 
+    /// The provider part of an id, as a row reads it: which part of the
+    /// plan the model comes from, apart from the plan's own name.
+    @Test func opencodeModelIdsSayTheirProvider() {
+        #expect(OpenCodeRunner.providerName("opencode-go/glm-5.3-flash") == "opencode-go")
+        #expect(OpenCodeRunner.providerName("opencode/beam-free") == "opencode")
+        #expect(OpenCodeRunner.providerName("openrouter/z-ai/glm-5.3-flash") == "openrouter/z-ai")
+        #expect(OpenCodeRunner.providerName("openrouter/~z-ai/glm-latest") == "openrouter/z-ai")
+        #expect(OpenCodeRunner.providerName("opencode") == "opencode")
+    }
+
     @Test func opencodeRunsOnItsOwnPlanWords() {
         #expect(AgentPlan.opencode.cli == "opencode")
         #expect(AgentSetupModel.plan("opencode") == "OpenCode")

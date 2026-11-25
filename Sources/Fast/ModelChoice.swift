@@ -646,8 +646,9 @@ private struct ModelList: View {
         return all.map { group in
             Group(id: group.id, title: group.title, cli: group.cli, allHidden: group.allHidden, models: group.models.filter { model in
                 // The tools' names find them too: "codex", "claude code".
+                // The raw id finds the provider: "openrouter", "z-ai".
                 let text = (model.name + " " + group.title + " " + AgentModels.agentName(model.cli)
-                            + (model.cli == "mac" ? "" : " " + AgentSetupModel.tool(model.cli))).lowercased()
+                            + (model.cli == "mac" ? "" : " " + model.model + " " + AgentSetupModel.tool(model.cli))).lowercased()
                 return words.allSatisfy { text.contains($0) }
             })
         }.filter { !$0.models.isEmpty }
@@ -681,6 +682,15 @@ private struct ModelList: View {
         ModelField.isChosen(model, choice: choice)
     }
 
+    /// Who runs the model, as a row says it: the plan's agent, or for
+    /// OpenCode the provider its id names, so "Beam Free" from OpenRouter
+    /// reads apart from Zen's own.
+    private func source(_ model: AgentModel) -> String {
+        model.cli == "mac" ? "This Mac"
+            : model.cli == "opencode" ? OpenCodeRunner.providerName(model.model)
+            : AgentModels.agentName(model.cli)
+    }
+
     private func move(_ by: Int) {
         let all = rows
         guard !all.isEmpty else { return }
@@ -699,7 +709,8 @@ private struct ModelList: View {
     }
 
     var body: some View {
-        let lit = rows.indices.contains(spot) ? rows[spot].id : nil
+        let listed = rows
+        let lit = listed.indices.contains(spot) ? listed[spot].id : nil
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Symbol("magnifyingglass", size: 12)
@@ -714,7 +725,9 @@ private struct ModelList: View {
             Divider()
             ScrollViewReader { reader in
             ThreadScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                // Lazy, so a plan with hundreds of models opens at once
+                // and builds only the rows in view.
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if query.isEmpty {
                         ModelRow(cli: nil, name: automatic.title, source: automatic.detail, chosen: choice.cli == nil, lit: lit == "auto") {
                             pick(ModelChoice())
@@ -737,7 +750,7 @@ private struct ModelList: View {
                             // just not one this work runs on.
                             note(refusal)
                             ForEach(group.models) { model in
-                                ModelRow(cli: model.cli, name: model.name, source: AgentModels.agentName(model.cli),
+                                ModelRow(cli: model.cli, name: model.name, source: source(model),
                                          chosen: false) {}
                                     .disabled(true)
                                     .opacity(0.45)
@@ -749,7 +762,7 @@ private struct ModelList: View {
                         } else {
                             ForEach(group.models) { model in
                                 ModelRow(cli: model.cli, name: model.name,
-                                         source: model.cli == "mac" ? "This Mac" : AgentModels.agentName(model.cli),
+                                         source: source(model),
                                          chosen: isChosen(model), lit: lit == model.id) {
                                     pick(ModelChoice(cli: model.cli, model: model.model.isEmpty ? nil : model.model))
                                 }
@@ -791,13 +804,26 @@ private struct ModelList: View {
         let shown = hovered ?? AgentModels.find(choice.cli, choice.model)
         return ZStack(alignment: .topLeading) {
             facts(nil).hidden()
-            ForEach(every.flatMap(\.models)) { model in
-                facts(model).hidden()
-            }
+            // The card's height varies only through the about text's lines;
+            // the plan-usage windows come from the account, not the model.
+            // One hidden copy of the longest about holds the foot still,
+            // where a hidden copy of every model made the list slow to open.
+            facts(longest).hidden()
             facts(shown)
         }
         .font(.system(size: 12))
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading)
+    }
+
+    /// A stand-in for the foot's tallest reading: the longest about text
+    /// any listed model carries, on the plan of the one shown, when there
+    /// is one.
+    private var longest: AgentModel {
+        let shown = hovered ?? AgentModels.find(choice.cli, choice.model)
+        let fullest = every.flatMap(\.models).max { $0.about.count < $1.about.count }
+        return AgentModel(cli: shown?.cli ?? fullest?.cli ?? "mac",
+                          model: "", name: fullest?.name ?? "",
+                          about: fullest?.about ?? "", efforts: [])
     }
 
     private func facts(_ model: AgentModel?) -> some View {
@@ -806,6 +832,13 @@ private struct ModelList: View {
                 Text(model.name).font(.system(size: 12.5, weight: .semibold))
                 if !model.about.isEmpty {
                     Text(model.about).foregroundStyle(.secondary)
+                }
+                // Which exact model it is: an OpenCode id names the
+                // provider the row's word only gestures at.
+                if model.cli == "opencode" {
+                    Text(model.model)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
                 Text(model.cli == "mac" ? "Nothing leaves this Mac."
                      : "Runs on your \(AgentModels.agentName(model.cli)) plan.")
