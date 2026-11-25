@@ -9,10 +9,8 @@ import Foundation
 // from other apps. With no window choice it keeps the global behavior.
 //
 // A site is what was typed: linear.app is the site and every host under it;
-// docs.google.com/spreadsheets is only the pages under that path. There is
-// no order to them: the closest match wins, a path over a host, a longer
-// host over a shorter one. A word or a * pattern is an exception for any
-// matching address, taking priority over a site. Links from other apps,
+// docs.google.com/spreadsheets is only the pages under that path.
+// Rules run in specificity order unless manual priority is on. Links from other apps,
 // a new site explicitly opened from Cmd-T, and a link a page opens in a
 // new tab (a Cmd-click, a middle click, target=_blank, a mail's link, a
 // peek opened as a tab) follow the rules, as Arc's do; a plain click and
@@ -27,6 +25,7 @@ struct LinkRoute: Codable, Equatable, Identifiable {
     var space: UUID
     /// Nil for old rules: keep the global Small Window behavior.
     var opensInMain: Bool? = nil
+    var specificityOrder: Int? = nil
     var id: String { site }
     var pattern: Bool { site.contains("*") }
 
@@ -40,6 +39,7 @@ final class LinkRoutes: ObservableObject {
     static let shared = LinkRoutes()
 
     nonisolated static let key = "links.routes"
+    nonisolated static let manualKey = "links.routes.manual-priority"
     nonisolated static let defaultSpaceKey = "links.routes.default-space"
     /// A destination token, not a space or a remembered last-used UUID.
     /// Old clients ignore rules with this unknown destination; old fixed
@@ -52,8 +52,56 @@ final class LinkRoutes: ObservableObject {
 
     @Published private(set) var defaultSpace: UUID?
     @Published private(set) var routes: [LinkRoute]
+    @Published var manualPriority: Bool {
+        didSet {
+            if settings.bool(forKey: Self.manualKey) != manualPriority {
+                settings.set(manualPriority, forKey: Self.manualKey)
+            }
+        }
+    }
     @Published private(set) var kept: [Kept]
     @Published private(set) var declined: Set<String>
+    private let settings: UserDefaults
+
+    var displayOrder: [String] { routes.map(\.id) }
+    var displayedRoutes: [LinkRoute] { manualPriority ? routes : Self.bySpecificity(routes) }
+
+    private static func bySpecificity(_ routes: [LinkRoute]) -> [LinkRoute] {
+        routes.sorted { first, second in
+            let firstPriority = priority(first), secondPriority = priority(second)
+            if firstPriority != secondPriority { return firstPriority > secondPriority }
+            return (first.specificityOrder ?? Int.max) < (second.specificityOrder ?? Int.max)
+        }
+    }
+
+    private struct SavedRoute: Codable {
+        let rule: LinkRoute
+        let ordered: Bool
+        enum Key: String, CodingKey { case ordered }
+
+        init(_ rule: LinkRoute) { self.rule = rule; ordered = true }
+        init(from decoder: Decoder) throws {
+            rule = try LinkRoute(from: decoder)
+            ordered = try decoder.container(keyedBy: Key.self).decodeIfPresent(Bool.self, forKey: .ordered) ?? false
+        }
+        func encode(to encoder: Encoder) throws {
+            try rule.encode(to: encoder)
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode(ordered, forKey: .ordered)
+        }
+    }
+
+    private struct Position: Codable {
+        let site: String
+        let specificityOrder: Int?
+
+        init(_ rule: LinkRoute) {
+            site = rule.site
+            specificityOrder = rule.specificityOrder
+        }
+    }
+
+    private static let positionsKey = "links.routes.last-known-positions"
 
     struct Kept: Codable, Equatable {
         var site: String
@@ -73,11 +121,45 @@ final class LinkRoutes: ObservableObject {
     nonisolated static let often = 3
     nonisolated static let window: TimeInterval = 7 * 24 * 3600
 
-    private init() {
-        defaultSpace = Store.settings.string(forKey: Self.defaultSpaceKey).flatMap(UUID.init(uuidString:))
-        routes = Self.decode([LinkRoute].self, Self.key) ?? []
-        kept = Self.decode([Kept].self, Self.keptKey) ?? []
-        declined = Set(Store.settings.stringArray(forKey: Self.declinedKey) ?? [])
+    init(settings: UserDefaults = Store.settings) {
+        self.settings = settings
+        defaultSpace = settings.string(forKey: Self.defaultSpaceKey).flatMap(UUID.init(uuidString:))
+        manualPriority = settings.bool(forKey: Self.manualKey)
+        routes = Self.readRoutes(settings)
+        kept = Self.decode([Kept].self, Self.keptKey, settings: settings) ?? []
+        declined = Set(settings.stringArray(forKey: Self.declinedKey) ?? [])
+    }
+
+    private static func readRoutes(_ settings: UserDefaults) -> [LinkRoute] {
+        guard let saved = decode([SavedRoute].self, key, settings: settings) else {
+            if settings.object(forKey: key) == nil { settings.removeObject(forKey: positionsKey) }
+            return []
+        }
+        var rules = saved.map(\.rule)
+        if saved.contains(where: { !$0.ordered }) {
+            if let known = decode([Position].self, positionsKey, settings: settings), !known.isEmpty {
+                let incoming = Dictionary(rules.map { ($0.site, $0) }, uniquingKeysWith: { first, _ in first })
+                let existing = Set(known.map(\.site))
+                rules = known.compactMap { position in
+                    guard var rule = incoming[position.site] else { return nil }
+                    rule.specificityOrder = position.specificityOrder
+                    return rule
+                } + rules.filter { !existing.contains($0.site) }
+            } else {
+                for index in rules.indices { rules[index].specificityOrder = index }
+                rules = bySpecificity(rules)
+            }
+            encode(rules.map(SavedRoute.init), key, settings: settings)
+        }
+        encode(rules.map(Position.init), positionsKey, settings: settings)
+        return rules
+    }
+
+    func adoptSyncedSettings(_ keys: Set<String>) {
+        if keys.contains(Self.key) { routes = Self.readRoutes(settings) }
+        if keys.contains(Self.manualKey) { manualPriority = settings.bool(forKey: Self.manualKey) }
+        if keys.contains(Self.keptKey) { kept = Self.decode([Kept].self, Self.keptKey, settings: settings) ?? [] }
+        if keys.contains(Self.declinedKey) { declined = Set(settings.stringArray(forKey: Self.declinedKey) ?? []) }
     }
 
     // MARK: - finding
@@ -86,7 +168,7 @@ final class LinkRoutes: ObservableObject {
     /// there, and that space is still there with spaces on.
     func space(for url: URL, in browser: Browser) -> UUID? {
         guard browser.spacesShown, browser.spaces.count > 1 else { return nil }
-        return Self.destination(routes: routes, for: url, available: browser.spaces.map(\.id),
+        return Self.destination(routes: displayedRoutes, for: url, available: browser.spaces.map(\.id),
                                 recent: browser.spaceID, fallback: nil)
     }
 
@@ -94,7 +176,7 @@ final class LinkRoutes: ObservableObject {
     /// captured with the request, before routing or delayed window work.
     func externalSpace(for url: URL, in browser: Browser, recent: UUID?) -> UUID? {
         guard browser.spacesShown, browser.spaces.count > 1 else { return nil }
-        return Self.destination(routes: routes, for: url, available: browser.spaces.map(\.id),
+        return Self.destination(routes: displayedRoutes, for: url, available: browser.spaces.map(\.id),
                                 recent: recent, fallback: browser.privateBrowsing ? nil : defaultSpace)
     }
 
@@ -117,7 +199,7 @@ final class LinkRoutes: ObservableObject {
         guard browser.windowPurpose == .normal, browser.prefs.usesSpaces, browser.spaces.count > 1,
               let source, !source.shy, !source.bench, source.agent == nil,
               !browser.outside.contains(where: { $0 === source }) else { return nil }
-        return Self.pageLinkDestination(routes: routes, for: url, available: browser.spaces.map(\.id), current: browser.spaceID)
+        return Self.pageLinkDestination(routes: displayedRoutes, for: url, available: browser.spaces.map(\.id), current: browser.spaceID)
     }
 
     /// A page's link: a matched rule's space, never the fallback, and
@@ -130,13 +212,13 @@ final class LinkRoutes: ObservableObject {
 
     func setDefaultSpace(_ space: UUID?) {
         defaultSpace = space
-        Store.settings.set(space?.uuidString, forKey: Self.defaultSpaceKey)
+        settings.set(space?.uuidString, forKey: Self.defaultSpaceKey)
     }
 
     /// Only the winning external rule may bypass Small Window. This does
     /// not choose a Space or change typed URLs, page links or Handoff.
     func opensInMain(for url: URL) -> Bool {
-        Self.opensInMain(routes, for: url)
+        Self.opensInMain(displayedRoutes, for: url)
     }
 
     nonisolated static func opensInMain(_ routes: [LinkRoute], for url: URL) -> Bool {
@@ -155,9 +237,7 @@ final class LinkRoutes: ObservableObject {
     /// The route for exactly this site, not a wider or narrower one.
     func route(site: String) -> LinkRoute? { routes.first { $0.site == site } }
 
-    /// An address pattern takes priority over a site; the pattern with
-    /// more literal characters wins. Sites keep their former precedence:
-    /// the longer path, then the longer host.
+    /// The first matching rule in Settings order wins.
     nonisolated static func best(_ routes: [LinkRoute], for link: URL) -> LinkRoute? {
         let url = carried(link)
         guard let host = url.host().map(bare), !host.isEmpty else { return nil }
@@ -169,14 +249,13 @@ final class LinkRoutes: ObservableObject {
         let root = path.isEmpty || path == "/"
         let address = patternHost + (root ? "" : path) + query
         return routes
-            .filter { route in
+            .first { route in
                 if route.pattern {
                     return matches(route.site, address) || (root && matches(route.site, patternHost + "/" + query))
                 }
                 return (host == route.host || host.hasSuffix("." + route.host))
                     && (route.path.isEmpty || path == route.path || path.hasPrefix(route.path + "/"))
             }
-            .max { a, b in priority(a) < priority(b) }
     }
 
     /// The address a link checker's page carries, for rules to match:
@@ -297,6 +376,22 @@ final class LinkRoutes: ObservableObject {
 
     // MARK: - changing
 
+    func move(_ site: String, to index: Int) {
+        guard manualPriority, let from = routes.firstIndex(where: { $0.id == site }) else { return }
+        let to = min(max(0, index), routes.count - 1)
+        guard from != to else { return }
+        var reordered = routes
+        var last = reordered.compactMap(\.specificityOrder).max() ?? -1
+        for index in reordered.indices where reordered[index].specificityOrder == nil {
+            last = min(last, Int.max - 1) + 1
+            reordered[index].specificityOrder = last
+        }
+        let route = reordered.remove(at: from)
+        reordered.insert(route, at: to)
+        routes = reordered
+        save()
+    }
+
     /// This site's links to `space`, in its place if it had a route.
     func set(_ site: String, to space: UUID) {
         if let at = routes.firstIndex(where: { $0.site == site }) {
@@ -328,7 +423,8 @@ final class LinkRoutes: ObservableObject {
             }
             return routes
         }
-        routes[at] = LinkRoute(site: site, space: space, opensInMain: routes[at].opensInMain)
+        routes[at].site = site
+        routes[at].space = space
         return routes.enumerated().filter { $0.offset == at || $0.element.site != site }.map(\.element)
     }
 
@@ -346,15 +442,19 @@ final class LinkRoutes: ObservableObject {
     }
 
     /// A space deleted: its routes with it, and what was kept into it.
-    func forget(space: UUID) {
+    @discardableResult func forget(space: UUID) -> [(offset: Int, element: LinkRoute)] {
+        let removed = routes.enumerated().filter { $0.element.space == space }
         routes.removeAll { $0.space == space }
         kept.removeAll { $0.space == space }
         save()
+        return removed
     }
 
     /// A deleted space's routes, back with it (Browser.deleteSpace).
-    func bringBack(_ back: [LinkRoute], kept more: [Kept]) {
-        routes += back.filter { !routes.contains($0) }
+    func bringBack(_ back: [(offset: Int, element: LinkRoute)], kept more: [Kept]) {
+        for (index, rule) in back where !routes.contains(where: { $0.id == rule.id }) {
+            routes.insert(rule, at: min(index, routes.count))
+        }
         kept += more.filter { !kept.contains($0) }
         save()
     }
@@ -409,17 +509,18 @@ final class LinkRoutes: ObservableObject {
     // MARK: - kept
 
     private func save() {
-        Self.encode(routes, Self.key)
-        Self.encode(kept, Self.keptKey)
-        Store.settings.set(declined.sorted(), forKey: Self.declinedKey)
+        Self.encode(routes.map(SavedRoute.init), Self.key, settings: settings)
+        Self.encode(routes.map(Position.init), Self.positionsKey, settings: settings)
+        Self.encode(kept, Self.keptKey, settings: settings)
+        settings.set(declined.sorted(), forKey: Self.declinedKey)
     }
 
-    private static func decode<T: Decodable>(_ type: T.Type, _ key: String) -> T? {
-        Store.settings.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
+    private static func decode<T: Decodable>(_ type: T.Type, _ key: String, settings: UserDefaults) -> T? {
+        settings.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
-    private static func encode<T: Encodable>(_ value: T, _ key: String) {
+    private static func encode<T: Encodable>(_ value: T, _ key: String, settings: UserDefaults) {
         guard let data = try? JSONEncoder().encode(value) else { return }
-        Store.settings.set(data, forKey: key)
+        settings.set(data, forKey: key)
     }
 }

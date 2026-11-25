@@ -588,7 +588,7 @@ enum SyncShapes {
         "bookmarks.bar", "pages.zoom", "pages.fonts", "pages.dark", "pages.darkLook", "appearance.appIcon",
         "tabs.sleep", "tabs.awake", "tabs.tidy", "tabs.researchFolders", "tabs.linkFolders", "tabs.folderEmoji", "tabs.optShiftFolders", "tabs.meetingFolders", "spaces", "pins.everySpace", "peek", "links.small", "links.small.key",
         "split.rule", "quit.warn", "player.shown", "float.leave", "float.away",
-        "links.routes", "links.routes.kept", "links.routes.declined", "shortcuts",
+        "links.routes", LinkRoutes.manualKey, "links.routes.kept", "links.routes.declined", "shortcuts",
         "search.engine", "search.custom", "scopes.off", "scopes.keywords", "scopes.templates", "scopes.learn", "scopes.recent",
         "shield", "devSites", "extensions.private",
         "passwords.save", "passwords.fill", "passwords.never", "autofill.save", "autofill.fill", "autofill.forms", "autofill.drafts",

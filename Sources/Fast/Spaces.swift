@@ -1311,13 +1311,12 @@ extension Browser {
         }
         let gone = spaces[at]
         let shared = Spaces.sharing.contains(id)
-        let routes = LinkRoutes.shared.routes.filter { $0.space == id }
         let kept = LinkRoutes.shared.kept.filter { $0.space == id }
         spaces.remove(at: at)
         Spaces.sharing.remove(id)
         Spaces.write(spaces)
         // Links its routes sent here go to the space on screen again.
-        LinkRoutes.shared.forget(space: id)
+        let routes = LinkRoutes.shared.forget(space: id)
         // Its store only when no space left signs in with it; the store it
         // used of a space deleted before, when it was the last on it.
         let stores = !gone.ownSignIns ? [] : unusedStores([id, gone.signInWith].compactMap { $0 })

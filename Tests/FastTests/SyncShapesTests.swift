@@ -173,6 +173,45 @@ struct SyncShapesTests {
         #expect((back["shortcuts"] as? [String: String]) == ["newTab": "cmd+t"])
     }
 
+    @Test func routePriorityTravelsWithRulesButNotAnOldLocalOrder() throws {
+        let rules = Data([1, 2, 3])
+        let out = SyncShapes.settings([LinkRoutes.key: rules, LinkRoutes.manualKey: true,
+                                       "links.routes.display-order": ["old.example"]])
+        let back = out.compactMapValues { $0["value"].flatMap(SyncShapes.plist) }
+        #expect(back[LinkRoutes.key] as? Data == rules)
+        #expect(back[LinkRoutes.manualKey] as? Bool == true)
+        #expect(back["links.routes.display-order"] == nil)
+    }
+
+    @Test func olderMacRemovingUnknownPriorityKeyIsNotAnExplicitOff() throws {
+        try #require(Store.testing)
+        let key = LinkRoutes.manualKey, routes = LinkRoutes.shared
+        let previous = Store.settings.object(forKey: key)
+        defer {
+            Store.settings.set(previous, forKey: key)
+            routes.adoptSyncedSettings([key])
+        }
+        let current = try Journal(path: nil, device: "current"), older = try Journal(path: nil, device: "older")
+        let recordKey = Record.Key(collection: SyncShapes.setting, id: key)
+        routes.manualPriority = true
+        try SyncShapes.reconcileSettings(current, [key: true], addons: true)
+        _ = try older.receive(current.pending().map { ($0.record, 1) })
+        try SyncShapes.reconcileSettings(older, [:], addons: true)
+        let removed = try #require(older.record(recordKey))
+        try #require(!removed.alive())
+        _ = try current.receive([(removed, 2)])
+        SyncCenter.shared.adopt([try #require(current.record(recordKey))], from: current)
+        #expect(routes.manualPriority, "An older Mac cleaning up an unknown setting is not a user choice")
+        #expect(Store.settings.bool(forKey: key))
+
+        try SyncShapes.reconcileSettings(older, [key: false], addons: true)
+        let explicitOff = try #require(older.record(recordKey))
+        try #require(explicitOff.alive() && explicitOff["value"] == .bool(false))
+        _ = try current.receive([(explicitOff, 3)])
+        SyncCenter.shared.adopt([try #require(current.record(recordKey))], from: current)
+        #expect(!routes.manualPriority, "An explicit off from a compatible Mac must still apply")
+    }
+
     /// A key changed on one Mac and another on a second both stay.
     @Test func shortcutsFromTwoMacsAddUp() throws {
         let ja = try Journal(path: nil, device: "a"), jb = try Journal(path: nil, device: "b")

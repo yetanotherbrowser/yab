@@ -1370,7 +1370,8 @@ final class NativeControl {
                     guard let site = string(rule["site"]), let space = string(rule["space"]).flatMap(Self.routeID) else {
                         throw NativeFailure("failed", "The previous rules are unavailable")
                     }
-                    return LinkRoute(site: site, space: space, opensInMain: boolean(rule["skipSmallWindow"]) == true ? true : nil)
+                    return LinkRoute(site: site, space: space, opensInMain: boolean(rule["skipSmallWindow"]) == true ? true : nil,
+                                     specificityOrder: string(rule["specificityOrder"]).flatMap(Int.init))
                 }
                 LinkRoutes.shared.restore(rules, defaultSpace: string(state["defaultSpace"]).flatMap(Self.routeID))
             case "mail.set_notify":
@@ -1449,7 +1450,9 @@ final class NativeControl {
     private func routesState() -> NativeValue {
         let routes = LinkRoutes.shared
         return .object(["rules": .array(routes.routes.map {
-                            .object(["site": .string($0.site), "space": .string(Self.routeToken($0.space)), "skipSmallWindow": .bool($0.opensInMain == true)])
+                            var rule: [String: NativeValue] = ["site": .string($0.site), "space": .string(Self.routeToken($0.space)), "skipSmallWindow": .bool($0.opensInMain == true)]
+                            if let order = $0.specificityOrder { rule["specificityOrder"] = .string(String(order)) }
+                            return .object(rule)
                         }),
                         "defaultSpace": .string(routes.defaultSpace.map(Self.routeToken) ?? "")])
     }

@@ -22,9 +22,13 @@ struct LinkRouteSettings: View {
                     selection: Binding(get: { routes.defaultSpace }, set: { routes.setDefaultSpace($0) }), trailing: true)
             }
             .settingsAnchor("link-routes-default")
-            ForEach(routes.routes) { route in
-                LinkRouteRow(route: route, spaces: spaces)
-                    .settingsAnchor("link-route:" + route.site)
+            SettingsSwitch("Use manual rule priority", isOn: $routes.manualPriority)
+                .settingsAnchor("link-routes-manual")
+            if !routes.routes.isEmpty {
+                LinkRouteList(items: routes.displayedRoutes, spaces: spaces, manual: routes.manualPriority, move: { routes.move($0, to: $1) })
+                    // The form's inset round a cell traded for the
+                    // list's own air, as the spaces' list does.
+                    .padding(.vertical, SettingsList.air - 10) // design: the form's own inset round a cell, traded for the list's air
             }
             if let suggestion, let space = spaces.first(where: { $0.id == suggestion.space }) {
                 LinkRouteSuggestion(suggestion: suggestion, space: space)
@@ -44,27 +48,109 @@ struct LinkRouteSettings: View {
             .textCase(nil)
             .settingsAnchor("link-routes")
         } footer: {
-            SettingsNote("Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
+            if routes.manualPriority {
+                SettingsNote("The first matching rule wins. Drag to reorder. Rules override the default.")
+            } else {
+                SettingsNote("Rules override the default. Recent space uses the space open when a link arrives. Click a rule to edit or remove it.")
+            }
         }
+    }
+}
+
+private struct LinkRouteList: View {
+    let items: [LinkRoute]
+    let spaces: [Space]
+    let manual: Bool
+    let move: (String, Int) -> Void
+    @State private var lifted: String?
+    @State private var lift: CGFloat = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, route in
+                LinkRouteRow(route: route, spaces: spaces,
+                             lifted: lifted == route.id, rule: index > 0 && lifted != route.id,
+                             grip: manual && items.count > 1 ? reorder(route) : nil,
+                             moveUp: manual && index > 0 ? { move(route.id, index - 1) } : nil,
+                             moveDown: manual && index < items.count - 1 ? { move(route.id, index + 1) } : nil)
+                    .settingsAnchor("link-route:" + route.site)
+                    .offset(y: shift(index))
+                    .zIndex(lifted == route.id ? 1 : 0)
+                    .animation(lifted == nil || lifted == route.id ? nil : Motion.settle, value: shift(index))
+            }
+        }
+        .onDisappear {
+            if lifted != nil { NSCursor.pop() }
+            lifted = nil
+            lift = 0
+        }
+    }
+
+    private func landing(_ from: Int) -> Int {
+        min(items.count - 1, max(0, from + Int((lift / SettingsList.row).rounded())))
+    }
+
+    private func shift(_ index: Int) -> CGFloat {
+        guard let lifted, let from = items.firstIndex(where: { $0.id == lifted }) else { return 0 }
+        if index == from { return lift }
+        let to = landing(from)
+        if from < to, index > from, index <= to { return -SettingsList.row }
+        if from > to, index < from, index >= to { return SettingsList.row }
+        return 0
+    }
+
+    private func reorder(_ route: LinkRoute) -> AnyGesture<Void> {
+        AnyGesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .onChanged { drag in
+                if lifted != route.id { NSCursor.closedHand.push() }
+                lifted = route.id
+                lift = drag.translation.height
+            }
+            .onEnded { _ in
+                if lifted != nil { NSCursor.pop() }
+                guard lifted == route.id, let from = items.firstIndex(where: { $0.id == route.id }) else {
+                    lifted = nil
+                    lift = 0
+                    return
+                }
+                let to = landing(from)
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) {
+                    move(route.id, to)
+                    lifted = nil
+                    lift = 0
+                }
+            }
+            .map { _ in () })
     }
 }
 
 /// One rule: the site's icon, or a search mark for an address pattern, its scope,
 /// and the space its links go to.
 private struct LinkRouteRow: View {
+    static let handleWidth: CGFloat = 14
+    static let spacing: CGFloat = 8
+
     let route: LinkRoute
     let spaces: [Space]
+    let lifted: Bool
+    let rule: Bool
+    let grip: AnyGesture<Void>?
+    let moveUp: (() -> Void)?
+    let moveDown: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Self.spacing) {
+            handle
             Button(action: edit) {
                 HStack(spacing: 8) {
                     if route.pattern {
                         Symbol("magnifyingglass", size: 12)
                             .foregroundStyle(.secondary)
-                            .frame(width: 16, height: 16)
+                            .frame(width: 22, height: 22)
                     } else {
-                        HostMark(host: route.host)
+                        HostMark(host: route.host, size: 22)
                     }
                     Text(route.site)
                         .lineLimit(1)
@@ -89,11 +175,50 @@ private struct LinkRouteRow: View {
                 set: { LinkRoutes.shared.set(route.site, to: $0) }
             ), trailing: true)
         }
+        .frame(height: SettingsList.row)
         .contentShape(Rectangle())
+        .background {
+            if lifted {
+                let shape = RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                shape.fill(Color(nsColor: .controlBackgroundColor)) // design: a row lifted in the hand, as the tray's is, not a card
+                    .castShadow(shape, color: .black.opacity(0.14), radius: 8, y: 3)
+                    .padding(.horizontal, -6)
+            }
+        }
+        .overlay(alignment: .top) {
+            if rule {
+                Divider()
+                    .padding(.leading, Self.handleWidth + Self.spacing)
+                    .offset(y: -0.5)
+            }
+        }
         .contextMenu {
             Button("Edit…", action: edit)
             Divider()
             Button("Remove") { LinkRoutes.shared.remove(route.site) }
+        }
+    }
+
+    @ViewBuilder
+    private var handle: some View {
+        let dots = Symbol("circle.grid.2x3", size: 11)
+            .foregroundStyle(.tertiary)
+            .frame(width: Self.handleWidth, height: SettingsList.row)
+            .contentShape(Rectangle())
+        if let grip {
+            dots
+                .onHover { inside in
+                    if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+                }
+                .highPriorityGesture(grip)
+                .keyTip("Drag to change its place")
+                .accessibilityLabel("Reorder \(route.site)")
+                .accessibilityActions {
+                    if let moveUp { Button("Move Up", action: moveUp) }
+                    if let moveDown { Button("Move Down", action: moveDown) }
+                }
+        } else {
+            dots.hidden()
         }
     }
 
@@ -111,7 +236,7 @@ private struct LinkRouteSuggestion: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                HostMark(host: suggestion.site)
+                HostMark(host: suggestion.site, size: 22)
                     .opacity(0.6)
                 Text(suggestion.site)
                     .foregroundStyle(.secondary)
@@ -136,10 +261,11 @@ private struct LinkRouteSuggestion: View {
 /// The site's icon when it has been seen, its letter until then.
 struct HostMark: View {
     let host: String
+    var size: CGFloat = 16
     @State private var icon: NSImage?
 
     var body: some View {
-        Mark(icon: icon, letter: host.first.map { String($0).uppercased() } ?? "•", size: 16)
+        Mark(icon: icon, letter: host.first.map { String($0).uppercased() } ?? "•", size: size)
             .onAppear {
                 icon = Favicons.shared.cached(host)
                 guard icon == nil else { return }
