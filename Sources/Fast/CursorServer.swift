@@ -125,7 +125,7 @@ final class CursorServer {
                 guard let id = update["toolCallId"] as? String else { return [] }
                 let status = update["status"] as? String ?? "in_progress"
                 return [.tool(ChatItem(id: "\(name.lowercased()).tool.\(streamID)." + id, kind: .tool,
-                    name: "\(name) tool", text: Self.text(update["content"]),
+                    name: update["title"] as? String ?? "\(name) tool", text: Self.text(update["content"]),
                     state: status == "failed" ? .failed : status == "completed" ? .done : .running))]
             default: return []
             }

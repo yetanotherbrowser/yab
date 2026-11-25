@@ -97,7 +97,7 @@ struct OpenCodeTests {
             "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Run"]]])
         guard case .tool(let item) = tool.first else { Issue.record("no tool"); return }
         #expect(item.id.hasPrefix("opencode.tool."))
-        #expect(item.name == "OpenCode tool")
+        #expect(item.name == "Run")
         // A tool OpenCode asks about is turned down, as a text run promises.
         let ask = wire.server.heard(["id": 7, "method": "session/request_permission", "params": [
             "sessionId": "ses_1", "toolCall": ["title": "Write a file"], "options": [
@@ -130,6 +130,6 @@ struct OpenCodeTests {
             "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Run"]]])
         guard case .tool(let item) = heard.first else { Issue.record("no tool"); return }
         #expect(item.id.hasPrefix("cursor.tool."))
-        #expect(item.name == "Cursor tool")
+        #expect(item.name == "Run")
     }
 }
