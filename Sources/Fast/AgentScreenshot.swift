@@ -26,7 +26,7 @@ enum AgentScreenshot {
         shot.scrollMayMove = true
         return try await AgentImageGate.capture(page, shot: shot) {
             guard !tab.gone, tab.builtPage === page, !tab.wallet.agentScreenshotBlocked,
-                  await AgentSecrets.check(page), case let frames = (try? await page.agentFrames()) ?? [],
+                  await AgentSecrets.check(page, reach: .sight), case let frames = (try? await page.agentFrames()) ?? [],
                   // A frame with no script context is left out of the
                   // receipt, as the guard leaves it out; it is not a refusal.
                   case let tokens = Set(frames.compactMap({ try? page.scripts.token($0, tab: page.remoteID) })),

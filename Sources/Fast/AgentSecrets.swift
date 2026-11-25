@@ -8,6 +8,7 @@ enum AgentSecrets {
     struct Refused: LocalizedError {
         let message: String
         @MainActor init(_ page: (any PageHandle)? = nil) { message = page.map { AgentSecrets.refusal(for: $0) } ?? AgentSecrets.refusal }
+        init(said: String) { message = said }
         var errorDescription: String? { message }
     }
 
@@ -18,6 +19,46 @@ enum AgentSecrets {
         url?.scheme?.lowercased() == "chrome-extension" &&
             url?.host?.lowercased() == "mhjfbmdgcfjbbpaeojofohoefgiehjai"
     }
+
+    /// What a call needs of a page. An extension's frame open on it (a
+    /// password manager's suggestions under a field) is its own window:
+    /// `document` leaves it out and reads and acts on the rest, by refs.
+    /// `sight` is the page's pixels, or input aimed at no element (a point,
+    /// keys to whatever has focus), which would show that window or land in
+    /// it; it waits until the frame closes.
+    enum Reach { case document, sight }
+
+    /// The reach of an agent's call through the bench: a saved copy of the
+    /// page, keys, a click or typing with no ref, Enter after typing, and a
+    /// drag or hover, real pointer moves at a point even by ref, need sight.
+    /// So does eval: its script runs at document reach, but can still find
+    /// the extension's frame element and postMessage to it.
+    /// A click by ref covered by something falls back to a script click on
+    /// the element (AgentPage.act). Screenshots ask for sight themselves
+    /// (AgentScreenshot).
+    nonisolated static func reach(_ verb: String, _ request: [String: Any]) -> Reach {
+        switch verb {
+        case "press", "agent-pdf", "agent-eval", "agent-eval-held": return .sight
+        case "act":
+            let ref = request["ref"] as? String ?? ""
+            let action = request["action"] as? String ?? "click"
+            if ["drag", "hover"].contains(action) { return .sight }
+            if action == "type", request["submit"] as? Bool == true { return .sight }
+            return ref.isEmpty && ["click", "type"].contains(action) ? .sight : .document
+        default: return .document
+        }
+    }
+
+    /// A frame of an extension's own: never read, never run in, at any reach.
+    /// Only the browser's PDF viewer, by its authenticated origin, is a
+    /// document renderer instead.
+    nonisolated static func walledOff(_ frame: PageFrame) -> Bool {
+        let origin = frame.origin.scheme.isEmpty ? nil : URL(string: frame.origin.scheme + "://" + frame.origin.host)
+        if builtInPDFViewer(frame.url), origin == nil || builtInPDFViewer(origin) { return false }
+        return protected(frame.url) || protected(origin)
+    }
+
+    nonisolated static let walledOffFrame = "That frame is an extension's own window (a password manager's or wallet's). Yab keeps agents out of it; act on the page around it by its refs."
 
     nonisolated static func protected(_ url: URL?) -> Bool {
         guard let url else { return false }
@@ -85,13 +126,16 @@ enum AgentSecrets {
 
     static let reasons: [String: String] = [
         "extension page": "it is an extension's own page (a password manager, wallet or other extension)",
-        "extension frame": "an extension's frame is open on it (a password manager's or wallet's own window)",
+        "extension frame": "an extension's own window is open on it (a password manager's or wallet's)",
         "recovery phrase field": "it has a recovery-phrase field (a wallet's seed words)",
         "private key field": "it has a field holding a private key",
     ]
 
     static func message(_ reason: String) -> String {
-        "Yab keeps agents off this page because \(reasons[reason] ?? reason). The person must handle it; continue after they leave this page."
+        if reason == "extension frame" {
+            return "Yab won't take a picture of this page, run a script on it, click at a point or press keys outside a ref while \(reasons[reason]!). Read the page and act on it by refs meanwhile; the rest works again once that window closes."
+        }
+        return "Yab keeps agents off this page because \(reasons[reason] ?? reason). The person must handle it; continue after they leave this page."
     }
 
     private static var found: [ObjectIdentifier: String] = [:]
@@ -128,11 +172,12 @@ enum AgentSecrets {
                 "needs_user": true, "code": "NATIVE_PAGE_QUESTION"]
     }
 
-    /// Refuses only for an extension's page or frame and for the fields
-    /// above. Whatever cannot be checked (a frame with no script context, a
-    /// frame that came or went during the check, a probe that failed) is
-    /// left out and logged; it never refuses the whole page.
-    static func check(_ page: any PageHandle) async -> Bool {
+    /// Refuses for an extension's page, for the fields above, and at sight
+    /// reach for an extension's frame; at document reach that frame is left
+    /// out, never probed. Whatever cannot be checked (a frame with no script
+    /// context, a frame that came or went during the check, a probe that
+    /// failed) is left out and logged; it never refuses the whole page.
+    static func check(_ page: any PageHandle, reach: Reach = .document) async -> Bool {
         let id = ObjectIdentifier(page)
         found[id] = nil
         func refuse(_ reason: String, _ why: String) -> Bool {
@@ -155,11 +200,9 @@ enum AgentSecrets {
             return nil
         }
         guard let chromium = page as? ChromiumPage else {
-            let frames = await withCheckedContinuation { continuation in
-                page.childFrames { continuation.resume(returning: $0) }
-            }
-            if frames.contains(where: { protected($0.url) }) { return refuse("extension frame", "extension frame") }
-            for frame in [nil] + frames.map({ Optional($0) }) {
+            let frames = (try? await frames(of: page)) ?? []
+            if reach == .sight, frames.contains(where: walledOff) { return refuse("extension frame", "extension frame") }
+            for frame in [nil] + frames.filter({ !walledOff($0) }).map({ Optional($0) }) {
                 if let reason = await probe(frame) { return refuse(reason, reason) }
             }
             return true
@@ -169,7 +212,7 @@ enum AgentSecrets {
         var checked = Set<String>()
         for pass in 0..<3 {
             let frames: [PageFrame]
-            do { frames = try await chromium.agentFrames() } catch {
+            do { frames = try await Self.frames(of: chromium) } catch {
                 skipped("frame inventory: \(error)")
                 if pass == 0, let reason = await probe(nil) { return refuse(reason, reason) }
                 return true
@@ -178,8 +221,10 @@ enum AgentSecrets {
             for frame in frames {
                 let origin = URL(string: frame.origin.scheme + "://" + frame.origin.host)
                 let pdfViewer = builtInPDFViewer(frame.url) && builtInPDFViewer(origin)
-                guard pdfViewer || (!protected(frame.url) && !protected(origin)) else {
-                    return refuse(frame.isMain ? "extension page" : "extension frame", "extension frame")
+                guard !walledOff(frame) else {
+                    if frame.isMain { return refuse("extension page", "extension page") }
+                    if reach == .sight { return refuse("extension frame", "extension frame") }
+                    continue
                 }
                 guard let token = try? chromium.scripts.token(frame, tab: chromium.remoteID) else {
                     skipped("a frame without a script context"); continue
@@ -195,6 +240,23 @@ enum AgentSecrets {
             }
         }
         return true
+    }
+
+    /// The page's frames as the guard sees them: a WebKit page's child
+    /// frames, or every attached Chromium renderer with its authenticated
+    /// origin (which throws rather than give a partial list).
+    static func frames(of page: any PageHandle) async throws -> [PageFrame] {
+        if let chromium = page as? ChromiumPage { return try await chromium.agentFrames() }
+        return await withCheckedContinuation { continuation in
+            page.childFrames { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// Whether an extension's own window is open on the page, by the same
+    /// test `check()` refuses sight with; nil when the frames can't be listed.
+    static func extensionFrameOpen(_ page: any PageHandle) async -> Bool? {
+        guard let frames = try? await frames(of: page) else { return nil }
+        return frames.contains { !$0.isMain && walledOff($0) }
     }
 
     /// Something the guard could not look at, for the helper's log.

@@ -17,6 +17,9 @@ extension ChromiumPage {
         guard let inFrame = (try? await call(crossed, in: .agent, gesture: false)) as? Bool else { return .unknown }
         guard inFrame else { return .main }
         guard let frames = try? await agentFrames() else { return .unknown }
+        // The focus may be in an extension's own window, which is never run
+        // in: no other frame can be taken for where the key lands.
+        if frames.contains(where: AgentSecrets.walledOff) { return .unknown }
         // A frame's own focused element, into open shadow roots but not into
         // its frames: the innermost focused document is the only leaf.
         let leaf = """

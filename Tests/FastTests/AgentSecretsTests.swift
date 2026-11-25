@@ -32,6 +32,61 @@ struct AgentSecretsTests {
         #expect(AgentSecrets.protected(URL(string: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html")))
     }
 
+    @Test nonisolated func onlyPixelsAndUnaimedInputNeedSight() {
+        for (verb, request) in [("press", [:]), ("agent-pdf", [:]),
+                                // A script can reach the frame element and
+                                // postMessage to it, whatever it reads.
+                                ("agent-eval", [:]), ("agent-eval-held", [:]),
+                                ("act", ["action": "click", "x": 10.0, "y": 10.0]), ("act", ["action": "drag"]),
+                                ("act", ["action": "type", "text": "x"]), ("act", [:]),
+                                // Real pointer moves at a point, and Enter
+                                // to whatever has focus, even by ref.
+                                ("act", ["action": "drag", "ref": "e4", "to": "e9"]), ("act", ["action": "hover", "ref": "e4"]),
+                                ("act", ["action": "type", "ref": "e4", "text": "x", "submit": true])] as [(String, [String: Any])] {
+            #expect(AgentSecrets.reach(verb, request) == .sight, "\(verb) \(request)")
+        }
+        for (verb, request) in [("snapshot", [:]), ("settle", [:]),
+                                ("act", ["action": "click", "ref": "e4"]), ("act", ["action": "type", "ref": "f2e7"]),
+                                ("act", ["action": "scroll"])] as [(String, [String: Any])] {
+            #expect(AgentSecrets.reach(verb, request) == .document, "\(verb) \(request)")
+        }
+    }
+
+    @Test nonisolated func extensionFramesAreWalledOffByAddressOrOrigin() {
+        let token = NSObject()
+        func frame(_ url: String?, _ scheme: String = "", _ host: String = "") -> PageFrame {
+            PageFrame(isMain: false, url: url.flatMap(URL.init(string:)), token: token, origin: PageOrigin(scheme: scheme, host: host, port: 0))
+        }
+        #expect(AgentSecrets.walledOff(frame("chrome-extension://vault/dropdown.html")))
+        #expect(AgentSecrets.walledOff(frame("webkit-extension://vault/dropdown.html")))
+        // An ordinary address the extension's origin stands behind.
+        #expect(AgentSecrets.walledOff(frame("about:blank", "chrome-extension", "vault")))
+        #expect(!AgentSecrets.walledOff(frame("https://pay.example.test/card", "https", "pay.example.test")))
+        #expect(!AgentSecrets.walledOff(frame(nil)))
+        let viewer = "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html"
+        #expect(!AgentSecrets.walledOff(frame(viewer, "chrome-extension", "mhjfbmdgcfjbbpaeojofohoefgiehjai")))
+        #expect(AgentSecrets.walledOff(frame(viewer, "chrome-extension", "vault")))
+    }
+
+    @Test func anExtensionsFrameIsNeverRunInNorHeard() async {
+        _ = NSApplication.shared
+        let tab = Tab(bench: true, engine: .webKit)
+        defer { tab.close() }
+        let address = "chrome-extension://vault/dropdown.html"
+        let frame = PageFrame(isMain: false, url: URL(string: address), token: NSObject())
+        let refused: String? = await withCheckedContinuation { go in
+            AgentPage.run(tab, "return 1", frame: frame) { result in
+                if case .failure(let error) = result { go.resume(returning: error.localizedDescription) }
+                else { go.resume(returning: nil) }
+            }
+        }
+        // nil would mean the body ran in the extension's frame.
+        #expect(refused == AgentSecrets.walledOffFrame)
+        AgentPage.heard(tab.page, AgentPage.Frame(info: frame, href: address, w: 320, h: 240))
+        AgentPage.heard(tab.page, AgentPage.Frame(info: PageFrame(isMain: false, url: nil, token: NSObject()), href: address, w: 320, h: 240))
+        #expect(AgentPage.frames[ObjectIdentifier(tab.page)] == nil)
+    }
+
     @Test func originalPDFTextIsNumberedByPage() throws {
         let document = PDFSignTests.contract(form: false)
         let second = PDFSignTests.contract(form: false)
@@ -137,6 +192,10 @@ struct AgentSecretsTests {
 
     @Test func refusalsSayWhatWasFound() {
         #expect(AgentSecrets.message("extension page").contains("extension's own page"))
+        // An extension's window over a field leaves the page to read and
+        // act on by refs, and says so.
+        #expect(AgentSecrets.message("extension frame").contains("by refs"))
+        #expect(!AgentSecrets.message("extension frame").contains("The person must handle it"))
         #expect(AgentSecrets.message("recovery phrase field").contains("recovery-phrase field"))
         #expect(AgentSecrets.message("private key field").contains("private key"))
         for reason in AgentSecrets.reasons.keys {

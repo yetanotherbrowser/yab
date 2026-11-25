@@ -32,6 +32,8 @@ enum AgentPage {
     /// what it returns: in the page, or in one of its frames.
     static func run(_ tab: Tab, _ body: String, _ arguments: [String: Any] = [:], frame: PageFrame? = nil, _ done: @escaping @MainActor (Result<Any?, Error>) -> Void) {
         let page = tab.page
+        // An extension's own window is left out of the page, never run in.
+        if let frame, AgentSecrets.walledOff(frame) { done(.failure(AgentSecrets.Refused(said: AgentSecrets.walledOffFrame))); return }
         let execute = {
             page.call(AgentSecrets.guardBody + body, arguments: arguments, in: .agent, frame: frame) { result in
                 MainActor.assumeIsolated {
@@ -91,6 +93,7 @@ enum AgentPage {
     static var framed: [ObjectIdentifier: [String: PageFrame]] = [:]
 
     static func heard(_ web: any PageHandle, _ frame: Frame) {
+        guard !AgentSecrets.walledOff(frame.info), !AgentSecrets.protected(URL(string: frame.href)) else { return }
         var list = frames[ObjectIdentifier(web), default: []]
         list.removeAll { $0.href == frame.href && $0.w == frame.w && $0.h == frame.h }
         list.append(frame)
@@ -121,7 +124,7 @@ enum AgentPage {
     static func discover(_ web: any PageHandle, _ done: @escaping @MainActor () -> Void) {
         web.childFrames { infos in
             let group = DispatchGroup()
-            for info in infos {
+            for info in infos where !AgentSecrets.walledOff(info) {
                 group.enter()
                 web.call("return { href: location.href, w: innerWidth, h: innerHeight }", in: .agent, frame: info) { result in
                     MainActor.assumeIsolated {
@@ -156,6 +159,62 @@ enum AgentPage {
     while (w.frameElement) { const b = w.frameElement.getBoundingClientRect(); x += b.left; y += b.top; w = w.parent; }
     return { x, y };
     """
+
+    /// Whether a real click at a point of the top page lands on what a ref
+    /// names, or on the frame that holds it. A frame's own hit test can't
+    /// see what the top page draws over it: an extension's window (a
+    /// password manager's list) over a page's frame took a click by ref
+    /// that way. Anything else in the way is clicked by script instead.
+    static let landing = """
+    const S = globalThis.__yab;
+    let want = k >= 0 ? S && S.frames && S.frames.get(k) : S && S.refs && S.refs.get(ref);
+    if (!want || !want.isConnected) return false;
+    for (let w = want.ownerDocument.defaultView; w && w.frameElement; w = w.parent) want = w.frameElement;
+    let h = document.elementFromPoint(x, y);
+    while (h && h.shadowRoot) { const inner = h.shadowRoot.elementFromPoint(x, y); if (!inner || inner === h) break; h = inner; }
+    for (let n = h; n; n = n.parentNode || n.host) if (n === want) return true;
+    // A label over its own input, the way custom checkboxes are drawn.
+    const l = h && h.closest && h.closest('label');
+    return !!(l && (l.control === want || l.contains(want)));
+    """
+
+    /// How a real click by ref at its point would go.
+    enum Landing {
+        /// On the ref, or on the frame that holds it: the real click goes.
+        case clear
+        /// On something of the top page's over it: clicked by script instead.
+        case covered
+        /// The page asked something meanwhile, which holds its scripts: the
+        /// question is the answer, and nothing is clicked.
+        case asked([String: Any])
+    }
+
+    /// Whether a real click by `ref` at `point`, in the top page's CSS
+    /// pixels, lands where it should. Only an extension's window can be
+    /// over it unseen, so with none open the real click goes as before,
+    /// with no look at the top page; when the frames can't be listed, or
+    /// the point can't be told, it doesn't land.
+    static func lands(_ tab: Tab, ref: String, at point: CGPoint, _ done: @escaping @MainActor (Landing) -> Void) {
+        var settled = false
+        @MainActor func finish(_ landing: Landing) { if !settled { settled = true; done(landing) } }
+        // Both steps call into the page, which a question (confirm) holds.
+        @MainActor func watch(_ n: Int) {
+            guard !settled else { return }
+            if let waiting = AgentSecrets.nativeQuestionReply([tab]) { finish(.asked(waiting)); return }
+            // Nothing was clicked: the question as a read answers it.
+            if let question = asked[ObjectIdentifier(tab)] { finish(.asked(["dialog": question.said, "url": tab.address?.absoluteString ?? "", "title": tab.title])); return }
+            if n < 300 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { watch(n + 1) } }
+        }
+        watch(0)
+        Task { @MainActor in
+            if await AgentSecrets.extensionFrameOpen(tab.page) == false { finish(.clear); return }
+            guard !settled else { return }
+            let k = locate(tab, ref).marker ?? -1
+            run(tab, landing, ["ref": ref, "k": k, "x": Double(point.x), "y": Double(point.y)]) { result in
+                if case .success(let value) = result, value as? Bool == true { finish(.clear) } else { finish(.covered) }
+            }
+        }
+    }
 
     // MARK: - what the page asked
 
@@ -319,8 +378,10 @@ enum AgentPage {
     /// A frame that hasn't said it is there is looked for first; in a tab
     /// of yours, where frames never say so, every time.
     private static func weave(_ tab: Tab, _ out: inout [String: Any], _ markers: [[String: Any]], _ done: @escaping @MainActor ([String: Any]) -> Void) {
+        // An extension's own window is never heard, so it can't make the
+        // others unknown (weaveKnown leaves it out).
         let unknown = markers.contains { marker in
-            frame(in: tab.page, src: marker["src"] as? String ?? "", w: marker["w"] as? Double ?? 0, h: marker["h"] as? Double ?? 0) == nil
+            !AgentSecrets.protected(URL(string: marker["src"] as? String ?? "")) && frame(in: tab.page, src: marker["src"] as? String ?? "", w: marker["w"] as? Double ?? 0, h: marker["h"] as? Double ?? 0) == nil
         }
         guard unknown || !tab.bench else { weaveKnown(tab, &out, markers, done); return }
         let held = out
@@ -342,6 +403,10 @@ enum AgentPage {
         for marker in markers {
             guard let k = marker["k"] as? Int else { continue }
             let src = marker["src"] as? String ?? ""
+            if AgentSecrets.protected(URL(string: src)) {
+                trees[k] = "(an extension's own window, a password manager's or wallet's: left out)"
+                continue
+            }
             guard let info = frame(in: tab.page, src: src, w: marker["w"] as? Double ?? 0, h: marker["h"] as? Double ?? 0) else {
                 trees[k] = "(a frame from \(URL(string: src)?.host ?? "another site") that hasn't said it is there yet; take a new snapshot)"
                 continue
@@ -858,8 +923,12 @@ enum AgentPage {
       return ref + ' is covered by “' + words + '”' + (named.length ? ': deal with it first (' + named.join(', ') + ')' : ': close it first');
     }
     function scriptClick() {
+      // A primary mouse button's press, as a person's is: some pages act
+      // only on that (a picker opened on pointerdown).
       for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
-        el.dispatchEvent(new (t.startsWith('pointer') ? PointerEvent : MouseEvent)(t, { bubbles: true, cancelable: true, composed: true, view: win }));
+        const down = t.endsWith('down');
+        el.dispatchEvent(new (t.startsWith('pointer') ? PointerEvent : MouseEvent)(t, { bubbles: true, cancelable: true, composed: true, view: win,
+          button: 0, buttons: down ? 1 : 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
       }
       if (el.focus) el.focus();
       el.click();
@@ -915,6 +984,9 @@ enum AgentPage {
       if (p.w === 0) return { error: ref + ' has no size on the page' };
       return { x: p.x, y: p.y, w: p.w, h: p.h };
     }
+    // A click on the element itself, when a real one would land on
+    // something over it (AgentPage.landing).
+    if (action === 'script') { scriptClick(); return { done: 'script', covered: true }; }
     if (action === 'confirm') {
       if (S.clicked) return { done: 'mouse' };
       scriptClick(); return { done: 'script', lost: true };
