@@ -15,8 +15,9 @@ final class ChromiumTabGroups {
     private var tail: Task<Void, Error>?
     private var refreshing = false
 
-    func start() {
-        started = true
+    /// A helper without native groups (stock CEF) has nothing to publish.
+    func start(native: Bool) {
+        started = native
         sent = [:]
         changed()
     }
@@ -39,9 +40,10 @@ final class ChromiumTabGroups {
     private func sync() {
         guard !refreshing else { return }
         refreshing = true
+        let task = enqueue()
         Task { @MainActor in
             defer { refreshing = false }
-            do { try await syncNow() }
+            do { try await task.value }
             catch { DebugLog.note("chromium-window-model", ["error": String(describing: error)]) }
         }
     }
@@ -49,16 +51,21 @@ final class ChromiumTabGroups {
     /// Mutation responses wait for the same native model used by tabs.query.
     /// Serializing snapshots prevents a timer's older row replacing that state.
     func syncNow() async throws {
+        try await enqueue().value
+    }
+
+    private func enqueue() -> Task<Void, Error> {
         let previous = tail
         let task = Task { @MainActor in
             _ = try? await previous?.value
             try await publish()
         }
         tail = task
-        try await task.value
+        return task
     }
 
     private func publish() async throws {
+        guard started else { return }
         scans += 1
         guard let core = ChromiumProcess.shared.connectedClient else {
             sent = [:]

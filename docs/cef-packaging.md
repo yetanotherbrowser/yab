@@ -77,7 +77,10 @@ only `com.apple.security.cs.allow-jit`, matching the pinned Chromium
 [GPU](https://chromium.googlesource.com/chromium/src/+/156.0.8078.48/chrome/app/helper-gpu-entitlements.plist)
 and [renderer](https://chromium.googlesource.com/chromium/src/+/156.0.8078.48/chrome/app/helper-renderer-entitlements.plist)
 entitlements. Other helpers have empty entitlements. No helper inherits the
-parent's restricted entitlements or receives `disable-library-validation`.
+parent's restricted entitlements. Only an ad hoc signature (`-`, a contributor
+build) adds `disable-library-validation` to the helpers: ad hoc code has no
+Team ID, so library validation would refuse the ad hoc framework. Developer ID
+helpers never receive it.
 `--deep` is used only for verification, never signing. Embedding replaces only
 its named payload and preserves framework resources, locales and version symlinks.
 The distribution's top-level `LICENSE.txt` is copied to `Contents/Resources/CEF-LICENSE.txt`

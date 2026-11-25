@@ -122,7 +122,7 @@ jobs:
           fi
           filter="$(python3 scripts/runs/tests_for.py --since "$base" 2>/dev/null)"
           echo "suites: ${filter:-none}"
-          if [ -z "$filter" ] || [ "$filter" = all ]; then
+          if [ -z "$filter" ] || [ "$filter" = '.*' ]; then
             echo "Nothing narrower than the whole suite matched; the full-suite job covers it."
             exit 0
           fi

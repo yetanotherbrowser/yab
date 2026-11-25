@@ -89,10 +89,21 @@ PY
 SIGN=(--force --options runtime --sign "$IDENTITY")
 if [ "$IDENTITY" = - ]; then SIGN+=(--timestamp=none); else SIGN+=(--timestamp); fi
 if [ -n "${YAB_SIGN_KEYCHAIN:-}" ]; then SIGN+=(--keychain "$YAB_SIGN_KEYCHAIN"); fi
+WORK="$(mktemp -d -t yab-cef-sign)"
+trap 'rm -rf "$WORK"' EXIT
+HELPER_ENT="$HERE/helper-entitlements.plist" JIT_ENT="$HERE/helper-jit-entitlements.plist"
+if [ "$IDENTITY" = - ]; then
+  # Ad hoc code has no Team ID, so library validation refuses the ad hoc
+  # framework ("different Team IDs", macOS 27). Developer ID keeps validation.
+  for NAME in helper-entitlements helper-jit-entitlements; do
+    cp "$HERE/$NAME.plist" "$WORK/$NAME.plist"
+    /usr/libexec/PlistBuddy -c 'Add :com.apple.security.cs.disable-library-validation bool true' "$WORK/$NAME.plist" >/dev/null
+  done
+  HELPER_ENT="$WORK/helper-entitlements.plist" JIT_ENT="$WORK/helper-jit-entitlements.plist"
+fi
 # Sign every Mach-O leaf first, including framework dylibs and crashpad_handler.
 # Materialize the list so an enumeration failure cannot disappear inside a pipe.
-LIST="$(mktemp -t yab-cef-sign)"
-trap 'rm -f "$LIST"' EXIT
+LIST="$WORK/list"
 /usr/bin/python3 -I - "$FRAMEWORK" > "$LIST" <<'PY'
 from pathlib import Path
 import sys
@@ -108,8 +119,8 @@ while IFS= read -r -d '' BINARY; do
 done < "$LIST"
 codesign "${SIGN[@]}" "$FRAMEWORK"
 for SUFFIX in '' ' (GPU)' ' (Renderer)' ' (Plugin)' ' (Alerts)'; do
-  ENT="$HERE/helper-entitlements.plist"
-  case "$SUFFIX" in ' (GPU)'|' (Renderer)') ENT="$HERE/helper-jit-entitlements.plist" ;; esac
+  ENT="$HELPER_ENT"
+  case "$SUFFIX" in ' (GPU)'|' (Renderer)') ENT="$JIT_ENT" ;; esac
   codesign "${SIGN[@]}" --entitlements "$ENT" "$FRAMEWORKS/YabCore Helper$SUFFIX.app"
 done
 # The normal assembly also contains a Dock tile plug-in. Its signature must
@@ -120,11 +131,11 @@ fi
 if [ -f "$APP/Contents/MacOS/YabCore" ]; then
   # Preserve the old code identifier for existing keychain access requirements
   # while changing its LaunchServices identity through the nested plist.
-  codesign "${SIGN[@]}" --entitlements "$HERE/helper-entitlements.plist" "$APP/Contents/MacOS/YabCore"
+  codesign "${SIGN[@]}" --entitlements "$HELPER_ENT" "$APP/Contents/MacOS/YabCore"
   CORE_IDENTIFIER="$(codesign -dvv "$APP/Contents/MacOS/YabCore" 2>&1 | sed -n 's/^Identifier=//p')"
   [ -n "$CORE_IDENTIFIER" ] || { echo 'CEF: missing helper code identifier' >&2; exit 1; }
   python3 "$HERE/package_core.py" "$APP"
-  codesign "${SIGN[@]}" --identifier "$CORE_IDENTIFIER" --entitlements "$HERE/helper-entitlements.plist" "$FRAMEWORKS/YabCore.app"
+  codesign "${SIGN[@]}" --identifier "$CORE_IDENTIFIER" --entitlements "$HELPER_ENT" "$FRAMEWORKS/YabCore.app"
 fi
 UPDATER="$APP/Contents/MacOS/YabUpdater"
 if [ -f "$UPDATER" ]; then

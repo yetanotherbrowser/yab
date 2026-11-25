@@ -69,7 +69,8 @@ def package(out, result):
         assert 'runtime' in sign
         wants_jit = helper.stem.endswith(('(GPU)', '(Renderer)'))
         assert ('com.apple.security.cs.allow-jit' in sign) == wants_jit
-        assert 'disable-library-validation' not in sign
+        # Only an ad hoc helper may load the ad hoc framework without a Team ID.
+        assert ('disable-library-validation' in sign) == ('Signature=adhoc' in sign)
         log = run([str(helper / 'Contents/MacOS' / info['CFBundleExecutable'])], capture=True).stdout
         assert 'started inside bundle; CEF 156 loaded' in log
         print(log, end='', flush=True)

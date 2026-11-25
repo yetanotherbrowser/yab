@@ -204,6 +204,7 @@ static NSDictionary* NativeHookCapabilities() {
            @"nativeCaptureActivity": @(YABCORE_NATIVE_CAPTURE_ACTIVITY),
            @"nativeDisplaySource": @(YABCORE_NATIVE_DISPLAY_SOURCE),
            @"nativeVideoPiP": @(YABCORE_NATIVE_VIDEO_PIP),
+           @"externalTabGroup": @(YABCORE_TAB_GROUP),
            @"downloadProvenance": @(YABCORE_DOWNLOAD_PROVENANCE),
            @"externalFocus": @(YABCORE_EXTERNAL_FOCUS),
            @"nativeTextInput": @(YABCORE_TEXT_INPUT),

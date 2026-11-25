@@ -35,7 +35,10 @@ final class ChromiumProcess {
     /// The helper runs an extension's named command for a page (CEF patch
     /// 0116, `extension.command.run`); the button's command needs no more
     /// than its press.
-    var runsExtensionCommands: Bool { nativeHooks["extensionCommands"] == .bool(true) || nativeHooks["extensionCommands"] == .number(1) }
+    var runsExtensionCommands: Bool { hook("extensionCommands") }
+    /// CEF patch 0050 lists a Yab window's pages as one Chrome window. The
+    /// stock SDK has no such call, so each page stays a window of its own.
+    var groupsTabsNatively: Bool { hook("externalTabGroup") }
     /// Identity of this helper lifetime, never a renderer document identity.
     var connectionGeneration: UUID { generation }
     func isCurrent(_ core: YabCoreClient) -> Bool { client === core }
@@ -48,10 +51,10 @@ final class ChromiumProcess {
     /// SDK) the menu has Yab's rows only, the keyword isn't the field's, and
     /// a panel follows the tab in front but not a live setOptions.
     var extensionSurfaces: (actionMenu: Bool, omnibox: Bool, panelOptions: Bool) {
-        // A bool, or 1: YabCore boxes its macros as numbers (@(1)).
-        let on = { (name: String) in self.nativeHooks[name] == .bool(true) || self.nativeHooks[name] == .number(1) }
-        return (on("extensionActionMenu"), on("extensionOmnibox"), on("sidePanelOptions"))
+        (hook("extensionActionMenu"), hook("extensionOmnibox"), hook("sidePanelOptions"))
     }
+    /// A bool, or 1: YabCore boxes its macros as numbers (@(1)).
+    private func hook(_ name: String) -> Bool { nativeHooks[name] == .bool(true) || nativeHooks[name] == .number(1) }
 
     /// The helper as far as its hello, off the main thread from the app's first
     /// moments: a launch holds that thread 100 to 200 ms past the first page's
@@ -175,7 +178,7 @@ final class ChromiumProcess {
         await ChromiumEnergySaver.apply(to: core)
         client = core
         ChromiumGeolocation.connected(hooks: nativeHooks)
-        ChromiumTabGroups.shared.start()
+        ChromiumTabGroups.shared.start(native: groupsTabsNatively)
         ShieldChromium.tell()
         Task { @MainActor [weak self] in
             for await event in core.events {
