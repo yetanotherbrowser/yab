@@ -226,11 +226,27 @@ enum SharedPins {
 
     /// The first space's row with the shared pins folded in (`folded`), or
     /// any other space's file as it is: what sync reads and compares.
-    nonisolated static func syncRow(_ space: UUID) -> Session.Shape {
+    /// Folded only while they head the first space here (`pinsShown`,
+    /// `on`): pins a Mac doesn't show there, sent as its, stayed on every
+    /// other device while gone from this one, and came back to be taken
+    /// out of it (#909).
+    nonisolated static func syncRow(_ space: UUID, pinsShown: Bool) -> Session.Shape {
         let row = Session.read(space: space)
-        guard space == Space.firstID else { return row }
+        guard space == Space.firstID, pinsShown else { return row }
         let pins = Session.read(space: Space.pinsID)
         return folded(pins.tabs, into: row, pinPairs: pins.pairs)
+    }
+
+    /// Whether sync sends the shared pins as the first space's: while they
+    /// head it (`on`). With no window open, any left over go to the first
+    /// space now (`PinsHandBack`), so they are sent as its, where they show.
+    static var sentAsFirst: Bool {
+        if on { return true }
+        if BrowserWindows.shared.normalBrowsers.isEmpty {
+            let spaces = Spaces.read()
+            if let home = spaces.first(where: \.isFirst)?.id ?? spaces.first?.id { PinsHandBack.run(to: home) }
+        }
+        return false
     }
 
     /// What every window's pins have to agree on: which pin, its letter,

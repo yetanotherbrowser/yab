@@ -350,10 +350,12 @@ enum Spaces {
         // Brought in before they could be one: joined now, and what each
         // has so far kept (`healLinked`).
         let joined = link(&saved)
-        if !joined.isEmpty {
-            write(saved)
-            joinedKept(joined)
-        }
+        // Given sign-ins of its own by an iPhone before it stopped offering
+        // that, put back: the shared pins show in it again, its own pins
+        // joining them (Browser.joinShared), and sync hears it shares.
+        let healed = firstShares(&saved)
+        if !joined.isEmpty || healed { write(saved) }
+        if !joined.isEmpty { joinedKept(joined) }
         routes = routing(saved)
         sharing = Set(saved.filter { !$0.ownSignIns }.map(\.id))
         // Symbols from before, each its emoji, written back once; one
@@ -410,7 +412,24 @@ enum Spaces {
 
     private static var glazed = false
 
+    /// The first space signs in where the shared pins do, always: its
+    /// sign-ins are everyone's, and Yab offers it no other (SpaceTray's
+    /// Sign-Ins). Sync still carried another device's "its own" for it, from
+    /// an iPhone that offered the choice: the Mac then hid the shared pins
+    /// in it and went on sending them as its pins, so they stayed on the
+    /// iPhone and, made again here, were taken out again (#909). Its store
+    /// is the shared one either way (`store(for:)`), so nothing signs out.
+    /// True if it had to be put back.
+    nonisolated static func firstShares(_ spaces: inout [Space]) -> Bool {
+        guard let at = spaces.firstIndex(where: \.isFirst), spaces[at].ownSignIns || spaces[at].signInWith != nil else { return false }
+        spaces[at].ownSignIns = false
+        spaces[at].signInWith = nil
+        return true
+    }
+
     static func write(_ spaces: [Space]) {
+        var spaces = spaces
+        _ = firstShares(&spaces)
         guard SpaceRecovery.preserveInvalid(at: file) else { return }
         guard let data = try? JSONEncoder().encode(spaces) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

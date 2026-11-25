@@ -179,10 +179,14 @@ enum SyncMapping {
         // Private tabs live on this iPhone only, each where it stood among
         // today's: before the row that was under it, else after the one above.
         let today = keepingPrivates(old?.today ?? [], in: row.today.map(make))
+        // The Mac's first space signs in where every other does, as on the
+        // Mac: a record from an iPhone that offered it its own is not taken.
+        let first = SyncCollection.isFirstSpace(synced.id)
         var space = Space(id: local(synced.id), name: synced.name, emoji: SpaceSymbols.emoji(synced.icon),
                           tint: tint(synced.paint) ?? old?.tint ?? plainTint, pins: pins, kept: kept, today: today,
                           current: nil, pinsOpen: old?.pinsOpen ?? false, isPrivate: false,
-                          look: synced.paint.flatMap { SpaceLook($0.raw) }, ownSignIns: synced.ownSignIns, signInWith: synced.signInWith.map(local))
+                          look: synced.paint.flatMap { SpaceLook($0.raw) }, ownSignIns: synced.ownSignIns && !first,
+                          signInWith: first ? nil : synced.signInWith.map(local))
         space.current = current(in: space, old: old)
         return space
     }

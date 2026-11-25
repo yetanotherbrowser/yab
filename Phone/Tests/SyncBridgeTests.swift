@@ -427,6 +427,40 @@ final class SyncBridgeTests: XCTestCase {
         XCTAssertTrue(app.browser.space(member)?.ownSignIns == true)
     }
 
+    /// #909: an iPhone that offered "Its own" for Personal sent it, and the
+    /// Mac then hid the shared pins there while still sending them as
+    /// Personal's. The first space never has sign-ins of its own: taken
+    /// as shared when a record says otherwise, never sent, never offered.
+    func testTheFirstSpaceNeverHasSignInsOfItsOwn() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        // An older iPhone's choice, already in the account.
+        try mac.write(SyncCollection.space, first, SyncSpace(id: first, name: "Personal", icon: "🏠", ownSignIns: true, order: "V").fields)
+        let app = try await phone(server, seal)
+        defer { app.sync.engine?.stop() }
+        let firstLocal = app.sync.localID(first)
+        let loaded = await until { app.browser.space(firstLocal) != nil && app.browser.space(self.work) != nil }
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(app.browser.space(firstLocal)?.ownSignIns, false, "Personal shares sign-ins")
+        XCTAssertTrue(app.sync.isFirstSpace(firstLocal), "Settings offers Personal no sign-ins of its own")
+        XCTAssertFalse(app.sync.isFirstSpace(work))
+        let healed = await until {
+            mac.journal.record(.init(collection: SyncCollection.space, id: self.first))?["ownSignIns"]?.bool == false
+        }
+        XCTAssertTrue(healed, "the account hears that Personal shares")
+
+        // Given its own here anyway (an agent, an old build): never sent.
+        app.browser.setSpaceSignIns(firstLocal, own: true)
+        app.browser.setSpaceSignIns(work, own: true)
+        app.sync.flushLocal()
+        let sent = await until {
+            mac.journal.record(.init(collection: SyncCollection.space, id: self.work))?["ownSignIns"]?.bool == true
+        }
+        XCTAssertTrue(sent, "another space's own sign-ins still go")
+        XCTAssertEqual(mac.journal.record(.init(collection: SyncCollection.space, id: first))?["ownSignIns"]?.bool, false)
+    }
+
     // MARK: - the iPhone's changes
 
     /// #1479: the Mac publishes shared pins once, under Personal.

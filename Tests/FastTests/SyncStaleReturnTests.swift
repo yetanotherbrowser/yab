@@ -85,12 +85,10 @@ struct SyncStaleReturnTests {
         }
     }
 
-    /// B's rows as SyncCenter.rows reads them: each space's file, the first
-    /// space's with the shared pins folded in.
+    /// B's rows as SyncCenter reads them: each space's file, the first
+    /// space's with the shared pins folded in while they head it.
     private func localRows() -> [UUID: Session.Shape] {
-        var rows = Dictionary(Spaces.read().map { ($0.id, SharedPins.syncRow($0.id)) }, uniquingKeysWith: { a, _ in a })
-        if rows[Space.firstID] == nil { rows[Space.firstID] = SharedPins.syncRow(Space.firstID) }
-        return rows
+        SyncCenter.rows(Spaces.read().map(\.id), pinsShown: SharedPins.sentAsFirst)
     }
 
     private func orders(_ collection: String, in journal: Journal) -> [String: String] {
@@ -194,7 +192,7 @@ struct SyncStaleReturnTests {
         aCursor = wire.seq
         #expect(pins(a) == want, "A's pins after B came back")
         #expect(pins(b) == want, "B's pins after it came back")
-        let shown = Set(Spaces.read().flatMap { SharedPins.syncRow($0.id).tabs.filter { $0.pin != nil }.map(\.url) })
+        let shown = Set(Spaces.read().flatMap { SharedPins.syncRow($0.id, pinsShown: SharedPins.on).tabs.filter { $0.pin != nil }.map(\.url) })
         #expect(shown == Set(want), "B's files show A's pins")
     }
 
@@ -295,6 +293,125 @@ struct SyncStaleReturnTests {
         #expect(b.record(.init(collection: SyncShapes.tab, id: ids[3]))?.alive() == false, "a pin closed here is removed")
         #expect(b.record(.init(collection: SyncShapes.tab, id: ids[0]))?["name"]?.string == "Inbox", "a name given here goes")
         #expect(pins(b) == ["https://docs.stale.test/", "https://mail.stale.test/", "https://cal.stale.test/"], "a move made here goes")
+    }
+
+    // MARK: #909, pins gone from Personal on the Mac, still on the iPhone
+
+    /// The spaces as this Mac's flush tells them to its journal.
+    private func tellSpaces(_ journal: Journal) throws {
+        try journal.reconcile(SyncShapes.space, SyncShapes.spaces(Spaces.read(), orders: orders(SyncShapes.space, in: journal)))
+    }
+
+    /// The pins this Mac shows in Personal: its own, and the shared ones
+    /// while a window shows them there (Browser.showsShared), read by a
+    /// window made now.
+    private func macShows() -> Set<String> {
+        let shared = macShowsShared() ? Session.read(space: Space.pinsID).tabs.map(\.url) : []
+        return Set(shared + Session.read(space: Space.firstID).tabs.filter { $0.pin != nil }.map(\.url))
+    }
+
+    /// Whether a window made now shows the shared pins in Personal.
+    private func macShowsShared() -> Bool {
+        let id = UUID()
+        let window = Browser(windowID: id)
+        defer {
+            window.letGo()
+            try? FileManager.default.removeItem(at: Store.file("session-window-\(id.uuidString).json"))
+            Store.settings.removeObject(forKey: "window.\(id.uuidString).space")
+        }
+        return window.showsShared(Space.firstID)
+    }
+
+    /// #909: Settings › Spaces › Personal › Sign-ins › Its own on the iPhone,
+    /// with Pins In Every Space on the Mac. The Mac stopped showing the
+    /// shared pins in Personal and went on sending them as its pins, so the
+    /// iPhone kept them; one pinned again in Personal was taken out of it
+    /// at the next change of Personal's from the iPhone.
+    @Test func personalGivenItsOwnSignInsOnThePhoneKeepsItsPinsOnTheMac() throws {
+        #expect(Store.testing)
+        let world = World(sharedPins: true)
+        defer { world.close() }
+        let first = Space.firstID
+        func pin(_ name: String, _ id: String) -> Session.Entry {
+            .init(url: "https://\(name).909.test/", title: name, pin: String(name.prefix(1)).uppercased(), id: id)
+        }
+        let ids = (0..<3).map { _ in UUID().uuidString }
+        Session.write(now: true, space: Space.pinsID, .init(tabs: [pin("mail", ids[0]), pin("cal", ids[1])], active: 0))
+        let wire = Wire()
+        let mac = try Journal(path: nil, device: "mac-b")
+        let phone = try Journal(path: nil, device: "phone")
+        let center = SyncCenter()
+        var cursor: Int64 = 0
+        try tellSpaces(mac)
+        try comeBack(mac, cursor: &cursor, wire: wire, center: center)
+        _ = try phone.receive(wire.pages(after: 0).flatMap { $0 })
+        var phoneCursor = wire.seq
+        #expect(Set(pins(phone)) == ["https://mail.909.test/", "https://cal.909.test/"])
+        #expect(macShows() == Set(pins(phone)))
+
+        // The iPhone gives Personal its own sign-ins (PhoneSync.setSpaceSignIns).
+        try phone.change(.init(collection: SyncShapes.space, id: first.uuidString), ["ownSignIns": .bool(true), "signInWith": .null])
+        _ = try wire.push(phone)
+        try comeBack(mac, cursor: &cursor, wire: wire, center: center)
+        try tellSpaces(mac)
+        _ = try wire.push(mac)
+        _ = try phone.receive(wire.pages(after: phoneCursor).flatMap { $0 })
+        phoneCursor = wire.seq
+        #expect(macShows() == Set(pins(phone)), "the Mac shows in Personal the pins the iPhone lists there")
+        #expect(Spaces.read().first(where: \.isFirst)?.ownSignIns == false, "Personal shares sign-ins on the Mac")
+        #expect(phone.record(.init(collection: SyncShapes.space, id: first.uuidString))?["ownSignIns"]?.bool == false,
+                "the account hears that Personal shares")
+
+        // Pinned again in Personal on the Mac: a shared pin while Personal
+        // shows them (Browser.settleShared), Personal's own otherwise.
+        let docs = pin("docs", ids[2])
+        if macShowsShared() {
+            var shared = Session.read(space: Space.pinsID)
+            shared.tabs.append(docs)
+            Session.write(now: true, space: Space.pinsID, shared)
+        } else {
+            var row = Session.read(space: first)
+            row.tabs.insert(docs, at: 0)
+            Session.write(now: true, space: first, row)
+        }
+        try comeBack(mac, cursor: &cursor, wire: wire, center: center)
+        _ = try phone.receive(wire.pages(after: phoneCursor).flatMap { $0 })
+        phoneCursor = wire.seq
+        // Then the iPhone opens a page in Personal.
+        let page = UUID().uuidString
+        try phone.change(.init(collection: SyncShapes.tab, id: page),
+                         SyncTab(id: page, space: first.uuidString, order: "Z", url: "https://news.909.test/", title: "News").fields)
+        _ = try wire.push(phone)
+        try comeBack(mac, cursor: &cursor, wire: wire, center: center)
+        _ = try phone.receive(wire.pages(after: phoneCursor).flatMap { $0 })
+        let all: Set<String> = ["https://mail.909.test/", "https://cal.909.test/", "https://docs.909.test/"]
+        #expect(Set(pins(phone)) == all)
+        #expect(macShows() == all, "a pin made again in Personal stays there on the Mac")
+    }
+
+    /// Shared pins left in their file with Pins In Each Space (turned off by
+    /// sync while no window was open): hidden on the Mac but sent as
+    /// Personal's, so only the iPhone showed them. They are Personal's now,
+    /// shown where they are sent, none lost.
+    @Test func sharedPinsLeftBehindWithPinsOffGoToPersonalOnTheMacToo() throws {
+        #expect(Store.testing)
+        let world = World(sharedPins: false)
+        defer { world.close() }
+        let first = Space.firstID
+        func pin(_ name: String) -> Session.Entry {
+            .init(url: "https://\(name).909.test/", title: name, pin: String(name.prefix(1)).uppercased(), id: UUID().uuidString)
+        }
+        Session.write(now: true, space: Space.pinsID, .init(tabs: [pin("mail")], active: 0))
+        Session.write(now: true, space: first, .init(tabs: [pin("docs")], active: 0))
+        let wire = Wire()
+        let mac = try Journal(path: nil, device: "mac-b")
+        let phone = try Journal(path: nil, device: "phone")
+        var cursor: Int64 = 0
+        try tellSpaces(mac)
+        try comeBack(mac, cursor: &cursor, wire: wire, center: SyncCenter())
+        _ = try phone.receive(wire.pages(after: 0).flatMap { $0 })
+        #expect(Set(pins(phone)) == ["https://mail.909.test/", "https://docs.909.test/"], "none lost")
+        #expect(macShows() == Set(pins(phone)), "the Mac shows in Personal the pins the iPhone lists there")
     }
 
     @Test func aMacBackFromTwoWeeksKeepsTheOtherMacsPinsEachSpace() throws {
