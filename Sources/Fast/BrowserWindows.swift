@@ -376,11 +376,11 @@ final class BrowserWindows: ObservableObject {
         let window = BrowserWindow(contentRect: frame,
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        // Kept by this list and by its view (ContentView's window), never
-        // let go by AppKit as well when it closes: that last release, one
-        // more than it was given, left the view's hold on a freed window,
-        // and Yab crashed when the closed window's view went (⇧⌘W, then
-        // the run loop's autorelease pool).
+        // Kept by this list, its views hold it weakly (WeakWindow), and
+        // never let go by AppKit as well when it closes: that last release,
+        // one more than it was given, freed the window while the run loop's
+        // autorelease pool still held it, and Yab crashed as the pool
+        // drained (⇧⌘W).
         window.isReleasedWhenClosed = false
         window.setFrame(frame, display: false)
         Awake.keep(window)

@@ -926,7 +926,8 @@ struct ContentView: View {
 
     @State private var keys: Any?
     @State private var middle: Any?
-    @State private var window: NSWindow?
+    @State private var held = WeakWindow()
+    private var window: NSWindow? { held.window }
     /// Whether the page in front has the screen, as the window's body reads
     /// it: Browser's copy, which changes only when that does, not the tab
     /// itself, which is another object at every switch.
@@ -1776,7 +1777,7 @@ struct ContentView: View {
                 if let window = note.object as? NSWindow { browser.fullscreenSlide(window, started: false) }
             }
             .background(WindowSetup(prepare: { LaunchArrival.shared.prepare($0, primary: browser.windowID == nil) }) {
-                window = $0; dress($0)
+                held.window = $0; dress($0)
             })
             // The tab in front followed in a leaf of its own, not in the
             // window's body (LiveLeaf).
@@ -1810,14 +1811,12 @@ struct ContentView: View {
         .onDisappear { unwatchKeys() }
         // A window of its own closing goes for good, unlike the first, which
         // is shown again, yet nothing in it disappears: its watchers, which
-        // hold this view and with it the window and its browser, go with
-        // it, and so does the view's own hold on the window. Kept, they held
-        // every closed window for as long as Yab ran (#1046).
+        // hold this view and with it the browser, go with it. Kept, they
+        // held every closed window for as long as Yab ran (#1046).
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
             guard let window, note.object as? NSWindow === window,
                   (browser.windowID ?? BrowserWindows.primaryID) != BrowserWindows.primaryID else { return }
             unwatchKeys()
-            self.window = nil
         }
     }
 

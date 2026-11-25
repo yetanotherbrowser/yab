@@ -2309,6 +2309,14 @@ private struct Trouble: View {
     }
 }
 
+/// The window a view is in, for that view's state. Held weakly: a view's
+/// `@State` or `Binding` keeps a copy of its value wherever SwiftUI keeps
+/// the view or one of its closures, and a copy holding the window strongly
+/// kept a closed window, and its browser, for as long as Yab ran (#1046).
+struct WeakWindow {
+    weak var window: NSWindow?
+}
+
 /// Hands back the NSWindow once there is one. SwiftUI has no opinion about
 /// traffic lights or title bars, and both need settling by hand here.
 struct WindowSetup: NSViewRepresentable {

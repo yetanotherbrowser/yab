@@ -695,15 +695,17 @@ struct QuestionStand: View {
     /// The window this stand is in, once it is in one. Held weakly: the
     /// window holds this view, and a strong hold kept every closed window
     /// and its browser for as long as Yab ran (#1046).
-    @State private var host = Host()
-    private struct Host { weak var window: NSWindow? }
+    @State private var host = WeakWindow()
+    /// The window's number the card was counted in (shownIn), to take out
+    /// again: the card can go after its window, held weakly, is freed.
+    @State private var counted: Int?
 
     var body: some View {
         GeometryReader { proxy in
             let window = proxy.size
             ZStack {
                 Color.clear.allowsHitTesting(false)
-                    .background(QuestionHost(window: $host.window).accessibilityHidden(true))
+                    .background(QuestionHost(window: $host).accessibilityHidden(true))
                 if let question = questions.current, question.place != .settings, question.anchor == nil,
                    host.window.map(questions.stands(in:)) ?? (question.window == nil) {
                     if question.place == .page {
@@ -716,11 +718,15 @@ struct QuestionStand: View {
                         .transition(Question.appear)
                         .id(question.id)
                         .onAppear {
-                            if let host = host.window { questions.shownIn.insert(host.windowNumber) }
+                            if let host = host.window {
+                                counted = host.windowNumber
+                                questions.shownIn.insert(host.windowNumber)
+                            }
                             shown(true)
                         }
                         .onDisappear {
-                            if let host = host.window { questions.shownIn.remove(host.windowNumber) }
+                            if let counted { questions.shownIn.remove(counted) }
+                            counted = nil
                             shown(false)
                         }
                 }
@@ -732,9 +738,9 @@ struct QuestionStand: View {
 
 /// The window a stand is in, told as it comes to one.
 private struct QuestionHost: NSViewRepresentable {
-    @Binding var window: NSWindow?
+    @Binding var window: WeakWindow
 
-    func makeNSView(context: Context) -> Reader { Reader { window = $0 } }
+    func makeNSView(context: Context) -> Reader { Reader { window.window = $0 } }
     func updateNSView(_ view: Reader, context: Context) {}
 
     final class Reader: NSView {
