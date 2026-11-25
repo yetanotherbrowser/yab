@@ -78,6 +78,19 @@ final class ChromiumTabGroups {
                 groups[remote] = tab.nest.map { ExtensionGroups.id(of: $0.id) } ?? -1
                 if tab.id == browser.activeID { active[page.profile] = remote }
             }
+            // An extension's side panel is in this window too: in Chrome its
+            // current window is the browser window it is shown in, so
+            // tabs.query({active: true, currentWindow: true}) from the panel
+            // gives the page it is beside. Left out, the panel's page was a
+            // window of its own and that query came back empty (Apollo's
+            // panel stayed blank). Listed last and never active, so the
+            // window's own tabs keep their indexes.
+            for remote in ChromiumSidePanel.shared.pages(in: browser) {
+                guard let profile = remote.profile, byProfile[profile]?.contains(remote.id) != true else { continue }
+                byProfile[profile, default: []].append(remote.id)
+                pinned[remote.id] = .bool(false)
+                groups[remote.id] = -1
+            }
             for (profile, tabs) in byProfile {
                 let key = "\(ObjectIdentifier(browser))/\(profile)"
                 live.insert(key)

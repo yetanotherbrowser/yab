@@ -148,6 +148,15 @@ final class ChromiumSidePanel: ObservableObject {
 
     func panels(in browser: Browser) -> [Panel] { panels.filter { $0.browser === browser } }
 
+    /// The window's panel pages Chrome has built, for the window Chrome's
+    /// extensions see (ChromiumTabGroups): each one's remote id and profile.
+    func pages(in browser: Browser) -> [(id: String, profile: String?)] {
+        panels(in: browser).compactMap { panel in
+            guard !panel.tab.shy, let page = panel.tab.builtPage as? ChromiumPage, let remote = page.remoteID else { return nil }
+            return (remote, page.profile)
+        }
+    }
+
     /// The panel in the window's column now, if one is.
     func front(in browser: Browser) -> Panel? {
         guard browser.chatOpen, let context = browser.panelContextID, browser.panelExtension != nil else { return nil }
@@ -261,6 +270,7 @@ final class ChromiumSidePanel: ObservableObject {
     private func drop(_ panel: Panel) {
         panels.removeAll { $0 === panel }
         panel.tab.close()
+        ChromiumTabGroups.shared.changed()
         if let browser = panel.browser, panels(in: browser).isEmpty {
             following[ObjectIdentifier(browser)] = nil
         }
@@ -508,6 +518,7 @@ final class ChromiumSidePanel: ObservableObject {
             drop(old)
         }
         panels.append(panel)
+        ChromiumTabGroups.shared.changed()
         panel.tab.go(to: url)
         browser.panelTabID = nil
         browser.panelContextID = panel.contextID
