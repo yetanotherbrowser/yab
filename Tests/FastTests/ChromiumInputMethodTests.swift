@@ -130,12 +130,12 @@ struct ChromiumInputMethodTests {
         read.edits = []
         #expect(read.route(typed: "2", inputMethod: false, taken: true) == .kept)
         #expect(read.route(typed: "e", inputMethod: false, taken: false) == .page)
-        read.commands = 1
+        read.commands = ["deleteBackward:"]
         #expect(read.route(typed: "\u{7f}", inputMethod: false, taken: true) == .page)
     }
 
     @Test func interpretationSendsAnEditingCommandAfterTheInputMethodFinishes() {
-        var read = ChromiumKeyInterpretation(commands: 1)
+        var read = ChromiumKeyInterpretation(commands: ["insertNewline:"])
         let none = NSRange(location: NSNotFound, length: 0)
         read.edits = [.unmark]
         #expect(read.route(typed: nil, inputMethod: true, taken: true, composing: true) == .inputMethodThenPage)
@@ -145,8 +145,37 @@ struct ChromiumInputMethodTests {
         read.edits = [.unmark, .mark("日本", selected: NSRange(location: 2, length: 0), replacing: none)]
         #expect(read.route(typed: nil, inputMethod: true, taken: true, composing: true) == .inputMethod)
         read.edits = [.insert("chào", replacing: none)]
-        read.commands = 0
+        read.commands = []
         #expect(read.route(typed: "\r", inputMethod: true, taken: true, composing: true) == .inputMethod)
+    }
+
+    /// ⌃A in a field: Yab's context reads it as a command and nothing typed.
+    /// The key goes on to the page with the command's name, which the page's
+    /// own copy of the key cannot give it.
+    @Test func editingCommandGoesToThePageWithItsKey() throws {
+        var read = ChromiumKeyInterpretation()
+        read.commands = ["moveToBeginningOfParagraph:"]
+        #expect(read.route(typed: "\u{1}", inputMethod: true, taken: true) == .page)
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .control, timestamp: 1, windowNumber: 0, context: nil,
+            characters: "\u{1}", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0))
+        #expect(ChromiumKeyboardInput.fields(event, commands: read.commands)["commands"] ==
+                .array([.string("moveToBeginningOfParagraph:")]))
+        #expect(ChromiumKeyboardInput.fields(event)["commands"] == nil)
+    }
+
+    /// Chromium drops insert… commands and runs the rest: ⌃O would move the
+    /// caret back with no newline. A key with one goes with no command.
+    @Test func keyWithAnInsertCommandGoesWithoutCommands() {
+        var read = ChromiumKeyInterpretation()
+        read.commands = ["insertNewlineIgnoringFieldEditor:", "moveBackward:"]
+        #expect(read.pageCommands.isEmpty)
+        read.commands = ["insertNewline:"]
+        #expect(read.pageCommands.isEmpty)
+        read.commands = ["moveBackward:", "moveToBeginningOfParagraph:"]
+        #expect(read.pageCommands == ["moveBackward:", "moveToBeginningOfParagraph:"])
+        read.commands = ["yank:"]
+        #expect(read.pageCommands == ["yank:"])
     }
 
     @Test func replacementCoordinatesAreUTF16AndMarkedTextStartsAtTheSelection() {

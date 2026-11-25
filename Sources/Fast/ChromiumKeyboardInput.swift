@@ -6,7 +6,9 @@ import YabCoreClient
 /// that AppKit's input context uses for supplementary characters (emoji).
 @MainActor
 enum ChromiumKeyboardInput {
-    static func fields(_ event: NSEvent) -> [String: JSONValue] {
+    /// `commands`: the editing commands Yab's input context read from the
+    /// key, which the page's view runs in place of reading its copy again.
+    static func fields(_ event: NSEvent, commands: [String] = []) -> [String: JSONValue] {
         var fields: [String: JSONValue] = ["keyCode": .number(Double(event.keyCode)),
             "modifiers": .number(Double(event.modifierFlags.rawValue))]
         if event.type != .flagsChanged {
@@ -14,6 +16,7 @@ enum ChromiumKeyboardInput {
             fields["unmodified"] = .string(event.charactersIgnoringModifiers ?? "")
             fields["repeat"] = .bool(event.isARepeat)
         }
+        if !commands.isEmpty { fields["commands"] = .array(commands.map { .string($0) }) }
         if let data = event.cgEvent?.data as Data?, !data.isEmpty {
             fields["event"] = .string(data.base64EncodedString())
         }

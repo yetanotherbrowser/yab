@@ -48,9 +48,11 @@ enum ChromiumNativeTextInput {
 /// shows none of that. So a field's every key goes through Yab's context
 /// first, and only a key that came out as its own plain character, or as
 /// an editing command, goes on to the page as the key itself (the page
-/// reads it into the same character or command, with its keydown, keypress
-/// and input events). Everything else reaches the page as the text input
-/// system said it: committed or marked text, with the range it replaces.
+/// reads its character again, with its keydown, keypress and input events).
+/// An editing command goes with the key by name: the page's process reads
+/// a copy of the key, and that copy of ⌃A is no command at all there.
+/// Everything else reaches the page as the text input system said it:
+/// committed or marked text, with the range it replaces.
 struct ChromiumKeyInterpretation: Equatable {
     enum Edit: Equatable {
         case insert(String, replacing: NSRange)
@@ -74,7 +76,15 @@ struct ChromiumKeyInterpretation: Equatable {
     }
 
     var edits: [Edit] = []
-    var commands = 0
+    /// The editing commands, as AppKit named them: "moveToBeginningOfParagraph:".
+    var commands: [String] = []
+
+    /// The commands the page gets with its key. Chromium drops every insert…
+    /// command and would run the rest alone: ⌃O's moveBackward: without its
+    /// newline. A key with one goes as it did before, with none.
+    var pageCommands: [String] {
+        commands.contains { $0.hasPrefix("insert") } ? [] : commands
+    }
 
     /// - Parameters:
     ///   - typed: the key's own characters.
@@ -84,9 +94,9 @@ struct ChromiumKeyInterpretation: Equatable {
         guard let last = edits.last else {
             // A key the context took without typing or a command is one it
             // keeps; passed on, the page would type it after all.
-            return taken && commands == 0 ? .kept : .page
+            return taken && commands.isEmpty ? .kept : .page
         }
-        if commands > 0 {
+        if !commands.isEmpty {
             // Chromium keeps the key with a candidate that is still marked.
             if case .mark(let text, _, _) = last, !text.isEmpty { return .inputMethod }
             return .inputMethodThenPage

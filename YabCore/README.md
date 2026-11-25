@@ -207,7 +207,11 @@ let title = try await core.evaluate(tab: tab, world: "agent",
 `mouseDown`, `mouseUp`, `mouseMove`, `mouseDrag`, `rightDown`, `rightUp`, `rightDrag`;
 fields `x`, `y`, optional `clickCount`, `modifiers` (NSEvent flag bits).
 Keys: `keyDown`/`keyUp`, macOS `keyCode`, `characters`, `unmodified`, optional
-`repeat` and modifiers. `text` inserts committed Unicode through the page
+`repeat` and modifiers. A `keyDown` may carry `commands`, the editing commands
+Yab's input context read from the key as AppKit names them
+(`["moveToBeginningOfParagraph:"]`): the page view runs them in place of
+reading the key again (`key_commands.h`). Anything but a list of up to 64
+such names is refused. `text` inserts committed Unicode through the page
 view's `NSTextInputClient`. `wheel` takes `deltaX`, `deltaY`, AppKit/CG scroll
 phase and momentumPhase, location and modifiers. `magnify` takes `x`, `y`,
 NSEvent `phase`, `magnification`, `timestamp` and modifiers; `smartMagnify` the

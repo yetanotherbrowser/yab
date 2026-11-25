@@ -14,6 +14,7 @@
 #include INPUT_GESTURE
 #include "../src/input_view.h"
 #include "keyboard_event.h"
+#include "key_commands.h"
 
 static int nativePastes = 0;
 static int inserted = 0, marked = 0, unmarked = 0, mouseEvents = 0, keyEvents = 0;
@@ -170,7 +171,7 @@ static void DrainKeys(Tab& tab) {
         [(NSView*)tab.native.firstResponder isDescendantOf:content] ? tab.native.firstResponder : view;
     NSEvent* native = delivery->native;
     if (envelope.type == NSEventTypeFlagsChanged) [target flagsChanged:native];
-    else if (envelope.type == NSEventTypeKeyDown) [target keyDown:native];
+    else if (envelope.type == NSEventTypeKeyDown) KeyDown(target, native, delivery->commands);
     else [target keyUp:native];
   }
 #endif
@@ -289,6 +290,18 @@ int main(int argc, char**) { @autoreleasepool {
   Send(tabs.at("page"), @"keyDown", false, @{@"event": @"not-base64"});
   Check(replies == 1 && error && postedKeys.count == 0 && !health,
         "malformed native keyboard payload refuses before enqueue");
+  Send(tabs.at("page"), @"keyDown", false, @{@"commands": @[ @"moveLeft:; rm" ]});
+  Check(replies == 1 && error && postedKeys.count == 0 && !health,
+        "a keydown's editing commands are AppKit selector names or refused before enqueue");
+  Send(tabs.at("page"), @"keyDown", false, @{@"commands": @[ @"moveToBeginningOfParagraph:" ]});
+  Check(replies == 1 && !error && postedKeys.count == 1 && tabs.at("page").keyboard.size() == 1 &&
+        [tabs.at("page").keyboard.back()->commands isEqual:@[ @"moveToBeginningOfParagraph:" ]],
+        "a keydown's editing commands wait in the native FIFO with its event");
+  DrainKeys(tabs.at("page"));
+  Send(tabs.at("page"), @"keyUp", false, @{@"commands": @[ @"moveToBeginningOfParagraph:" ]});
+  Check(replies == 1 && !error && tabs.at("page").keyboard.size() == 1 && !tabs.at("page").keyboard.back()->commands,
+        "only a keydown carries editing commands");
+  DrainKeys(tabs.at("page"));
   Send(tabs.at("page"), @"editorKey", false, @{@"key": @"v", @"nativeCode": @9});
   Check(!replies && !commands && postedKeys.count == 1,
         "editor key waits behind the native FIFO before script dispatch");

@@ -26,6 +26,7 @@
 #include <memory>
 #include <iterator>
 #include "keyboard_event.h"
+#include "key_commands.h"
 #include <string>
 #include <cmath>
 #include <climits>
@@ -1581,11 +1582,12 @@ static void PollHurry() {
 // copy. Older entries consumed by an AppKit modal text service are retired when
 // its next event is dispatched; closing a tab destroys its remaining entries.
 static void QueueKeyboard(Tab& tab, NSEvent* envelope, NSEvent* native,
-                          std::function<void()> edit = {}, std::function<void()> canceled = {}) {
+                          std::function<void()> edit = {}, std::function<void()> canceled = {},
+                          NSArray<NSString*>* commands = nil) {
   envelope = KeyboardEnvelopeMark(envelope);
   auto entry = std::make_shared<QueuedKeyboardEvent>();
   entry->stamp = KeyboardEventStamp(envelope); entry->type = envelope.type; entry->code = envelope.keyCode;
-  entry->native = native; entry->edit = std::move(edit); entry->canceled = std::move(canceled);
+  entry->native = native; entry->commands = commands; entry->edit = std::move(edit); entry->canceled = std::move(canceled);
   tab.keyboard.push_back(entry);
   [NSApp postEvent:envelope atStart:NO];
 }
@@ -1650,7 +1652,7 @@ static NSEvent* DispatchPageKeyboard(NSEvent* event) {
     NSResponder* target = [window.firstResponder isKindOfClass:NSView.class] &&
         [(NSView*)window.firstResponder isDescendantOf:window.contentView] ? window.firstResponder : view;
     if (event.type == NSEventTypeFlagsChanged) [target flagsChanged:native];
-    else if (event.type == NSEventTypeKeyDown) [target keyDown:native];
+    else if (event.type == NSEventTypeKeyDown) KeyDown(target, native, delivery ? delivery->commands : nil);
     else [target keyUp:native];
     return nil;
   }
@@ -1819,6 +1821,8 @@ static void Input(Tab& tab, NSDictionary* p, NSString* request, bool nativePopup
     NSEventType type = lone ? NSEventTypeFlagsChanged : [kind isEqual:@"keyDown"] ? NSEventTypeKeyDown : NSEventTypeKeyUp;
     NSEvent* native = p[@"event"] ? KeyboardEventDecode(p, type) : nil;
     if (p[@"event"] && !native) { Reply(request, nil, @"Invalid native keyboard event"); return; }
+    NSArray<NSString*>* commands = ParseKeyCommands(p[@"commands"]);
+    if (!commands) { Reply(request, nil, @"Invalid key commands"); return; }
     // AppKit's queue needs a window number from this process. Posting the
     // decoded event itself carries Yab's foreign window and may never reach
     // the local monitor. The envelope routes it; its payload is interpreted.
@@ -1828,7 +1832,7 @@ static void Input(Tab& tab, NSDictionary* p, NSString* request, bool nativePopup
     // Native correction panels consume subsequent events from AppKit's queue.
     // Calling keyDown directly strands that nested event loop and keeps the
     // input RPC unacknowledged, preventing the next key from reaching it.
-    QueueKeyboard(tab, event, native ?: event);
+    QueueKeyboard(tab, event, native ?: event, {}, {}, type == NSEventTypeKeyDown ? commands : nil);
 
   } else if ([kind isEqual:@"wheel"]) {
     // The scroll's own CGEvent, whole: Chrome's WebMouseWheelEventBuilder

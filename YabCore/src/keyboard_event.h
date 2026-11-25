@@ -9,6 +9,8 @@ struct QueuedKeyboardEvent {
   NSEventType type;
   unsigned short code = 0;
   NSEvent* __strong native = nil;
+  // The editing commands Yab's input context read from a keydown (key_commands.h).
+  NSArray<NSString*>* __strong commands = nil;
   std::function<void()> edit;
   std::function<void()> canceled;
   ~QueuedKeyboardEvent() { if (canceled) canceled(); }

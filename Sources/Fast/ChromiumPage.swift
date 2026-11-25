@@ -2330,7 +2330,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     override func keyDown(with event: NSEvent) {
         // Escape gives a page's full screen back, as in Chromium and Safari.
         if event.keyCode == 53, media.fullscreen { exitPageFullscreen(); return }
-        if !composeKey(event) && !takeEditingKey(event) { key("keyDown", event) }
+        guard let commands = composeKey(event), !takeEditingKey(event) else { return }
+        key("keyDown", event, commands: commands)
     }
     override func keyUp(with event: NSEvent) {
         let composed = imeKeys.remove(event.keyCode) != nil
@@ -2355,8 +2356,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         input("flagsChanged", ChromiumKeyboardInput.fields(event))
     }
     func sendKey(_ kind: String, _ event: NSEvent) { key(kind, event) }
-    private func key(_ kind: String, _ event: NSEvent) {
-        input(kind, ChromiumKeyboardInput.fields(event))
+    private func key(_ kind: String, _ event: NSEvent, commands: [String] = []) {
+        input(kind, ChromiumKeyboardInput.fields(event, commands: commands))
     }
     /// AppKit text services can use NSResponder's entrypoint rather than
     /// the input-method protocol's replacement-range variant (AutoFill).
@@ -2419,7 +2420,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     override func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
     override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect { nativeFirstRect(range) }
     override func characterIndex(for point: NSPoint) -> UInt { UInt(NSNotFound) }
-    override func doCommand(by selector: Selector) { keyInterpretation?.commands += 1 }
+    override func doCommand(by selector: Selector) { keyInterpretation?.commands.append(NSStringFromSelector(selector)) }
     private func agentInput(_ kind: String, _ fields: [String: JSONValue] = [:]) {
         var fields = fields; fields["kind"] = .string(kind)
         command("scripts.input", fields)

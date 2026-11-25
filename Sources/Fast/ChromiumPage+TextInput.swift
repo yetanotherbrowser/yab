@@ -56,11 +56,11 @@ extension ChromiumPage {
 
     /// Routes a key through Yab's input context while a page field has the
     /// keyboard or words are being composed
-    /// (ChromiumKeyInterpretation says why). Returns true when the page must
-    /// not get the key itself.
-    func composeKey(_ event: NSEvent) -> Bool {
+    /// (ChromiumKeyInterpretation says why). Returns the editing commands the
+    /// page gets with the key itself, or nil when the page must not get it.
+    func composeKey(_ event: NSEvent) -> [String]? {
         guard Self.usesInputContext(event, marked: hasMarkedText(), editable: inputMethodEditable),
-              let context = inputContext else { return false }
+              let context = inputContext else { return [] }
         let source = context.selectedKeyboardInputSource ?? ""
         let inputMethod = source.contains(".inputmethod.")
         // NSEvent.characters can already contain the composed character. A
@@ -78,20 +78,20 @@ extension ChromiumPage {
         switch route {
         case .page:
             imeKeys.remove(event.keyCode)
-            return false
+            return heard.pageCommands
         case .kept:
             // A held letter's keydown reached the page, so its keyup does
             // too; a key the page never saw goes up unseen as well.
             if !event.isARepeat { imeKeys.insert(event.keyCode) }
-            return true
+            return nil
         case .inputMethod:
             heard.edits.forEach(sendTextEdit)
             imeKeys.insert(event.keyCode)
-            return true
+            return nil
         case .inputMethodThenPage:
             heard.edits.forEach(sendTextEdit)
             imeKeys.remove(event.keyCode)
-            return false
+            return heard.pageCommands
         }
     }
 
