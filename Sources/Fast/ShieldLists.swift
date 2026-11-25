@@ -9,7 +9,7 @@ import Foundation
 enum ShieldLists {
     /// Goes up whenever Filters or `base` changes what a list comes out as:
     /// every device compiles the lists it keeps again, once.
-    static let schema = 14
+    static let schema = 16
 
     struct Source: Sendable {
         let name: String

@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>t1-inline-aclib</title>
+<!-- rule: fixture.test##+js(aopr, aclib) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t1-inline-aclib",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+Object.defineProperty(window,"aclib",{configurable:false,value:{runPop(o){window.__popped=true;window.open("about:blank")}}});
+</script><script>
+function run(){if(ran)return;ran=true;
+ try{aclib.runPop({zoneId:"1"});F.effect.runPopNeverRan=!window.__popped}catch(e){F.effect.runPopNeverRan=true;F.detail=String(e)}
+ F.kept.pageStillAlive=true;finish()}
+document.addEventListener("click",run);setTimeout(run,100);
+</script>

@@ -69,6 +69,8 @@ targets:
       - path: ../Sources/Fast/Filters.swift
       - path: ../Sources/Fast/Filters+Network.swift
       - path: ../Sources/Fast/Filters+Cosmetic.swift
+      - path: ../Sources/Fast/Filters+Scriptlets.swift
+      - path: ../Sources/Fast/Filters+Preparser.swift
       - path: ../Sources/Fast/Filters+Skip.swift
       - path: ../Sources/Fast/ShieldLists.swift
       # A wide table in an answer read as cards, as the Mac's chat reads it
@@ -88,6 +90,11 @@ targets:
       - path: ../Resources/PageScripts/darkreader.js
         buildPhase: resources
       - path: ../Resources/PageScripts/darkreader-proxy.js
+        buildPhase: resources
+      # Shield's scriptlets, the Mac's library (Page/Shield+Scriptlets).
+      - path: ../Resources/PageScripts/shield-scriptlets.js
+        buildPhase: resources
+      - path: ../Resources/PageScripts/shield-guard.js
         buildPhase: resources
       # Test pages, favicons and worlds keep their folders inside the app:
       # Yab.app/Pages/<stem>.html, Yab.app/Favicons/<host>.png,

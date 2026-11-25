@@ -9,7 +9,7 @@ extension Filters {
         // The earliest of them, and never inside an attribute selector.
         guard let hash = line.firstIndex(of: "#") else { return nil }
         if let bracket = line.firstIndex(of: "["), bracket < hash { return nil }
-        for marker in ["##", "#@#", "#?#", "#@?#", "#$#", "#@$#", "#%#"] {
+        for marker in ["##", "#@#", "#?#", "#@?#", "#$#", "#@$#", "#%#", "#@%#"] {
             if let range = line.range(of: marker), range.lowerBound == hash { return range }
         }
         return nil
@@ -27,31 +27,40 @@ extension Filters {
         /// Sites with all their hiding off ($elemhide).
         var unhidden = Set<String>()
 
-        mutating func take(_ line: String, _ marker: Range<String.Index>) -> Bool {
+        /// Nil when the line is taken, or why it is not (Drop).
+        mutating func take(_ line: String, _ marker: Range<String.Index>) -> String? {
             let kind = line[marker]
-            guard kind == "##" || kind == "#@#" else { return false }
+            guard kind == "##" || kind == "#@#" else {
+                if kind == "#%#" || kind == "#@%#" {
+                    return line[marker.upperBound...].hasPrefix("//scriptlet(") ? Drop.adguardScriptlet : Drop.adguardJS
+                }
+                return kind.contains("$") ? Drop.cssInjection : Drop.procedural
+            }
             let selector = line[marker.upperBound...].trimmingCharacters(in: .whitespaces)
-            guard Filters.selector(selector) else { return false }
+            if let problem = Filters.selectorProblem(selector) { return problem }
             let domains = line[..<marker.lowerBound]
             var includes: [String] = []
             var excludes: [String] = []
             for piece in domains.split(separator: ",") {
                 let part = piece.trimmingCharacters(in: .whitespaces)
                 if part.hasPrefix("~") {
-                    guard let clean = plainDomain(Substring(part.dropFirst())) else { return false }
+                    // WebKit's unless-domain can't name an entity.
+                    guard let clean = plainDomain(Substring(part.dropFirst())) else {
+                        return entity(Substring(part.dropFirst())) != nil ? Drop.entityExclude : Drop.badDomain
+                    }
                     excludes.append(clean)
                 } else {
-                    guard let clean = plainDomain(Substring(part)) else { return false }
+                    guard let clean = plainDomain(Substring(part)) ?? entity(Substring(part)) else { return Drop.badDomain }
                     includes.append(clean)
                 }
             }
             if kind == "#@#" {
                 // An exception with no site takes the selector away.
-                guard excludes.isEmpty else { return false }
+                guard excludes.isEmpty else { return Drop.exceptionExcluding }
                 if includes.isEmpty { anywhereSpared.insert(selector) } else { spared[selector, default: []].formUnion(includes) }
-                return true
+                return nil
             }
-            guard includes.isEmpty || excludes.isEmpty else { return false }
+            guard includes.isEmpty || excludes.isEmpty else { return Drop.mixedSites }
             if everywhere.contains(selector) == false, sparing[selector] == nil, only[selector] == nil { order.append(selector) }
             if !includes.isEmpty {
                 only[selector, default: []].formUnion(includes)
@@ -60,7 +69,7 @@ extension Filters {
             } else {
                 everywhere.insert(selector)
             }
-            return true
+            return nil
         }
 
         /// The generic rules, the sites' own, how many of the sites' own
@@ -77,7 +86,9 @@ extension Filters {
                     // with sites to spare is no longer in the stylesheet
                     // WebKit gives every page; it is matched per page, as a
                     // site's own rules are.
-                    let unless = everywhere.contains(selector) ? spare : spare.union(sparing[selector] ?? [])
+                    // An entity spared is left out: unless-domain can't
+                    // name one, and before entities were read it was too.
+                    let unless = (everywhere.contains(selector) ? spare : spare.union(sparing[selector] ?? [])).filter { !$0.hasSuffix(".*") }
                     generic.append(Rule(action: .hide(selector), filter: ".*", unlessDomain: unless.sorted()))
                 } else if let sites = only[selector] {
                     // A site stays only if nothing spares it: not itself, not
@@ -86,9 +97,7 @@ extension Filters {
                     // one rule and the rule for the whole site would reach
                     // the part.
                     let off = spare.union(unhidden)
-                    let left = sites.filter { site in
-                        !off.contains(where: { site == $0 || site.hasSuffix("." + $0) || $0.hasSuffix("." + site) })
-                    }
+                    let left = sites.filter { site in !off.contains(where: { Filters.overlap(site, $0) }) }
                     // One rule a site, matched by the address of the page
                     // (and anything else loaded from the site), not a rule
                     // for every address with the site as a condition: WebKit
@@ -98,7 +107,10 @@ extension Filters {
                     // image nytimes.com loads while it was being read, its
                     // HTML parsed in 1.4 s instead of 0.2.
                     if left.isEmpty { dropped += 1 }
-                    for site in left.sorted() { own.append(Rule(action: .hide(selector), filter: Filters.onSite(site))) }
+                    for site in left.sorted() {
+                        let filter = site.hasSuffix(".*") ? Filters.onEntity(String(site.dropLast(2))) : Filters.onSite(site)
+                        own.append(Rule(action: .hide(selector), filter: filter))
+                    }
                     named.formUnion(left)
                 }
             }
@@ -110,13 +122,22 @@ extension Filters {
     /// again when it compiles and drops what it can't parse, but those are
     /// best not counted against the cap.
     static func selector(_ selector: String) -> Bool {
-        guard !selector.isEmpty, selector.count <= 1024, selector.allSatisfy(\.isASCII) else { return false }
-        if selector.hasPrefix("+js(") || selector.hasPrefix("^") || selector.hasPrefix("{") { return false }
+        selectorProblem(selector) == nil
+    }
+
+    /// Why a selector is not one (Drop), or nil.
+    static func selectorProblem(_ selector: String) -> String? {
+        guard !selector.isEmpty, selector.count <= 1024 else { return Drop.badSelector }
+        guard selector.allSatisfy(\.isASCII) else { return Drop.nonASCII }
+        if selector.hasPrefix("+js(") { return Drop.scriptletMalformed }
+        if selector.hasPrefix("^") { return Drop.htmlFiltering }
+        if selector.hasPrefix("{") { return Drop.cssInjection }
         for token in [":has-text(", ":contains(", ":xpath(", ":upward(", ":nth-ancestor(", ":-abp-", ":matches-css",
                       ":matches-attr", ":matches-path", ":matches-prop", ":matches-media", ":min-text-length(",
-                      ":watch-attr(", ":remove", ":style(", ":others(", ":if(", ":if-not(", "{", "}"] where selector.contains(token) {
-            return false
+                      ":watch-attr(", ":remove", ":style(", ":others(", ":if(", ":if-not("] where selector.contains(token) {
+            return Drop.procedural
         }
-        return true
+        if selector.contains("{") || selector.contains("}") { return Drop.cssInjection }
+        return nil
     }
 }

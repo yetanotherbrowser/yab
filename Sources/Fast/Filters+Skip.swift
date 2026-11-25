@@ -33,7 +33,7 @@ extension Filters {
     /// Where a line's options start, uBlock Origin's way (indexOfNetAnchor):
     /// the last "$" followed by an option's name, so a "$" inside a regular
     /// expression is passed over.
-    private static let optionNames: Set<String> = [
+    static let optionNames: Set<String> = [
         "1p", "3p", "_", "all", "badfilter", "beacon", "cname", "csp", "css", "denyallow", "doc", "document",
         "domain", "ehide", "elemhide", "empty", "first-party", "font", "frame", "from", "genericblock",
         "generichide", "ghide", "header", "image", "important", "inline-font", "inline-script", "ipaddress",

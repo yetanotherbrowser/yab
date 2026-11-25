@@ -7,7 +7,9 @@ import XCTest
 // the real lists from the internet and real news sites. Not part of an
 // ordinary `remote test` run (Phone/scripts/phone skips it): only by name,
 // `Phone/scripts/remote test ShieldMeasureTests`. Writes
-// YAB_OUT/shield/measure.json and prints the same.
+// YAB_OUT/shield/measure.json and prints the same. Each site loads without
+// the lists, with them, and with them and the scriptlets, interleaved in
+// the same build; YAB_SHIELD_SCRIPTLETS=0 leaves the third out.
 
 @_silgen_name("proc_pid_rusage")
 private func proc_pid_rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutableRawPointer) -> Int32
@@ -30,8 +32,14 @@ final class ShieldMeasureTests: XCTestCase {
         "https://www.theverge.com/",
         "https://edition.cnn.com/",
         "https://www.dailymail.co.uk/home/index.html",
+        // A site the scriptlets name (aopw, nowoif): what a match costs.
+        "https://yts.gg/",
     ]
-    private let repeats = 3
+    private let repeats = Int(ProcessInfo.processInfo.environment["YAB_MEASURE_REPEATS"] ?? "") ?? 5
+
+    private enum Variant: String, CaseIterable {
+        case none, lists, scriptlets
+    }
 
     func testTheFirstLaunchBuildAndPageLoadsWithAndWithoutTheLists() async throws {
         // 1. The first launch: the built-in list, then the week's lists
@@ -70,16 +78,22 @@ final class ShieldMeasureTests: XCTestCase {
         XCTAssertEqual(later.compiles, 0)
         XCTAssertEqual(later.lookups, 1)
 
-        // 3. Pages, without and with the lists, alternating, each cold.
+        // 3. Pages, without the lists, with them, and with the scriptlets
+        //    too, alternating, each cold.
         let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first)
+        let timed = later.scriptlets.map { Self.timed($0.source) }
+        out["scriptlets"] = timed != nil
+        out["scriptlet_bytes"] = later.scriptlets?.source.utf8.count ?? 0
+        let variants = Variant.allCases.filter { $0 != .scriptlets || timed != nil }
         var pages: [[String: Any]] = []
         for site in sites {
             guard let url = URL(string: site) else { continue }
             for round in 0..<repeats {
-                for blocked in [false, true] {
-                    var load = await self.load(url, lists: blocked ? later.lists : [], in: window)
+                for variant in variants {
+                    var load = await self.load(url, lists: variant == .none ? [] : later.lists,
+                                               scriptlets: variant == .scriptlets ? timed : nil, in: window)
                     load["site"] = url.host() ?? site
-                    load["blocked"] = blocked
+                    load["variant"] = variant.rawValue
                     load["round"] = round
                     pages.append(load)
                 }
@@ -101,13 +115,20 @@ final class ShieldMeasureTests: XCTestCase {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(false) }
     }
 
-    private func load(_ url: URL, lists: [WKContentRuleList], in window: UIWindow) async -> [String: Any] {
+    /// The page script, timing itself in the top document: what one frame pays.
+    private static func timed(_ source: String) -> WKUserScript {
+        let wrapped = "{ const yabT0 = performance.now();\n" + source + "\n;globalThis.__yabScriptletMs = performance.now() - yabT0; }"
+        return WKUserScript(source: wrapped, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
+    }
+
+    private func load(_ url: URL, lists: [WKContentRuleList], scriptlets: WKUserScript?, in window: UIWindow) async -> [String: Any] {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.preferredContentMode = .mobile
         let os = ProcessInfo.processInfo.operatingSystemVersion
         configuration.applicationNameForUserAgent = "Version/\(os.majorVersion).\(os.minorVersion) Mobile/15E148 Safari/604.1"
         for list in lists { configuration.userContentController.add(list) }
+        if let scriptlets { configuration.userContentController.addUserScript(scriptlets) }
         let view = WKWebView(frame: CGRect(origin: .zero, size: Metrics.screen), configuration: configuration)
         let watcher = Watcher()
         view.navigationDelegate = watcher
@@ -149,6 +170,9 @@ final class ShieldMeasureTests: XCTestCase {
             for (key, value) in zip(["dcl", "load", "resources", "transfer", "nodes", "iframes"], numbers) { result[key] = value }
         } else {
             result["js_error"] = said.1.map { String(describing: $0) } ?? "said \(String(describing: said.0))"
+        }
+        if scriptlets != nil, let cost = try? await view.evaluateJavaScript("globalThis.__yabScriptletMs ?? -1") as? Double {
+            result["scriptlet_ms"] = cost
         }
         // The page's web process, by WebKit's own private property: a test
         // may ask what the app never does.
@@ -192,10 +216,12 @@ final class ShieldMeasureTests: XCTestCase {
         var rows: [[String: Any]] = []
         let hosts = Array(Set(pages.compactMap { $0["site"] as? String })).sorted()
         for host in hosts {
-            for blocked in [false, true] {
-                let some = pages.filter { $0["site"] as? String == host && $0["blocked"] as? Bool == blocked && $0["finished"] as? Bool == true }
+            for variant in Variant.allCases.map(\.rawValue) {
+                let some = pages.filter { $0["site"] as? String == host && $0["variant"] as? String == variant && $0["finished"] as? Bool == true }
+                guard !some.isEmpty else { continue }
                 func values(_ key: String) -> [Double] { some.compactMap { ($0[key] as? NSNumber)?.doubleValue } }
-                rows.append(["site": host, "blocked": blocked, "loads": some.count,
+                rows.append(["site": host, "variant": variant, "loads": some.count,
+                             "scriptlet_ms": median(values("scriptlet_ms")) ?? -1,
                              "finish_ms": median(values("finish_ms")) ?? -1, "load_ms": median(values("load")) ?? -1,
                              "dcl_ms": median(values("dcl")) ?? -1, "resources": median(values("resources")) ?? -1,
                              "transfer_kb": (median(values("transfer")) ?? 0) / 1024, "web_mb": median(values("web_mb")) ?? -1])

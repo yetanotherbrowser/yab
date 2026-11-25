@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>s7c-nowoif-decoy</title>
+<!-- rule: fixture.test##+js(nowoif, , 1) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s7c-nowoif-decoy",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+let w=window.open("https://ads.example/x");
+F.effect.decoyReturned=(w!==null&&typeof w==="object");
+F.effect.noTopLevelWindow=(()=>{try{return w.top!==w}catch(_){return false}})();
+F.kept.decoyHasWindowApi=(()=>{try{w.focus();w.blur();return typeof w.closed==="boolean"}catch(_){return false}})();
+setTimeout(()=>{F.effect.closedAfterDelay=!!(w&&w.closed===true);try{w&&w.close()}catch(_){}finish()},1600);</script>

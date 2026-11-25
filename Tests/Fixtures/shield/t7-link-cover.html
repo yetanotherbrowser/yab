@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>t7-link-cover</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button><a id="own" href="/next" target="_blank">own</a>
+<script>
+const F=window.__yabFixture={name:"t7-link-cover",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function run(){if(ran)return;ran=true;
+ const cover=document.createElement("a");cover.href="https://ads.example/landing";cover.target="_blank";cover.style.cssText="position:fixed;inset:0;z-index:9";document.body.appendChild(cover);
+ cover.click();
+ const loose=document.createElement("a");loose.href="https://ads.example/loose";loose.target="_blank";
+ loose.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));
+ F.effect.coverTakenAway=!cover.isConnected;
+ let seen=false;const own=document.getElementById("own");own.addEventListener("click",e=>{seen=true;e.preventDefault()});own.click();
+ F.kept.ownLinkClicks=seen&&own.isConnected;
+ finish()}
+setTimeout(run,100);
+</script>

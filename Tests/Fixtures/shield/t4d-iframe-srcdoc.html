@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>t4d-iframe-srcdoc</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t4d-iframe-srcdoc",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function pop(open){let w=null;
+ try{w=open("");if(w){w.document.open();w.document.writeln("<script>window.location=\"ad-landing.html\"<\/script>");w.document.close()}}catch(e){F.detail=String(e)}
+ return w}
+const f=document.createElement("iframe");f.srcdoc="<p>frame</p>";f.style.cssText="position:absolute;top:-1000px;visibility:hidden";
+f.addEventListener("load",()=>{if(ran)return;ran=true;const w=pop(f.contentWindow.open.bind(f.contentWindow));
+ F.effect.srcdocOpenBlocked=(w===null);F.kept.pageStillAlive=true;finish()});
+document.body.appendChild(f);
+</script>

@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>s8-shared-chain</title>
+<!-- rule: fixture.test##+js(set, ytInitialPlayerResponse.playerAds, undefined) -->
+<!-- rule: fixture.test##+js(set, ytInitialPlayerResponse.adPlacements, undefined) -->
+<!-- rule: fixture.test##+js(set, ytInitialPlayerResponse.adSlots, undefined) -->
+<!-- rule: fixture.test##+js(aopr, adHost.loader.run) -->
+<!-- rule: fixture.test##+js(aopw, adHost.loader.config) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s8-shared-chain",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+function threw(fn){try{fn();return false}catch(e){return true}}
+</script>
+<script>
+var ytInitialPlayerResponse={playerAds:[1],adPlacements:[2],adSlots:[3],videoDetails:{videoId:"v1"}};
+F.effect.playerAds=(ytInitialPlayerResponse.playerAds===undefined);
+F.effect.adPlacements=(ytInitialPlayerResponse.adPlacements===undefined);
+F.effect.adSlots=(ytInitialPlayerResponse.adSlots===undefined);
+F.kept.videoDetails=(ytInitialPlayerResponse.videoDetails&&ytInitialPlayerResponse.videoDetails.videoId==="v1");
+ytInitialPlayerResponse={playerAds:[4],adPlacements:[5],adSlots:[6],videoDetails:{videoId:"v2"}};
+F.effect.reassigned=(ytInitialPlayerResponse.playerAds===undefined&&ytInitialPlayerResponse.adPlacements===undefined&&ytInitialPlayerResponse.adSlots===undefined);
+F.kept.reassignedDetails=(ytInitialPlayerResponse.videoDetails.videoId==="v2");
+var adHost={loader:{run:function(){return "ad"},other:1}};
+F.effect.readAborted=threw(function(){return adHost.loader.run()});
+F.effect.writeAborted=threw(function(){adHost.loader.config={zone:1}});
+F.kept.sibling=(adHost.loader.other===1&&(adHost.loader.other=2,adHost.loader.other===2));
+F.kept.unrelatedWritable=(()=>{window.plain=1;return window.plain===1})();
+finish();</script>

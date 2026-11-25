@@ -720,7 +720,7 @@ final class WebPool: NSObject {
         // this page's site alone (Shield), as each tab's do on the Mac. The
         // lists go on once the view is made: given them before, a view's
         // first load sometimes never finished (ShieldStoreTests).
-        let controller = pageController()
+        let controller = pageController(for: tab.id, url: loadingURL(for: tab))
         configuration.userContentController = controller
         let view = WKWebView(frame: CGRect(origin: .zero, size: Metrics.screen), configuration: configuration)
         fitShield(controller, for: tab.id, url: loadingURL(for: tab))
@@ -764,8 +764,13 @@ final class WebPool: NSObject {
 
     /// A page's own controller: what pages say about themselves, and room
     /// for the blocker's lists.
-    private func pageController() -> WKUserContentController {
+    private func pageController(for id: Tab.ID, url: URL?) -> WKUserContentController {
         let controller = WKUserContentController()
+        // The scriptlets before Dark Reader's proxy, with nothing to move.
+        if let shield {
+            let site = site(of: id, url: url)
+            shield.prepare(controller, host: site.host, isPrivate: site.isPrivate)
+        }
         controller.add(WeakMessages(self), name: "yabPage")
         WebsiteDarkening.install(in: controller, fixturesEnabled: fixturesEnabled)
         controller.addUserScript(WKUserScript(source: Self.reporter, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -781,8 +786,12 @@ final class WebPool: NSObject {
     /// The blocker's lists on or off for the site a page is heading to.
     private func fitShield(_ controller: WKUserContentController, for id: Tab.ID, url: URL?) {
         guard let shield else { return }
-        let site: (host: String?, isPrivate: Bool) = siteOf?(id, url) ?? (url?.host(), privateTabs.contains(id))
+        let site = site(of: id, url: url)
         shield.fit(controller, host: site.host, isPrivate: site.isPrivate)
+    }
+
+    private func site(of id: Tab.ID, url: URL?) -> (host: String?, isPrivate: Bool) {
+        siteOf?(id, url) ?? (url?.host(), privateTabs.contains(id))
     }
 
     private func installRefresh(on view: WKWebView) {
@@ -1142,6 +1151,8 @@ final class WebPool: NSObject {
         // its scripts here cannot remove scripts from another pooled page.
         let controller = view.configuration.userContentController
         controller.removeAllUserScripts()
+        shield?.scriptsRemoved(from: controller)
+        WebsiteDarkening.reinstall(in: controller, fixturesEnabled: fixturesEnabled)
         controller.removeScriptMessageHandler(forName: "yabPage")
         controller.add(WeakMessages(self), name: "yabPage")
         controller.addUserScript(WKUserScript(source: Self.reporter, injectionTime: .atDocumentEnd, forMainFrameOnly: true))

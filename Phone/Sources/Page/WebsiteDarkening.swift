@@ -9,7 +9,7 @@ enum WebsiteDarkening {
     private static let message = "yabWebsiteDarkening"
 
     private static let engine = resource("darkreader")
-    private static let proxy = resource("darkreader-proxy")
+    static let proxy = resource("darkreader-proxy")
     static var resourcesAvailable: Bool { !engine.isEmpty && !proxy.isEmpty }
 
     private static func resource(_ name: String) -> String {
@@ -27,6 +27,13 @@ enum WebsiteDarkening {
                                              injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
         let bootstrap = source.replacingOccurrences(of: "__YAB_FIXTURES__", with: fixturesEnabled ? "true" : "false")
         controller.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
+    }
+
+    /// Back on a controller whose scripts were all taken off, its handler
+    /// still there (WebPool.adopt): WebKit refuses a second of one name.
+    static func reinstall(in controller: WKUserContentController, fixturesEnabled: Bool = false) {
+        controller.removeScriptMessageHandler(forName: message, contentWorld: world)
+        install(in: controller, fixturesEnabled: fixturesEnabled)
     }
 
     static func update(enabled: Bool) -> String {

@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>t3-blank-redirect</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t3-blank-redirect",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+function run(){if(ran)return;ran=true;let w=null;
+ try{w=window.open("");if(w){w.document.open();w.document.writeln("<meta name=referrer content=no-referrer><script>window.location=\"ad-landing.html\"<\/script>");w.document.close()}}catch(e){F.detail=String(e)}
+ F.effect.noWindow=(w===null);F.kept.pageStillAlive=true;finish()}
+document.addEventListener("click",run);setTimeout(run,100);
+</script>

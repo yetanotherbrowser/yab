@@ -324,14 +324,12 @@ final class FiltersTests: XCTestCase {
     }
 
     func testProceduralCosmeticsAreLeftOut() {
-        skipped("example.com##+js(set-constant, ads, false)")
         skipped("example.com##div:has-text(Sponsored)")
         skipped("example.com##.x:upward(2)")
         skipped("example.com##.x:style(display: none !important)")
         skipped("example.com#?#.x:-abp-has(.ad)")
         skipped("example.com#$#.x { display: none }")
         skipped("example.com##^script:has-text(ads)")
-        skipped("example.*##.ad")
         // Standard CSS is kept, :has() included.
         XCTAssertNotNil(one("example.com##article:has(> .ad)"))
     }
@@ -493,6 +491,31 @@ final class FiltersTests: XCTestCase {
         XCTAssertNil(Filters.lists(Filters.convert(["||x.example^$3p", "@@||c.example^$script"] + two), perList: 8))
     }
 
+    /// The iPhone's split test input (Phone/Tests/ShieldTests.swift), on
+    /// the Mac: a whole site with no kinds is two rules (loads, and pages in
+    /// frames), so 2 500 sites fill the cap with blocking and the generic
+    /// hiding is what is left out; a cap with room keeps it, lists of its own.
+    func testManySitesFillTheCapBeforeGenericHiding() throws {
+        let texts = [(0..<2_500).map { "||ad\($0).example.com^" }.joined(separator: "\n"),
+                     (0..<10).map { "@@||ok\($0).example.com^$script" }.joined(separator: "\n"),
+                     (0..<1_500).map { "##.promo-\($0)" }.joined(separator: "\n")]
+        let rules = Filters.convert([ShieldLists.base] + texts)
+        XCTAssertEqual(rules.skipped, 0)
+        XCTAssertEqual(rules.generic.count, 1_509)
+        let full = try XCTUnwrap(Filters.lists(rules, perList: 1_000, cap: 6_000))
+        XCTAssertEqual(full.lists.count, 6)
+        XCTAssertEqual(full.hiding, 0)
+        XCTAssertEqual(full.left, 1_509)
+        let room = try XCTUnwrap(Filters.lists(rules, perList: 1_000, cap: 12_000))
+        XCTAssertEqual(room.lists.map { parsed($0).count }, [1_000, 1_000, 1_000, 1_000, 1_000, 153, 1_000, 509])
+        XCTAssertEqual(room.hiding, 2)
+        XCTAssertEqual(room.left, 0)
+        for list in room.lists.prefix(6) {
+            XCTAssertEqual(Array(actions(list).suffix(rules.exceptions.count)), Array(repeating: "ignore-previous-rules", count: rules.exceptions.count))
+        }
+        for list in room.lists.suffix(2) { XCTAssertEqual(Set(actions(list)), ["css-display-none"]) }
+    }
+
     // MARK: WebKit
 
     /// Every shape above, compiled: one url-filter WebKit can't read, or
@@ -547,6 +570,8 @@ final class FiltersTests: XCTestCase {
               + "\(rules.important.count) important, \(rules.generic.count) generic hiding, \(rules.unhide.count) unhide), "
               + "\(rules.skipped) lines skipped, \(split.left) left over the cap, \(split.lists.count) lists, "
               + "converted in \(Int((t1 - t0) * 1000)) ms, compiled in \(Int((CFAbsoluteTimeGetCurrent() - t1) * 1000)) ms")
+        print("dropped, most first: " + rules.dropped.sorted { $0.value > $1.value }.prefix(15).map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+        print("scriptlets: \(rules.scriptlets.calls.count) calls, \(rules.scriptlets.hosts.count) keys, table \(rules.scriptlets.table().utf8.count) bytes")
     }
 
     @MainActor
@@ -655,6 +680,26 @@ final class FiltersTests: XCTestCase {
 
         _ = try open(server, "/click", with: try compile(["||127.0.0.1^$doc"]), settle: 2)
         XCTAssertFalse(server.paths.contains("/click"), "$doc no longer stops the page")
+    }
+
+    /// WebKit takes if-top-url beside if-domain in one list, and each still
+    /// acts: an entity's network rules ($domain=name.*) could be said by
+    /// the page's address this way.
+    @MainActor
+    func testTopURLBesideDomainsInOneList() throws {
+        let server = try Server()
+        defer { server.stop() }
+        server.pages["/page"] = #"<img src="/a.png"><img src="/b.png"><img src="/c.png"><img src="/plain.png">"#
+        let list = "[" + [
+            #"{"trigger":{"url-filter":"/a\\.png","if-domain":["*127.0.0.1"]},"action":{"type":"block"}}"#,
+            #"{"trigger":{"url-filter":"/b\\.png","if-top-url":["^http://127\\.0\\.0\\.1:[0-9]+/page"]},"action":{"type":"block"}}"#,
+            #"{"trigger":{"url-filter":"/c\\.png","if-top-url":["^https://elsewhere\\.example/"]},"action":{"type":"block"}}"#,
+        ].joined(separator: ",") + "]"
+        _ = try open(server, "/page", with: [try compile(list)])
+        XCTAssertFalse(server.paths.contains("/a.png"), "if-domain stopped acting beside if-top-url")
+        XCTAssertFalse(server.paths.contains("/b.png"), "if-top-url stopped acting beside if-domain")
+        XCTAssertTrue(server.paths.contains("/c.png"))
+        XCTAssertTrue(server.paths.contains("/plain.png"))
     }
 
     /// What is hidden on a page at 127.0.0.1 under these lines.

@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>s5-aeld</title>
+<!-- rule: fixture.test##+js(aeld, /^(click|mousedown)$/, popunder) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s5-aeld",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+const hits={};const t=document.getElementById("go");
+t.addEventListener("click",function popunder(){hits.clickPop=1});
+t.addEventListener("mousedown",()=>{hits.mdPop=1;/*popunder*/});
+t.addEventListener("click",function fine(){hits.clickFine=1});
+t.addEventListener("keydown",function popunder(){hits.keyPop=1});
+for(const type of ["click","mousedown","keydown"])t.dispatchEvent(type==="keydown"?new KeyboardEvent(type,{bubbles:true}):new MouseEvent(type,{bubbles:true}));
+F.effect.clickPopDefused=!hits.clickPop;
+F.effect.mousedownPopDefused=!hits.mdPop;
+F.kept.otherHandlerRuns=!!hits.clickFine;
+F.kept.otherEventTypeRuns=!!hits.keyPop;
+F.kept.nativeLooking=Function.prototype.toString.call(EventTarget.prototype.addEventListener).includes("[native code]");
+finish();</script>

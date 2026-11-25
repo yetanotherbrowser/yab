@@ -24,6 +24,17 @@ import Testing
         #expect(ShieldRules.site(".*") == nil)
     }
 
+    // The helper looks a hiding rule up by its site's name: an entity has
+    // none, so it is left out and counted rather than kept under a pattern.
+    @Test func anEntitysHidingRuleIsLeftOut() {
+        #expect(ShieldRules.site(Filters.onEntity("popups")) == nil)
+        let made = ShieldRules.text(Filters.convert(["popups.*###dontfoid\nexample.org##.banner\n"]))
+        let lines = made.text.split(separator: "\n").map(String.init)
+        #expect(lines.contains("H\texample.org\t.banner"))
+        #expect(!lines.contains { $0.hasPrefix("H\tpopups") })
+        #expect(made.left == 1)
+    }
+
     @Test func theFileKeepsEveryKindOfRule() {
         let rules = Filters.convert(["||ads.example.com^$script,third-party\n@@||good.example.com^\nexample.org##.banner\n##.ad-slot\n~spare.com##.sometimes\n@@||nohide.test^$generichide\n"])
         let made = ShieldRules.text(rules)

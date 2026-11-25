@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>s7a-nowoif-all</title>
+<!-- rule: fixture.test##+js(nowoif) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s7a-nowoif-all",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+let w="unset";try{w=window.open("https://ads.example/x")}catch(e){w="threw"}
+F.effect.returnsNull=(w===null);
+F.kept.nativeLooking=Function.prototype.toString.call(window.open).includes("[native code]");
+try{w&&w.close&&w.close()}catch(_){}
+finish();</script>

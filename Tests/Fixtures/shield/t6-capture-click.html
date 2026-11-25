@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>t6-capture-click</title>
+<!-- rule: fixture.test##+js(aeld, click, popFired) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"t6-capture-click",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+window.addEventListener("click",function popFired(e){e.stopImmediatePropagation();window.__popFired=true;try{window.open("about:blank")}catch(_){}},true);
+function run(){if(ran)return;ran=true;let seen=false;
+ document.getElementById("go").addEventListener("click",()=>{seen=true});
+ document.getElementById("go").dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));
+ F.effect.captureListenerInert=!window.__popFired;F.kept.otherListenersWork=seen||!!window.__popFired;finish()}
+setTimeout(run,100);
+</script>

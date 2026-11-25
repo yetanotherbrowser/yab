@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>s2-aopw</title>
+<!-- rule: fixture.test##+js(aopw, adbDetected) -->
+<body><button id="go">go</button>
+<script>
+const F=window.__yabFixture={name:"s2-aopw",state:"pending",collateral:"pending",effect:{},kept:{}};
+let ran=false;function finish(){F.state=Object.values(F.effect).every(Boolean)?"blocked":"leaked";F.collateral=Object.values(F.kept).every(Boolean)?"ok":"broken";document.title=F.state+"/"+F.collateral;}
+</script>
+<script>
+let threw=null;try{window.adbDetected=true}catch(e){threw=e.name}
+F.effect.writeThrowsReferenceError=(threw==="ReferenceError");
+F.effect.valueNotStored=(window.adbDetected!==true);
+F.kept.readOk=(()=>{try{void window.adbDetected;return true}catch(_){return false}})();
+F.kept.otherWriteOk=(()=>{try{window.other1=1;return window.other1===1}catch(_){return false}})();
+finish();</script>
