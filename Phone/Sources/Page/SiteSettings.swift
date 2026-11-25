@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import WebKit
 
 /// What Yab remembers about a site, as the Mac's Site Controls do: its page
@@ -47,9 +48,15 @@ final class SiteSettings {
         }
     }
 
+    /// Which version of a site is asked for. `automatic` is the device's
+    /// own default: WebKit's recommended on an iPad, mobile on an iPhone.
+    enum Version: String, Codable, Sendable {
+        case automatic, desktop, mobile
+    }
+
     struct Site: Codable, Equatable, Sendable {
         var zoom: Double = 1
-        var desktop = false
+        var version: Version = .automatic
         var permissions: [Permission: Decision] = [:]
         /// Block Ads and Trackers for this site, said here; nil follows
         /// the Mac's sites and the switch in Settings (Shield).
@@ -58,7 +65,41 @@ final class SiteSettings {
         /// "pt") are translated as they load (Page/PageTranslation).
         var translates: String?
 
-        var isEmpty: Bool { abs(zoom - 1) < 0.001 && !desktop && permissions.isEmpty && blocksAds == nil && translates == nil }
+        var isEmpty: Bool {
+            abs(zoom - 1) < 0.001 && version == .automatic && permissions.isEmpty && blocksAds == nil && translates == nil
+        }
+
+        init() {}
+
+        private enum CodingKeys: String, CodingKey {
+            case zoom, version, permissions, blocksAds, translates
+            /// Before `version`: `desktop` true, or (an iPad's) `mobile` true.
+            case desktop, mobile
+        }
+
+        init(from decoder: Decoder) throws {
+            let saved = try decoder.container(keyedBy: CodingKeys.self)
+            zoom = try saved.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
+            permissions = try saved.decodeIfPresent([Permission: Decision].self, forKey: .permissions) ?? [:]
+            blocksAds = try saved.decodeIfPresent(Bool.self, forKey: .blocksAds)
+            translates = try saved.decodeIfPresent(String.self, forKey: .translates)
+            if let version = try saved.decodeIfPresent(Version.self, forKey: .version) {
+                self.version = version
+            } else if try saved.decodeIfPresent(Bool.self, forKey: .mobile) == true {
+                version = .mobile
+            } else if try saved.decodeIfPresent(Bool.self, forKey: .desktop) == true {
+                version = .desktop
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var out = encoder.container(keyedBy: CodingKeys.self)
+            try out.encode(zoom, forKey: .zoom)
+            try out.encode(version, forKey: .version)
+            try out.encode(permissions, forKey: .permissions)
+            try out.encodeIfPresent(blocksAds, forKey: .blocksAds)
+            try out.encodeIfPresent(translates, forKey: .translates)
+        }
     }
 
     /// The prototype's steps: 10 % at a time up to 200 %, then larger.
@@ -69,9 +110,14 @@ final class SiteSettings {
     private let defaults: UserDefaults?
     private static let key = "yab.siteSettings"
 
+    /// Safari's default: an iPad asks every site for its desktop version, an
+    /// iPhone for its mobile one. A site's own choice turns it the other way.
+    var prefersDesktop: Bool
+
     /// `defaults` nil: nothing outlives the app (test worlds).
-    init(defaults: UserDefaults? = .standard) {
+    init(defaults: UserDefaults? = .standard, prefersDesktop: Bool? = nil) {
         self.defaults = defaults
+        self.prefersDesktop = prefersDesktop ?? Self.devicePrefersDesktop
         if let data = defaults?.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode([String: Site].self, from: data) {
             sites = saved
@@ -124,11 +170,42 @@ final class SiteSettings {
 
     // MARK: - desktop site
 
-    func desktop(_ host: String?, isPrivate: Bool) -> Bool { site(host, isPrivate: isPrivate).desktop }
+    func version(_ host: String?, isPrivate: Bool) -> Version { site(host, isPrivate: isPrivate).version }
 
-    func setDesktop(_ desktop: Bool, for host: String?, isPrivate: Bool) {
-        edit(host, isPrivate: isPrivate) { $0.desktop = desktop }
+    func setVersion(_ version: Version, for host: String?, isPrivate: Bool) {
+        edit(host, isPrivate: isPrivate) { $0.version = version }
     }
+
+    /// The switch in the menus: on unless the site is asked for as a mobile one.
+    func desktop(_ host: String?, isPrivate: Bool) -> Bool {
+        contentMode(host, isPrivate: isPrivate) != .mobile
+    }
+
+    /// An iPhone's switch turned back to mobile forgets the choice. An
+    /// iPad's default is WebKit's recommended mode, mobile in a narrow pane,
+    /// so a desktop asked for there is kept as desktop.
+    func setDesktop(_ desktop: Bool, for host: String?, isPrivate: Bool) {
+        let asked: Version = desktop ? .desktop : .mobile
+        setVersion(!desktop && !prefersDesktop ? .automatic : asked, for: host, isPrivate: isPrivate)
+    }
+
+    /// What WebKit is asked for: the one place the choice is read. An iPad
+    /// left alone gets Safari's own choice, `.recommended`: desktop at full
+    /// width, mobile in a narrow window.
+    func contentMode(_ host: String?, isPrivate: Bool) -> WKWebpagePreferences.ContentMode {
+        switch version(host, isPrivate: isPrivate) {
+        case .desktop: .desktop
+        case .mobile: .mobile
+        case .automatic: Self.defaultContentMode(prefersDesktop: prefersDesktop)
+        }
+    }
+
+    static func defaultContentMode(prefersDesktop: Bool) -> WKWebpagePreferences.ContentMode {
+        prefersDesktop ? .recommended : .mobile
+    }
+
+    /// Safari's default for this device: an iPad prefers desktop sites.
+    static var devicePrefersDesktop: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     // MARK: - the ad blocker
 

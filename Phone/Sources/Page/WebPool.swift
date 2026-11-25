@@ -66,6 +66,8 @@ final class WebPool: NSObject {
     private var activeNavigations: [Tab.ID: WKNavigation] = [:]
     private var documents: [Tab.ID: UUID] = [:]
     private var committedURLs: [Tab.ID: URL] = [:]
+    /// Each page as it committed: the desktop site or the mobile one (PageState.desktop).
+    private var committedDesktop: [Tab.ID: Bool] = [:]
     /// Tabs whose navigation has started and neither committed nor failed.
     /// When one fails, WebKit puts the old address back on the view before
     /// it says so; that is no navigation to the old page.
@@ -192,6 +194,9 @@ final class WebPool: NSObject {
         var readerAvailable = false
         var readerEnabled = false
         var failure: PageLoadFailure?
+        /// The page committed as the desktop site (WebKit's effective mode),
+        /// nil before a page has.
+        var desktop: Bool?
         static let idle = PageState()
     }
     var onState: ((Tab.ID, PageState) -> Void)?
@@ -219,7 +224,7 @@ final class WebPool: NSObject {
         // WebKit's player offers Picture in Picture, inline video too, and a
         // playing video goes on in it with Yab away (PagePlayback).
         configuration.allowsPictureInPictureMediaPlayback = true
-        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        configuration.defaultWebpagePreferences.preferredContentMode = SiteSettings.defaultContentMode(prefersDesktop: SiteSettings.devicePrefersDesktop)
         // Every page zooms with two fingers, paying no mind to a page's
         // user-scalable=no or maximum-scale: Google Images'
         // viewer says both, so its picture could not be pinched larger.
@@ -1040,7 +1045,7 @@ final class WebPool: NSObject {
         popupOpeners[id] = nil
         downloadOrigins[id] = nil; downloadConversions[id] = nil
         if javaScriptDialog?.tab == id || httpAuthentication?.tab == id { suspendPageDialogs() }
-        activeNavigations[id] = nil; documents[id] = nil; committedURLs[id] = nil; loadFailures[id] = nil
+        activeNavigations[id] = nil; documents[id] = nil; committedURLs[id] = nil; committedDesktop[id] = nil; loadFailures[id] = nil
         provisional.remove(id)
         endRefresh(id, in: view)
         view.scrollView.refreshControl?.removeTarget(self, action: #selector(pulledToRefresh(_:)), for: .valueChanged)
@@ -1361,7 +1366,7 @@ final class WebPool: NSObject {
             canGoForward: view.canGoForward || ((history?.index ?? 0) + 1 < (history?.entries.count ?? 0)),
             readerAvailable: !view.isLoading && loadFailures[id] == nil && reader?.available == true,
             readerEnabled: !view.isLoading && loadFailures[id] == nil && reader?.enabled == true,
-            failure: loadFailures[id])
+            failure: loadFailures[id], desktop: committedDesktop[id])
         guard pageStates[id] != state else { return }
         pageStates[id] = state
         onState?(id, state)
@@ -1967,6 +1972,7 @@ extension WebPool: WKNavigationDelegate {
         failures[id] = nil
         loadFailures[id] = nil
         committedURLs[id] = webView.url
+        committedDesktop[id] = navigation.effectiveContentMode == .desktop
         readerScroll[id] = nil
         readerGeneration[id] = UUID()
         readerDocuments[id] = nil
@@ -2094,7 +2100,7 @@ extension WebPool: WKNavigationDelegate {
         let policy = await decidePolicy(webView, for: action)
         // Request Desktop Site, remembered per site (SiteSettings).
         if policy == .allow, action.targetFrame?.isMainFrame == true, let id = tabsByView[ObjectIdentifier(webView)] {
-            preferences.preferredContentMode = desktop(id, url: action.request.url) ? .desktop : .mobile
+            preferences.preferredContentMode = contentMode(id, url: action.request.url)
             // And the blocker, on or off for where it is going.
             fitShield(webView.configuration.userContentController, for: id, url: action.request.url)
         }

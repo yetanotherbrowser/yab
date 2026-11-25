@@ -86,10 +86,12 @@ final class TabletWorkspaceUITests: XCTestCase {
         try picture("ipad-site-blocker-off")
         blocker.tap()
         XCTAssertTrue(wait { (blocker.value as? String) == "On" })
+        // An iPad asks for desktop sites, as Safari does; the switch asks for this one's mobile site.
         let desktop = app.buttons["site.desktop.toggle"]
+        XCTAssertEqual(desktop.value as? String, "On")
         desktop.tap()
-        XCTAssertTrue(wait { (desktop.value as? String) == "On" })
-        try picture("ipad-site-desktop-on")
+        XCTAssertTrue(wait { (desktop.value as? String) == "Off" })
+        try picture("ipad-site-desktop-off")
         app.buttons["site.zoom.in"].tap()
         XCTAssertTrue(wait { (self.app.buttons["site.zoom.reset"].value as? String) == "110%" })
         app.buttons["site.zoom.reset"].tap()

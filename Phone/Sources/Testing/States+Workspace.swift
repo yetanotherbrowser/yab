@@ -26,6 +26,19 @@ extension StateCatalog {
             _ = app.pages.activate(second)
         },
         NamedState("workspace.single", "Full spread", "Opening a wide window does not create a second page.") { _ in },
+        NamedState("tablet.site.desktop", "iPad: desktop site", "Site Controls: Desktop site On, as every site is on an iPad until it is asked for as a mobile one.") { app in
+            openSiteControls(app)
+        },
+        NamedState("tablet.site.mobile", "iPad: mobile site", "Site Controls for a site asked for as a mobile one: Desktop site Off, the page in its phone layout.") { app in
+            if let tab = app.browser.tab {
+                app.siteSettings.setVersion(.mobile, for: app.siteHost(of: tab), isPrivate: false)
+                // The page again, as the switch would: it is the phone layout, as it says.
+                _ = app.pages.activate(tab)
+                app.pages.reload(tab.id)
+                await app.pages.waitUntilPainted(tab.id, timeout: .seconds(12))
+            }
+            openSiteControls(app)
+        },
         NamedState("workspace.two", "Two pages", "Two real pooled pages; the second one owns the controls.") { app in
             guard let current = app.browser.tab,
                   let other = app.browser.space.allTabs.first(where: { $0.id != current.id && !$0.isMail }) else { return }
@@ -229,5 +242,14 @@ private final class DuoRetirementProbe: NSObject {
                 try? data.write(to: folder.appendingPathComponent("duo-retirement.json"), options: .atomic)
             }
         }
+    }
+}
+
+extension StateCatalog {
+    /// Site Controls in its popover, as its door in the toolbar opens it.
+    @MainActor static func openSiteControls(_ app: AppModel) {
+        app.openPageMenu()
+        app.pageMenu.shown = true
+        app.pageMenu.page = .site
     }
 }

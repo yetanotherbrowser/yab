@@ -61,6 +61,7 @@ final class PageMenuTests: XCTestCase {
     }
 
     func testRequestDesktopSiteTogglesForTheSite() throws {
+        app.siteSettings.prefersDesktop = false
         XCTAssertFalse(app.pageIsDesktop)
         app.pageMenuDesktop()
         XCTAssertTrue(app.pageIsDesktop)
@@ -68,6 +69,95 @@ final class PageMenuTests: XCTestCase {
         app.pageMenuDesktop()
         XCTAssertFalse(app.pageIsDesktop, "Request Mobile Site takes it back")
         XCTAssertFalse(app.siteSettings.desktop("figma.com", isPrivate: false))
+    }
+
+    /// An iPad left to its own choice gets Safari's: mobile in a narrow pane.
+    /// The switch reads that page, not the choice: Off, and its first tap
+    /// asks for the desktop site, rather than for the mobile one it shows.
+    func testTheDesktopSwitchReadsANarrowPanesMobilePage() async throws {
+        app.siteSettings.prefersDesktop = true
+        let tab = try XCTUnwrap(app.browser.tab)
+        let host = app.siteHost(of: tab)
+        XCTAssertEqual(app.siteSettings.version(host, isPrivate: false), .automatic)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let view = app.pages.activate(tab)
+        view.frame = window.bounds
+        window.addSubview(view)
+        await app.pages.waitUntilPainted(tab.id)
+        let end = Date().addingTimeInterval(10)
+        while app.pages.state(for: tab.id).isLoading, Date() < end { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(app.pageIsDesktop, "a narrow pane's page is the mobile site")
+        app.pageMenuDesktop()
+        XCTAssertEqual(app.siteSettings.version(host, isPrivate: false), .desktop, "the first tap asks for the desktop site")
+        XCTAssertTrue(app.pageIsDesktop)
+    }
+
+    /// As Safari on iPad: desktop sites unless a site is asked for as a mobile one.
+    func testAnIPadAsksForDesktopSitesUnlessTold() throws {
+        let settings = SiteSettings(defaults: nil, prefersDesktop: true)
+        XCTAssertTrue(settings.desktop("google.com", isPrivate: false))
+        XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .recommended)
+        settings.setDesktop(false, for: "google.com", isPrivate: false)
+        XCTAssertFalse(settings.desktop("google.com", isPrivate: false))
+        XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .mobile)
+        XCTAssertTrue(settings.desktop("figma.com", isPrivate: false), "only that site")
+        settings.setDesktop(true, for: "google.com", isPrivate: false)
+        XCTAssertTrue(settings.desktop("google.com", isPrivate: false))
+        // Asked for, it is the desktop site even in a pane narrow enough
+        // for WebKit's recommended mode to choose the mobile one.
+        XCTAssertEqual(settings.version("google.com", isPrivate: false), .desktop)
+        XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .desktop)
+        XCTAssertEqual(settings.contentMode("figma.com", isPrivate: false), .recommended, "a site never asked stays WebKit's")
+
+        let phone = SiteSettings(defaults: nil, prefersDesktop: false)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .mobile)
+        phone.setDesktop(true, for: "google.com", isPrivate: false)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .desktop)
+        phone.setDesktop(false, for: "google.com", isPrivate: false)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .mobile)
+        XCTAssertTrue(phone.site("google.com", isPrivate: false).isEmpty, "an iPhone's mobile is its default, nothing kept")
+    }
+
+    /// One choice per site, default, desktop or mobile: each device reads it
+    /// against its own default (iPad: WebKit's recommended, iPhone: mobile).
+    func testASiteIsAskedForByItsOneChoiceOnEachDevice() {
+        let pad = SiteSettings(defaults: nil, prefersDesktop: true)
+        let phone = SiteSettings(defaults: nil, prefersDesktop: false)
+        XCTAssertEqual(pad.version("google.com", isPrivate: false), .automatic)
+        XCTAssertEqual(pad.contentMode("google.com", isPrivate: false), .recommended)
+        XCTAssertEqual(phone.contentMode("google.com", isPrivate: false), .mobile)
+        for settings in [pad, phone] {
+            settings.setVersion(.mobile, for: "google.com", isPrivate: false)
+            XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .mobile)
+            XCTAssertFalse(settings.desktop("google.com", isPrivate: false))
+            settings.setVersion(.desktop, for: "google.com", isPrivate: false)
+            XCTAssertEqual(settings.contentMode("google.com", isPrivate: false), .desktop)
+            XCTAssertTrue(settings.desktop("google.com", isPrivate: false))
+        }
+    }
+
+    /// Settings saved before the one choice (`desktop`, `mobile`) load as it.
+    func testSavedDesktopAndMobileSitesLoadAsTheirChoice() throws {
+        let suite = "yab.tests.siteVersion.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let saved = #"""
+        {"figma.com": {"zoom": 1.2, "desktop": true, "permissions": []},
+         "google.com": {"zoom": 1, "desktop": false, "mobile": true, "permissions": []},
+         "linear.app": {"zoom": 1.1, "desktop": false, "permissions": []}}
+        """#
+        defaults.set(Data(saved.utf8), forKey: "yab.siteSettings")
+        let settings = SiteSettings(defaults: defaults, prefersDesktop: true)
+        XCTAssertEqual(settings.version("figma.com", isPrivate: false), .desktop)
+        XCTAssertEqual(settings.zoom("figma.com", isPrivate: false), 1.2, accuracy: 0.001)
+        XCTAssertEqual(settings.version("google.com", isPrivate: false), .mobile)
+        XCTAssertEqual(settings.version("linear.app", isPrivate: false), .automatic)
+        settings.setZoom(1.3, for: "figma.com", isPrivate: false)
+        let again = SiteSettings(defaults: defaults, prefersDesktop: true)
+        XCTAssertEqual(again.version("figma.com", isPrivate: false), .desktop, "saved again in the new shape")
+        XCTAssertEqual(again.version("google.com", isPrivate: false), .mobile)
     }
 
     func testWhatASiteAskedForIsSaidInAWordAndForgotten() {
