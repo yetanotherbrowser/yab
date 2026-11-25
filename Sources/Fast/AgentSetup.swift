@@ -570,25 +570,28 @@ enum AgentSetup {
         }
         if wanted("cursor"), found.cursor != nil || only != nil {
             if found.cursor == nil { troubles.append("Cursor isn't installed.") }
-            else { ProviderLaunchPermit.atomic {
-                if permits == nil || permits?["cursor"]?.valid == true { Store.settings.set(true, forKey: CursorRunner.connectionKey) }
-                else { troubles.append(ProviderConsent.refusal) }
-            } }
+            else if ProviderLaunchPermit.atomic({ permits == nil || permits?["cursor"]?.valid == true }) {
+                Store.settings.set(true, forKey: CursorRunner.connectionKey)
+            } else { troubles.append(ProviderConsent.refusal) }
         }
         if wanted("opencode"), found.opencode != nil || only != nil {
             if found.opencode == nil { troubles.append("OpenCode isn't installed.") }
-            else { ProviderLaunchPermit.atomic {
-                if permits == nil || permits?["opencode"]?.valid == true { Store.settings.set(true, forKey: OpenCodeRunner.connectionKey) }
-                else { troubles.append(ProviderConsent.refusal) }
-            } }
+            else if ProviderLaunchPermit.atomic({ permits == nil || permits?["opencode"]?.valid == true }) {
+                Store.settings.set(true, forKey: OpenCodeRunner.connectionKey)
+            } else { troubles.append(ProviderConsent.refusal) }
         }
         return troubles
     }
 
     static func remove(_ found: Shell.Found, only: Set<String>? = nil, disconnects: [String: ProviderDisconnectPermit]? = nil) async {
         func wanted(_ name: String) -> Bool { only?.contains(name) ?? true }
+        // The permit's say is taken under its lock; the work it lets through
+        // then runs outside it. A defaults write inside that lock tells
+        // SwiftUI to update on this task's thread, while the main thread
+        // updating its views wants the lock: the app deadlocked on Connect.
         func commit(_ cli: String, _ work: () -> Void) {
-            if let disconnects { _ = disconnects[cli]?.commit(work) } else { work() }
+            if let disconnects, disconnects[cli]?.valid != true { return }
+            work()
         }
         if wanted("claude"), disconnects == nil || disconnects?["claude"]?.valid == true {
             await removeClaude(found, disconnect: disconnects?["claude"])
