@@ -73,6 +73,7 @@
 #include "include/views/cef_window_delegate.h"
 #include "owncef_surface.h"
 #include "page_zoom.h"
+#include "touch_line.h"
 #include "accessibility_api.h"
 
 // The experimental callback is available only with matching patched CEF.
@@ -201,6 +202,8 @@ struct Tab {
   bool pinched = false;
   // The zoom the page is drawn at, as its renderer said (page_zoom.h).
   yabcore::PageZoomCache zoomRead;
+  // The page's one finger (input.send touch kinds), one event at a time (touch_line.h).
+  yabcore::TouchLine touch;
   // A page's own floating window. CEF always gives it Chrome's own Browser and
   // window, so it has no Views window and no compositor callback.
   bool documentPiP = false, documentPiPSized = false;
@@ -363,21 +366,26 @@ static void ReleaseScriptObjects(const std::string& id, NSString* session, NSArr
 // mode (Chrome's PDF viewer) that level is the viewer's and the page is not
 // drawn at it (page_zoom.h, #1906). Read once per document and level; while a
 // read is in flight later events wait behind it, so they keep their order.
-static void WithPageZoom(Tab& tab, NSString* request, std::function<void(double zoom, double pinch)> send) {
+// `failed`, if given, takes the error instead of the reply when the zoom can't be read.
+// `ordered` false: a read nothing waits behind and nothing keeps (a touch
+// start's: touch keeps no order with other input), so a pointer event reads
+// and waits as it would without it.
+static void WithPageZoom(Tab& tab, NSString* request, std::function<void(double zoom, double pinch)> send,
+                         std::function<void(NSString* error)> failed = nullptr, bool ordered = true) {
   double level = tab.browser->GetHost()->GetZoomLevel();
   uint64_t generation = tab.documentGeneration;
   if (!tab.pinched && tab.zoomRead.Usable(generation, level)) { send(tab.zoomRead.zoom, 1); return; }
-  tab.zoomRead.Ask(generation);
+  if (ordered) tab.zoomRead.Ask(generation);
   std::string tabID = tab.id;
   CDP(tab, @"Page.getLayoutMetrics", @{}, [=](NSDictionary* value, NSString* error) {
     auto live = tabs.find(tabID);
-    if (live != tabs.end()) live->second.zoomRead.Answered(generation);
-    if (error) { Reply(request, nil, error); return; }
+    if (ordered && live != tabs.end()) live->second.zoomRead.Answered(generation);
+    if (error) { if (failed) failed(error); else Reply(request, nil, error); return; }
     NSDictionary* viewport = [value[@"cssVisualViewport"] isKindOfClass:NSDictionary.class] ? value[@"cssVisualViewport"] : @{};
     double zoom = yabcore::PageZoomOr([viewport[@"zoom"] doubleValue], level);
     double pinch = viewport[@"scale"] ? [viewport[@"scale"] doubleValue] : 1;
-    if (!std::isfinite(pinch) || pinch <= 0) { Reply(request, nil, @"Invalid visual viewport scale"); return; }
-    if (live != tabs.end() && live->second.documentGeneration == generation) live->second.zoomRead.Keep(zoom, generation, level);
+    if (!std::isfinite(pinch) || pinch <= 0) { if (failed) failed(@"Invalid visual viewport scale"); else Reply(request, nil, @"Invalid visual viewport scale"); return; }
+    if (ordered && live != tabs.end() && live->second.documentGeneration == generation) live->second.zoomRead.Keep(zoom, generation, level);
     send(zoom, pinch);
   });
 }
@@ -882,6 +890,7 @@ static void Attach(CefRefPtr<CefBrowser> b, std::string profile, std::string pre
 #include "media.inc"
 #include "health.inc"
 #include "context_menu.inc"
+static void TouchPump(const std::string& tabID);
 #include "lifecycle.inc"
 #include "native_switch_group.inc"
 #include "html_load.inc"
@@ -1317,6 +1326,7 @@ class Client : public CefClient, public CefLifeSpanHandler, public CefLoadHandle
     // The CAContext belongs to the native window compositor, not this
     // renderer. Only its native reset callback invalidates the cached handle.
     // page.crash clears the client host; main-frame load rebinds that handle.
+    if (auto t = Find(b)) t->touch.Interrupt();
     if (auto t = Find(b)) { ++t->documentGeneration; t->rendererPID = 0; t->rendererBorn = 0; t->crashed = true; t->shedding = false; t->themeReady = false; t->worlds.clear(); t->contextNames.clear(); t->lastLayer = nil; if (!t->closing) Event(@"page.crash", t, @{@"status": @(status), @"code": @(code), @"message": Str(text)}); }
     CancelPending(b->GetIdentifier(), @"Renderer crashed");
   }
@@ -1693,6 +1703,85 @@ static void SadTabInput(Tab& tab, NSDictionary* p, NSString* request) {
   ((void (*)(id, SEL, NSEvent*))objc_msgSend)(target, selector, event);
   Reply(request);
 }
+// Whether Chromium's answer to a touch event with no point (a lift, or a
+// cancel of no step) proves it holds no contact (touch_line.h).
+static bool TouchReleased(NSString* error) {
+  if (!error) return true;
+  NSData* data = [error dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary* answer = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+  // The helper's own errors (the session gone, a timeout) are not JSON.
+  if (![answer isKindOfClass:NSDictionary.class]) return false;
+  return [answer[@"code"] isEqual:@(-32603)] || [S(answer, @"message") hasPrefix:@"Must send a TouchStart first"];
+}
+// The client heard of its touch request when the step joined the line, so a
+// touch failure is known only here: keep it in the helper log, as Reply does.
+static void TouchFailed(const char* what, NSString* error) {
+  fprintf(stderr, "YabCore touch %s: %s\n", what, [error substringToIndex:MIN(error.length, (NSUInteger)300)].UTF8String);
+}
+// One step of the finger to Chromium, or a cancel of no step. Its answer
+// decides the next step (TouchPump).
+static void TouchSend(Tab& tab, const ::yabcore::TouchStep& step) {
+  static NSString* const types[] = {@"touchStart", @"touchMove", @"touchEnd", @"touchCancel"};
+  const bool point = step.kind == ::yabcore::TouchKind::kStart || step.kind == ::yabcore::TouchKind::kMove;
+  const double scale = tab.touch.scale;
+  NSArray* points = point ? @[@{@"x": @(step.x / scale), @"y": @(step.y / scale)}] : @[];
+  const std::string tabID = tab.id;
+  auto browser = tab.browser;
+  NSString* type = types[static_cast<int>(step.kind)];
+  CDP(tab, @"Input.dispatchTouchEvent", @{@"type": type, @"touchPoints": points},
+      [=](NSDictionary*, NSString* error) {
+    if (error) TouchFailed(type.UTF8String, error);
+    auto live = tabs.find(tabID);
+    if (live == tabs.end() || live->second.browser != browser) return;
+    live->second.touch.Answered(step.kind, !error, !point && TouchReleased(error));
+    TouchPump(tabID);
+  });
+}
+// The tab's touch events, in order, each once the one before it is answered.
+// A step dispatched before the helper reads a reset or hide can still reach
+// the page, as a mouse event sent just before a hide can. Preventing that
+// race would require synchronous IPC.
+static void TouchPump(const std::string& tabID) {
+  using Next = ::yabcore::TouchLine::Next;
+  for (;;) {
+    auto found = tabs.find(tabID);
+    if (found == tabs.end()) return;
+    Tab& t = found->second;
+    ::yabcore::TouchStep step;
+    if (t.closing || t.crashed || !t.browser) { t.touch.Interrupt(); return; }
+    switch (t.touch.Decide(t.documentGeneration, step)) {
+      case Next::kWait: return;
+      case Next::kDrop: continue;
+      case Next::kRefuse:
+        TouchFailed("touchStart", @"Chromium may still hold the last touch");
+        continue;
+      case Next::kClear: TouchSend(t, {::yabcore::TouchKind::kCancel}); return;
+      case Next::kSend: TouchSend(t, step); return;
+      case Next::kPlace: {
+        auto browser = t.browser;
+        const uint64_t placement = t.touch.placement;
+        auto finish = [tabID, browser, placement](double scale, NSString* error) {
+          auto live = tabs.find(tabID);
+          if (live == tabs.end() || live->second.browser != browser) return;
+          Tab& tab = live->second;
+          if (!tab.touch.AcceptPlacement(placement, !tab.closing && !tab.crashed)) return;
+          if (!error) {
+            TouchSend(tab, tab.touch.Placed(tab.documentGeneration, scale));
+            return;
+          }
+          ::yabcore::TouchStep start;
+          tab.touch.NotPlaced(start);
+          TouchFailed("touchStart", error);
+          TouchPump(tabID);
+        };
+        WithPageZoom(t, nil, [=](double zoom, double pinch) {
+          finish(zoom * pinch, nil);
+        }, [=](NSString* error) { finish(0, error); }, false);
+        return;
+      }
+    }
+  }
+}
 static void Input(Tab& tab, NSDictionary* p, NSString* request, bool nativePopup = false) {
   if (tab.closing) { Reply(request, nil, @"Page input target is no longer live"); return; }
   if (tab.crashed && !nativePopup) { SadTabInput(tab, p, request); return; }
@@ -1868,6 +1957,29 @@ static void Input(Tab& tab, NSDictionary* p, NSString* request, bool nativePopup
       if (!host) { Reply(request, nil, @"Page input browser not ready"); return; }
       host->SendMouseMoveEvent(event, true);
     }
+  } else if (!nativePopup && [@[@"touchStart", @"touchMove", @"touchEnd", @"touchCancel"] containsObject:kind]) {
+    // A finger on a touch display (ChromiumPage+Touch.swift): Chromium's own
+    // touch events, so the page's touch handlers and touch-action decide, and
+    // Chromium's gesture detector scrolls and flings. As a pressed mouse it
+    // selected text instead (#711). End and cancel carry no points (CDP). Each kind
+    // names its gesture; a gesture whose document goes is cancelled. They
+    // wait in the tab's touch line, one at a time (touch_line.h, TouchPump),
+    // and each is answered as it joins the line: the client's input queued
+    // behind a touch never waits for Chromium's touch answers.
+    if (!host) { Reply(request, nil, @"Page input browser not ready"); return; }
+    const bool start = [kind isEqual:@"touchStart"];
+    if ([p[@"gesture"] doubleValue] < 1) { Reply(request, nil, @"Invalid touch input"); return; }
+    if (!tab.visible) { Reply(request); return; }
+    HealthInput(tab);
+    ::yabcore::TouchStep step;
+    step.kind = start ? ::yabcore::TouchKind::kStart : [kind isEqual:@"touchMove"] ? ::yabcore::TouchKind::kMove :
+                [kind isEqual:@"touchEnd"] ? ::yabcore::TouchKind::kEnd : ::yabcore::TouchKind::kCancel;
+    step.gesture = static_cast<uint64_t>([p[@"gesture"] doubleValue]);
+    step.x = x, step.y = y;
+    tab.touch.Add(step);
+    Reply(request);
+    TouchPump(tabID);
+    return;
   } else if (!nativePopup && tab.pointerLocked && IsPointerLockKind(kind)) {
     // The page holds the pointer: the event goes to its view, whole, and
     // Chrome's own code makes its movement (pointer_lock.inc).
@@ -1965,7 +2077,7 @@ static NSString* Validate(NSDictionary* p) {
   // separate bounded allowance; ordinary input strings keep their old limit.
   for (NSString* key in @[@"function", @"expression"])
     if (p[key] && (![p[key] isKindOfClass:NSString.class] || [p[key] lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 1024 * 1024)) return @"Invalid script source";
-  for (NSString* key in @[@"width", @"height", @"scale", @"x", @"y", @"deltaX", @"deltaY", @"modifiers", @"keyCode", @"phase", @"momentumPhase", @"clickCount"])
+  for (NSString* key in @[@"width", @"height", @"scale", @"x", @"y", @"deltaX", @"deltaY", @"modifiers", @"keyCode", @"phase", @"momentumPhase", @"clickCount", @"gesture"])
     if (p[key] && (![p[key] isKindOfClass:NSNumber.class] || !std::isfinite([p[key] doubleValue]) || fabs([p[key] doubleValue]) > 1e15)) return @"Invalid numeric parameter";
   for (NSString* key in @[@"private", @"visible", @"enabled", @"accept", @"repeat", @"userGesture", @"muted", @"forward", @"allow"])
     if (p[key] && ![p[key] isKindOfClass:NSNumber.class]) return @"Invalid boolean parameter";
@@ -2185,11 +2297,19 @@ static void Request(NSDictionary* request) {
   if (NativeSwitchGroupRequest(method, p, id)) return;
   if (LifecycleBatchRequest(method, p, id)) return;
   auto found = tabs.find(Key(S(p, @"tab")));
-  if (found == tabs.end() || !found->second.browser || found->second.closing) { Reply(id, nil, @"Unknown or unready tab"); return; }
+  const bool resetTouch = [method isEqual:@"input.resetTouch"];
+  if (found == tabs.end() || !found->second.browser || (found->second.closing && !resetTouch)) { Reply(id, nil, @"Unknown or unready tab"); return; }
   Tab& t = found->second;
   if (IsReadTab(&t)) { Reply(id, nil, @"Task read pages require dedicated read.page transport"); return; }
   if (!t.adopted && ![@[@"tab.adopt", @"tab.close", @"tab.state"] containsObject:method]) {
     Reply(id, nil, @"Adopt this Chrome-created tab first"); return;
+  }
+  if (resetTouch) {
+    if ([p[@"gesture"] doubleValue] < 1) { Reply(id, nil, @"Invalid touch reset"); return; }
+    t.touch.ResetThrough([p[@"gesture"] unsignedLongLongValue]);
+    TouchPump(t.id);
+    Reply(id);
+    return;
   }
   auto b = t.browser;
   if ([method isEqual:@"tab.readiness"]) { Readiness(t, p, id); return; }
@@ -2381,7 +2501,12 @@ static void Request(NSDictionary* request) {
 #endif
   } else if ([method isEqual:@"tab.visible"]) {
     Mark("tab.visible", t.id);
+    const bool wasVisible = t.visible;
     t.visible = [p[@"visible"] boolValue];
+    if (wasVisible && !t.visible) {
+      t.touch.Interrupt();
+      TouchPump(t.id);
+    }
     // Hidden from the page only, the window being out of sight. Its picker may be what covers it.
     bool keep = [p[@"keep"] boolValue];
     // Shown again, or kept drawn: a hide held for a picture is not run after it.

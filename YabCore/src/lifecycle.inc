@@ -73,7 +73,12 @@ static void RecordCloseFinal(Tab& tab, NSDictionary* state) {
       member.final = true; member.closed = [state[@"closed"] boolValue];
       // A replacement native document remains a usable tab. An unknown
       // in-flight unload stays closing until a real final state arrives.
-      if (!member.closed) tab.closing = false;
+      if (!member.closed) {
+        tab.closing = false;
+        // Leave the native close callback before sending any touch cleanup.
+        const auto tabID = tab.id;
+        dispatch_async(dispatch_get_main_queue(), ^{ TouchPump(tabID); });
+      }
       ready.push_back(id);
     }
   }
@@ -211,7 +216,12 @@ static bool LifecycleBatchRequest(NSString* method, NSDictionary* p, NSString* r
   }
   const std::string id = Key(request);
   closeBatches.emplace(id, std::move(batch)); requests[id] = Now() + 240;
-  for (const auto& commit : commits) tabs.at(commit.tab).closing = true;
+  for (const auto& commit : commits) {
+    auto& tab = tabs.at(commit.tab);
+    tab.closing = true;
+    // The preceding client reset recorded which delayed steps to reject.
+    tab.touch.Interrupt();
+  }
   for (const auto& commit : commits) {
     if (commit.unresponsive) {
       ForceCloseUnresponsive(tabs.at(commit.tab));

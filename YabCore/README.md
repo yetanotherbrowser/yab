@@ -206,6 +206,44 @@ let title = try await core.evaluate(tab: tab, world: "agent",
 `input.send` coordinates are page points from the top-left. Mouse kinds:
 `mouseDown`, `mouseUp`, `mouseMove`, `mouseDrag`, `rightDown`, `rightUp`, `rightDrag`;
 fields `x`, `y`, optional `clickCount`, `modifiers` (NSEvent flag bits).
+Touch kinds, a finger on a touch display: `touchStart`, `touchMove` with `x`, `y`;
+`touchEnd`, `touchCancel` with no point. Each names its `gesture` (a number per
+gesture, at least 1). They go to CDP's `Input.dispatchTouchEvent`, so Chromium's
+own gesture detector scrolls and flings, and the page's touch handlers and
+`touch-action` decide. A touch kind is answered as soon as it joins the tab's touch line,
+before Chromium has seen it. What Chromium then refuses goes to the helper's
+log. Later mouse and wheel input wait behind a touch step waiting for a
+request slot, just as they wait behind a mouse move. Keys, resize and
+navigation wait on ChromiumPage's completion chain. That chain waits for
+the helper's enqueue reply to a touch, which precedes Chromium's answer.
+These waits under transport saturation are the same as for mouse moves.
+The line sends a tab's touch kinds in order, one at a time, each once Chromium
+has answered the one before it; moves waiting behind one merge into the
+latest. No order is kept with other input kinds: a `wheel` goes to the page's
+view at once, and a mouse kind never waits for a touch's zoom read. A kind acts
+only on its own gesture. A gesture stays on the document its `touchStart` went
+out on: once that document goes (a navigation commits, or the client asks
+for one), its next kind goes out as a `touchCancel` and the rest of it is not
+sent. A `touchStart` names no document, so one that
+waits in line while a page-initiated navigation commits goes to the new
+document, as a mouse press queued then does. The rest of a gesture whose start
+Chromium refused is not sent. Before a `touchStart`, a finger Chromium may
+still hold gets a `touchCancel`, and the start waits for its answer: it is not
+sent unless that answer shows the finger released. A finger is not left held
+once it is gone: a start that fails, or a `touchEnd` whose answer does not show
+the release, is followed at once by a `touchCancel`, and the lift of a gesture
+whose start failed or was not sent goes out as a `touchCancel` while Chromium
+may still hold a finger.
+Cancelling a gesture before dispatch drops its queued start and other steps.
+Hiding a tab drops every queued touch step and cancels any contact Chromium
+may still hold. When the view changes windows, is hidden, is retired, or
+starts a native close commit, ChromiumPage sends `input.resetTouch` with
+its last gesture number on the same socket, outside the page queue and
+request slot limit. It sends at most one reset per gesture. The helper
+rejects late steps at or below that number, including if native close
+retains the tab. A touch step dispatched before the helper reads a reset
+or hide can still reach the page, as a mouse event sent just before a hide
+can. A message-based reset cannot close that window without synchronous IPC.
 Keys: `keyDown`/`keyUp`, macOS `keyCode`, `characters`, `unmodified`, optional
 `repeat` and modifiers. `text` inserts committed Unicode through the page
 view's `NSTextInputClient`. `wheel` takes `deltaX`, `deltaY`, AppKit/CG scroll

@@ -103,7 +103,12 @@ final class Socket: @unchecked Sendable {
     private var scanned = 0
     private var output = Data()
     private var trackedWrites: [SocketWriteSpan] = []
-    private var parked: [(data: Data, queued: (@Sendable (Error?) -> Void)?)] = []
+    private struct ParkedWrite {
+        let data: Data
+        var queued: (@Sendable (Error?) -> Void)?
+        var touchReset: (tab: String, gesture: Int)?
+    }
+    private var parked: [ParkedWrite] = []
     private var frames: [Data] = []
     private var frameHead = 0, frameBytes = 0
     private var taker: CheckedContinuation<Data?, Error>?
@@ -187,11 +192,32 @@ final class Socket: @unchecked Sendable {
         queue.async { [self] in
             guard fd >= 0 else { queued?(YabCoreError.disconnected); return }
             guard data.count <= Self.limit else { queued?(YabCoreError.protocolViolation("Request too large")); return }
-            parked.append((data, queued)); admitParked(); writeReady()
+            parked.append(ParkedWrite(data: data, queued: queued))
+            writeReady()
+        }
+    }
+    func sendTouchReset(_ data: Data, tab: String, through gesture: Int) {
+        queue.async { [self] in
+            guard fd >= 0, data.count <= Self.limit else { return }
+            var wire = data
+            wire.append(10)
+            let frame = ParkedWrite(data: wire, touchReset: (tab, gesture))
+            if let index = parked.firstIndex(where: { $0.touchReset?.tab == tab }),
+               let previous = parked[index].touchReset {
+                guard gesture > previous.gesture else { return }
+                // The newer reset also retires the old gesture. Keep the old
+                // position so requests ordered after that reset still follow it.
+                parked[index] = frame
+            } else {
+                parked.append(frame)
+            }
+            writeReady()
         }
     }
     private func admitParked() {
-        while !parked.isEmpty, output.isEmpty || output.count + parked[0].data.count + 1 <= Self.writeWindow {
+        // Keep a reset replaceable until its first byte is written.
+        while let first = parked.first, first.touchReset == nil,
+              output.isEmpty || output.count + first.data.count + 1 <= Self.writeWindow {
             let frame = parked.removeFirst()
             output.append(frame.data); output.append(10)
             peakOutput = max(peakOutput, output.count)
@@ -329,18 +355,28 @@ final class Socket: @unchecked Sendable {
         guard let found else { scanned = input.count; return nil }
         return input.index(input.startIndex, offsetBy: found)
     }
+    private func writeBytes(_ data: Data) -> Int {
+        data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, min($0.count, maxWriteBatchBytes)) }
+    }
     private func writeReady() {
         guard fd >= 0 else { return }
-        while !output.isEmpty {
-            let n = output.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, min($0.count, maxWriteBatchBytes)) }
+        admitParked()
+        while !output.isEmpty || !parked.isEmpty {
+            let writingReset = output.isEmpty
+            let n = writeBytes(writingReset ? parked[0].data : output)
             if n > 0 {
-                // Account this exact write against EACH frame's own span. Older
-                // queued bytes can never count as this request's forwarding.
-                for index in trackedWrites.indices { trackedWrites[index].consumed(n) }
-                trackedWrites.removeAll { $0.ticket.snapshot().phase == .allWritten }
-                // Not removeFirst(n): on Data it only slices, so the storage kept every
-                // byte ever written, about 0.5 GB a minute while sharing a screen.
-                output.removeSubrange(output.startIndex ..< output.startIndex + n)
+                if writingReset {
+                    // Any unwritten tail now belongs to a frame on the wire.
+                    output.append(parked.removeFirst().data.dropFirst(n))
+                } else {
+                    // Account this exact write against EACH frame's own span. Older
+                    // queued bytes can never count as this request's forwarding.
+                    for index in trackedWrites.indices { trackedWrites[index].consumed(n) }
+                    trackedWrites.removeAll { $0.ticket.snapshot().phase == .allWritten }
+                    // Not removeFirst(n): on Data it only slices, so the storage kept every
+                    // byte ever written, about 0.5 GB a minute while sharing a screen.
+                    output.removeSubrange(output.startIndex ..< output.startIndex + n)
+                }
                 admitParked()
             }
             else if n < 0 && errno == EINTR { continue }

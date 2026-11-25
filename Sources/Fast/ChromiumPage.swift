@@ -44,6 +44,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     let fileRequests = PageFileRequests()
     let questionRequests = ChromiumQuestionRequests()
     let dragState = ChromiumDragState()
+    var touch = ChromiumTouchSequence()
     var topGrab = false {
         didSet { if !topGrab { topGrabPoint = nil } }
     }
@@ -275,6 +276,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         // as a WebKit link view does. A generic one-stage press cannot Peek.
         pressureConfiguration = NSPressureConfiguration(pressureBehavior: .primaryDeepClick)
         registerForDraggedTypes(Self.draggedTypes)
+        addTouchPan()
         scripts.page = self
         scripts.tab = tab
         wantsLayer = true
@@ -475,10 +477,12 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         let previousSubmission = inputSubmission ?? tail
         let previousCompletion = tail
         let epoch = operationEpoch
+        let gesture = fields["gesture"]?.number
         let reply = InputReply()
         let submission = Task { @MainActor [weak self] in
             await previousSubmission?.value
             guard let self, !retired, !Task.isCancelled, operationEpoch == epoch else { return }
+            if let gesture, gesture <= Double(touch.interruptedThrough) { return }
             do {
                 let (core, id) = try await endpoint()
                 guard operationEpoch == epoch, !retired, ChromiumProcess.shared.isCurrent(core) else { return }
@@ -491,6 +495,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                         guard let self, !retired, operationEpoch == epoch, ChromiumProcess.shared.isCurrent(core) else {
                             sent.resume(); return
                         }
+                        if let gesture, gesture <= Double(touch.interruptedThrough) { sent.resume(); return }
                         do { _ = try await core.sendInput(inputParams, submitted: { sent.resume() }) }
                         catch {
                             if !retired, operationEpoch == epoch { queuedOperationFailed(error, navigation: false, request: "input.send") }
@@ -836,6 +841,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         }
     }
     func retire(call: Bool, pictureInPicture: Bool) {
+        // The asynchronous tab.close can wait after we lose the remote ID.
+        touchInterrupted()
         invalidateOriginalPDFPresence(releasePeer: true)
         questionRequests.cancel()
         resetNativeTextInput()
@@ -1429,6 +1436,10 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     override func layout() { super.layout(); updateSurface() }
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); updateSurface() }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow { touchInterrupted() }
+        super.viewWillMove(toWindow: newWindow)
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil { recoverPage(); ChromiumDRMCookies.session(of: tab)?.pageChanged() }
@@ -1442,7 +1453,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         if accepted { DispatchQueue.main.async { [weak self] in self?.focusChanged() } }
         return accepted
     }
-    override func viewDidHide() { super.viewDidHide(); hoverLeft(); syncGeometry(); focusChanged() }
+    override func viewDidHide() { super.viewDidHide(); touchInterrupted(); hoverLeft(); syncGeometry(); focusChanged() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); scripts.appearanceChanged() }
     override func viewDidUnhide() {
         super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon()
@@ -1543,6 +1554,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     /// The window came into view or went out of it.
     func sightChanged() {
+        if windowCovered { touchInterrupted() }
         restoreSurfaceAttachment()
         syncGeometry()
         focusChanged()
@@ -2059,7 +2071,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) { lastInput = ProcessInfo.processInfo.systemUptime }
         if let tab = navigationTab, tab.builtPage === self, tab.deaf != nil,
            let browser = tab.delegate as? Browser { browser.reachedDeaf(tab) }
-        if ["mouseDown", "rightDown", "middleDown", "mouseDrag", "rightDrag", "wheel", "magnify", "smartMagnify", "keyDown", "text"].contains(kind) { pageCopyTurn &+= 1 }
+        if ["mouseDown", "rightDown", "middleDown", "mouseDrag", "rightDrag", "wheel", "touchStart", "touchMove", "magnify", "smartMagnify", "keyDown", "text"].contains(kind) { pageCopyTurn &+= 1 }
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) {
             RelayGuard.felt(self)
             AgentFeed.shared.person(self)
@@ -2100,12 +2112,15 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                     }
                 }
             }
-        } else if kind == "wheel" || ["mouseDown", "mouseUp", "mouseMove", "mouseDrag", "mouseLeave",
+        } else if kind == "wheel" || ChromiumTouchInput.kinds.contains(kind) || ["mouseDown", "mouseUp", "mouseMove", "mouseDrag", "mouseLeave",
                                      "rightDown", "rightUp", "rightDrag", "middleDown", "middleUp", "middleDrag"].contains(kind) {
             // Preserve wire order, including the original press, without a
             // renderer acknowledgement between every movement. CDP replies
             // after handling input; waiting for each one makes a fast drag
             // accumulate stale points and leaves selection behind the hand.
+            // Later mouse and wheel input wait behind a touch waiting for
+            // a request slot, as behind a mouse move. Keys and resize wait
+            // for the helper's reply on the completion chain.
             enqueueStreamingInput(p)
         }
         else { command("input.send", p) }
