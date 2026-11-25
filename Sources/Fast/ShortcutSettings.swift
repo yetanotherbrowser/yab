@@ -11,6 +11,7 @@ struct ShortcutsPage: View {
     @AppStorage(MailExperiment.key, store: Store.settings) private var mailExperiment = false
     @ObservedObject private var snippets = MailSnippets.shared
     @ObservedObject private var here = ExtensionsHere.shared
+    @AppStorage(SystemIntentsBridge.enabledKey, store: Store.settings) private var siri = false
 
     /// What a row of the list holds.
     private enum Cell {
@@ -26,12 +27,14 @@ struct ShortcutsPage: View {
     private enum Line: Identifiable {
         case head(String, first: Bool)
         case note(String)
+        case siri
         case row(id: String, Cell, first: Bool, last: Bool)
 
         var id: String {
             switch self {
             case .head(let title, _): return "head:" + title
             case .note(let words): return "note:" + words
+            case .siri: return "shortcuts-siri"
             case .row(let id, _, _, _): return id
             }
         }
@@ -44,9 +47,10 @@ struct ShortcutsPage: View {
         let visible = ShortcutFilter.visible(entries, search: selection.search, modifications: selection.modifications,
                                              categories: selection.chosen)
         let ids = Set(visible.map(\.id))
+        let filtered = !selection.search.isEmpty || !selection.modifications.isEmpty || !selection.chosen.isEmpty
         ThreadScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(lines(groups, ids: ids, none: visible.isEmpty)) { line in
+                ForEach(lines(groups, ids: ids, none: visible.isEmpty, siri: !filtered)) { line in
                     view(of: line)
                 }
             }
@@ -58,7 +62,7 @@ struct ShortcutsPage: View {
         .onChange(of: ShortcutFilter.counts(entries), initial: true) { _, counts in selection.counts = counts }
     }
 
-    private func lines(_ groups: [Shortcut.Group], ids: Set<String>, none: Bool) -> [Line] {
+    private func lines(_ groups: [Shortcut.Group], ids: Set<String>, none: Bool, siri: Bool) -> [Line] {
         var lines: [Line] = []
         func part(_ title: String?, _ cells: [(id: String, cell: Cell)]) {
             guard !cells.isEmpty else { return }
@@ -85,6 +89,7 @@ struct ShortcutsPage: View {
         }
         if !extensions.isEmpty { lines.append(.note("Aliases run commands from ⌘T. Hotkeys work while Yab is active.")) }
         core(groups.filter { $0.title.hasPrefix("Mail") })
+        if siri { lines.append(.siri) }
         if none { lines.append(.row(id: "none", .nothing, first: true, last: true)) }
         return lines
     }
@@ -101,6 +106,12 @@ struct ShortcutsPage: View {
             SettingsNote(words)
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
+        case .siri:
+            ShortcutCardRow(first: true, last: true) {
+                SettingsSwitch("Siri & App Intents", isOn: $siri)
+                    .settingsAnchor("shortcuts-siri")
+            }
+            .padding(.top, 24)
         case .row(let id, let cell, let first, let last):
             FormGroupRow(first: first, last: last) {
                 switch cell {
