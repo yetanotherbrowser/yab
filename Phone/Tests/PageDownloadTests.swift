@@ -424,6 +424,55 @@ final class PageDownloadTests: XCTestCase {
         }
     }
 
+    /// itch.io on iOS: a tap posts for the file's address, then window.open()s
+    /// it. The file is the opener's, and its empty window closes (#575).
+    func testAFileOpenedInANewWindowDownloadsForItsOpenerAndTheWindowCloses() async throws {
+        try await fileOpenedInWindow("window-direct")
+    }
+
+    func testAFileAddressFetchedBeforeOpeningDownloadsForItsOpener() async throws {
+        try await fileOpenedInWindow("window")
+    }
+
+    private func fileOpenedInWindow(_ button: String) async throws {
+        for privately in [false, true] {
+            let source = tab("download.window.\(privately)", privateMode: privately), view = try await ready(source)
+            // This suite checks the download handoff, not WebKit's gesture
+            // lifetime across fetch. Real popup gesture policy has its own tests.
+            view.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+            let history = try XCTUnwrap(pages.navigationState(for: source.id))
+            var opened: YabPhone.Tab?, closed: [(Tab.ID, Tab.ID)] = [], asked: [DownloadAsk] = []
+            var failures: [Tab.ID] = []
+            pages.onFailure = { id, _ in failures.append(id) }
+            pages.onOpenWindowFrom = { url, opener, isPrivate in
+                XCTAssertEqual(url.host(), "localhost"); XCTAssertEqual(opener, source.id); XCTAssertEqual(isPrivate, privately)
+                opened = self.tab("download.window.opened.\(privately)", "/file", privateMode: isPrivate)
+                return opened
+            }
+            pages.onCloseWindowFrom = { closed.append(($0, $1)) }
+            pages.onDownloadAsk = { asked.append($0); $1(true) }
+            let done = store.entries.filter(\.isDone).count
+            try await click(view, button)
+            try await require({ opened != nil }, "WebKit did not open the file window")
+            try await require { self.store.entries.filter(\.isDone).count == done + 1 }
+            let window = try XCTUnwrap(opened)
+            let file = try XCTUnwrap(store.entries.first)
+            XCTAssertEqual(try bytes(file), DownloadSite.bytes)
+            XCTAssertEqual(file.name, "Owned.txt"); XCTAssertEqual(file.host, "127.0.0.1"); XCTAssertEqual(file.isPrivate, privately)
+            XCTAssertEqual(asked.map(\.host), ["127.0.0.1"], "asked once, for the opener's site")
+            XCTAssertEqual(asked.first?.isPrivate, privately)
+            try await require { closed.count == 1 && !self.pages.isLive(window.id) }
+            XCTAssertEqual(closed.first?.0, window.id); XCTAssertEqual(closed.first?.1, source.id)
+            XCTAssertFalse(failures.contains(window.id), "the window turned into the file, it didn't fail")
+            XCTAssertTrue(pages.transfers.isEmpty)
+            XCTAssertEqual(view.url, site.url("/page"))
+            XCTAssertEqual(pages.navigationState(for: source.id)?.entries.map(\.url), history.entries.map(\.url))
+            if button == "window" { XCTAssertTrue(site.requests.contains { $0.target == "/link" }) }
+            shot("A file opened in a new window downloaded for its opener, private: \(privately)")
+            pages.forget(source.id)
+        }
+    }
+
     func testBackgroundWarmAndChildFrameCannotStartAFile() async throws {
         let selected = tab("download.front"), view = try await ready(selected)
         let background = tab("download.background", "/file")
@@ -554,7 +603,13 @@ private final class DownloadSite: @unchecked Sendable {
                 } else { self.send(headers + (self.fails ? Data(body.prefix(2)) : body), connection) }
                 return
             }
-            let body = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><link rel=icon href=data:,><title>Owned download source</title><style>body{font:20px system-ui;padding:70px 20px;background:#ddf4ff}a,button{display:block;padding:16px;margin:16px 0}</style><h1 id=part>Owned actual source</h1><a id=fragment href=#part>Actual fragment</a><a id=file href=/file>Download actual file</a><button id=touch onclick=\"window.actions=(window.actions||0)+1;document.getElementById('result').textContent='Page action '+window.actions\">Page action</button><output id=result>Ready</output>"
+            if target == "/link" {
+                let address = "http://localhost:\(self.listener.port!.rawValue)/file"
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: \(address.utf8.count)\r\nConnection: close\r\n\r\n\(address)"
+                self.send(Data(response.utf8), connection)
+                return
+            }
+            let body = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><link rel=icon href=data:,><title>Owned download source</title><style>body{font:20px system-ui;padding:70px 20px;background:#ddf4ff}a,button{display:block;padding:16px;margin:16px 0}</style><h1 id=part>Owned actual source</h1><a id=fragment href=#part>Actual fragment</a><a id=file href=/file>Download actual file</a><button id=window-direct onclick=\"window.open('http://localhost:\(self.listener.port!.rawValue)/file')\">Download directly in a new window</button><button id=window onclick=\"fetch('/link',{method:'POST'}).then(r=>r.text()).then(u=>window.open(u))\">Download in a new window</button><button id=touch onclick=\"window.actions=(window.actions||0)+1;document.getElementById('result').textContent='Page action '+window.actions\">Page action</button><output id=result>Ready</output>"
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
             self.send(Data(response.utf8), connection)
         }
