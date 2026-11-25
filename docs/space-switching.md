@@ -524,7 +524,7 @@ a wheel move with no gesture phase that is more sideways than up or down
 (shift with a clicking wheel counts as sideways) is the column's. Moves
 closer together than 65 ms are one push; a push turns one space when it has
 added up to 2 lines (a clicking wheel) or 10 points (a smooth one), and
-nothing more until a pause. The turn is `switchSpace`, a key's slide, never
+nothing more until a pause (changed in #822, below). The turn is `switchSpace`, a key's slide, never
 round past the ends. Up or down stays the rows' scroll and ends any push.
 
 The first probe runs turned the space over the pins, name, folder and foot
@@ -613,3 +613,58 @@ in by 85 to 130 ms; settled by 230 to 300 ms, as Dia (265 to 300).
 
 Not verified: a real trackpad (posted scroll events), hover in dark
 (the pointer state was not caught in that film).
+
+## #822: a mouse's side wheel skipped several spaces
+
+The reporter's mouse has a thumb wheel: one steady turn went two or three
+spaces, and only a turn of just the right size went one.
+
+**Cause.** A push ended at any gap longer than 65 ms, and every new push
+could turn the space again. A hand turning a wheel on leaves 80 to 150 ms
+between notches, so one turn was cut into several pushes, each of which
+added up to 2 lines or 10 points and turned a space.
+
+**Fix.** The 65 ms rule (`SpaceWheel.Rule.gather`) now holds only before
+the first turn, so a stray notch still turns nothing. Once the space has
+turned, the push goes on while moves come within 200 ms of each other
+(`quiet`), and it turns nothing for 250 ms (`hold`). Moves after that add
+up again for the next space, so turning on and on repeats the way a held
+key does: one space at once, then one per hold. A move the other way, or a
+pause longer than `quiet`, starts a new push that turns at once.
+`SpaceWheelTests` plays a hand's uneven turn, a long steady turn and the
+cases at the edges of each rule.
+
+## Two fingers sideways, then up or down: the old space scrolled
+
+Reported with the side-wheel fix: a swipe sideways over the column, halfway
+to the next space, that drifted up or down scrolled the rows of the space
+being left, and the column seemed stuck.
+
+**Cause.** The column's catch never took an event. Its monitor returned
+`self?.heard(event) ?? event`; optional chaining folds `heard`'s nil (the
+event taken) into the nil of a catch that is gone, and the `??` handed the
+event back. A debug build's log of two such swipes (`taken` false for all
+323 events the catch judged, 314 of them while it held the row of spaces)
+had 705 moves with fingers down and 188 of the glide after reach the rows'
+scroll view through the window's own dispatch. Sideways moves did nothing
+there; the drift up or down scrolled the rows.
+
+**Fix.** The monitor returns what `heard` returns. A sideways swipe's
+moves are the catch's alone, its drift with them, and so are the glide's
+after the fingers lift (`SwipeGlide`), until the glide ends or fingers come
+down again. A mouse's side buttons over the column now only turn the space,
+as their comment always said.
+
+**Its end.** With the catch really taking events, a swipe could reach the
+rows only in part. A began with no move in it (the bench's swipe and
+`hand.py`'s send one) goes on to the rows before the catch knows which way
+the fingers go, and their scroll view opens a gesture. When the moves after
+it went sideways the catch took them and the end too, and the rows were
+left in a gesture that never closed. Now the catch still takes a sideways
+began, which owes the rows nothing, but when the rows heard the began it
+hands them the swipe's end or cancel (`SwipeEnd`). The space turns as
+before: the catch acts on the end, then lets it through. The glide after
+stays held back (`SwipeGlide`). The row of spaces is let go once: the catch
+releases SpacePager before returning the end, and if SpacePager's monitor
+hears the end first, it only lets go later, after checking that the same
+swipe still holds the row (`SpacePager.parting`).

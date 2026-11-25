@@ -38,10 +38,19 @@ struct SpaceWheel {
         static let notches: Double = 2
         /// A smooth mouse's points a push adds up to before it turns.
         static let points: Double = 10
-        /// Moves further apart than this are pushes of their own: until
-        /// then, once the space has turned, the rest of the push turns
-        /// nothing more (Arc: five notches 30 ms apart went one space).
-        static let quiet: TimeInterval = 0.065
+        /// Before the first turn, moves further apart than this don't add
+        /// up: single notches far apart are bumps, not a push.
+        static let gather: TimeInterval = 0.065
+        /// Once the space has turned, the push goes on while its moves come
+        /// closer together than this. A hand turning a wheel on leaves 80
+        /// to 150 ms between notches, and with only `gather` to hold it,
+        /// every gap began a push of its own that turned the space again:
+        /// one steady turn went two or three spaces (#822).
+        static let quiet: TimeInterval = 0.2
+        /// After a turn, the push turns nothing more for this long; moves
+        /// after it add up again for the next space, as a held key repeats
+        /// after a pause.
+        static let hold: TimeInterval = 0.25
     }
 
     /// The sideways part of a move, negative toward the next space, or nil
@@ -56,12 +65,14 @@ struct SpaceWheel {
         return dx
     }
 
-    /// What the push has added up to, the way it has gone.
+    /// What the push has added up to since it began or last turned.
     private var sum: Double = 0
+    /// The way the push goes: the last move's sideways part.
+    private var way: Double = 0
     /// When the last move of the push came.
     private var last: TimeInterval = -.infinity
-    /// The push has turned the space already.
-    private var turned = false
+    /// When the push last turned the space, nil while it hasn't.
+    private var turned: TimeInterval?
 
     /// What a move does: 1 the next space, -1 the one before, 0 nothing.
     /// Nil when it isn't the wheel's to take (the rows' scroll); a 0 is
@@ -74,23 +85,28 @@ struct SpaceWheel {
             return nil
         }
         // A new push after a pause, or one the other way.
-        if move.time - last > Rule.quiet || (sum != 0 && (dx < 0) != (sum < 0)) {
+        let pause = turned == nil ? Rule.gather : Rule.quiet
+        if move.time - last > pause || (way != 0 && (dx < 0) != (way < 0)) {
             sum = 0
-            turned = false
+            turned = nil
         }
+        way = dx
         last = move.time
-        guard !turned else { return 0 }
+        // Just turned: the rest of a quick push goes nowhere.
+        if let turned, move.time - turned < Rule.hold { return 0 }
         sum += dx
         guard abs(sum) >= (move.precise ? Rule.points : Rule.notches) else { return 0 }
-        turned = true
-        return sum < 0 ? 1 : -1
+        sum = 0
+        turned = move.time
+        return dx < 0 ? 1 : -1
     }
 
     /// Forget the push: the pointer went elsewhere, or fingers took over.
     mutating func reset() {
         sum = 0
+        way = 0
         last = -.infinity
-        turned = false
+        turned = nil
     }
 }
 
