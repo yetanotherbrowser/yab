@@ -2144,6 +2144,7 @@ extension Preferences {
         adoptPaint(o, wearing: paint)
         if sidebar != o.sidebar { sidebar = o.sidebar }
         if glyph != o.glyph { glyph = o.glyph }
+        if glassPins != o.glassPins { glassPins = o.glassPins }
         if density != o.density { density = o.density }
         if addressBar != o.addressBar { addressBar = o.addressBar }
         if fullURL != o.fullURL { fullURL = o.fullURL }

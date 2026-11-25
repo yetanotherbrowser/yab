@@ -8552,6 +8552,8 @@ final class Bench {
             if let on = request["bar"] as? Bool { browser.prefs.addressBar = on }
             // Settings › Appearance › Tab icons: "icons" or "letters".
             if let glyph = (request["glyph"] as? String).flatMap(Glyph.init) { browser.prefs.glyph = glyph }
+            // Settings › Appearance › Glass pins, while the column is up.
+            if let on = request["glassPins"] as? Bool { browser.prefs.glassPins = on }
             // The bookmarks' row: a mode, or "toggle" for ⇧⌘B.
             if let mode = (request["shelf"] as? String).flatMap(BookmarkBarMode.init) { browser.prefs.bookmarkBar = mode }
             if let style = (request["bookmarkStyle"] as? String).flatMap(BookmarkStyle.init) { browser.prefs.bookmarkStyle = style }

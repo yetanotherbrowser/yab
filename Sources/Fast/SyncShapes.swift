@@ -584,7 +584,7 @@ enum SyncShapes {
     /// splits, lists and their order stay too: their rules name senders,
     /// subjects and Gmail's labels (docs/casa.md, Sync).
     static let settingKeys: Set<String> = [
-        "look", "backdrop", "sidebar", "tabs.glyph", "sidebar.density", "addressbar", "addressbar.full-url", "peek.address",
+        "look", "backdrop", "sidebar", "tabs.glyph", "pins.glass", "sidebar.density", "addressbar", "addressbar.full-url", "peek.address",
         "bookmarks.bar", "pages.zoom", "pages.fonts", "pages.dark", "pages.darkLook", "appearance.appIcon",
         "tabs.sleep", "tabs.awake", "tabs.tidy", "tabs.researchFolders", "tabs.linkFolders", "tabs.folderEmoji", "tabs.optShiftFolders", "tabs.meetingFolders", "spaces", "pins.everySpace", "peek", "links.small", "links.small.key",
         "split.rule", "quit.warn", "player.shown", "float.leave", "float.away",

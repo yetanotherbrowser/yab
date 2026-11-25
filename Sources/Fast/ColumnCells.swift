@@ -54,6 +54,9 @@ final class ColumnCell: NSHostingView<AnyView> {
         let joint: Joint?
         let staged: Bool
         let glyph: Glyph
+        /// Settings › Appearance › Glass pins: a pin's ground drawn again
+        /// when it is turned on or off, as for Tab icons.
+        let glass: Bool
         let lit: Bool
         let size: CGSize
         let count: Int
@@ -289,7 +292,7 @@ final class ColumnCell: NSHostingView<AnyView> {
             break
         }
         let look = Look(id: item.id, tab: tab, other: other, live: live, picked: picked, editing: editing, refusals: refusals, joint: joint,
-                        staged: staged, glyph: browser.prefs.glyph, lit: lit, size: size, count: count, open: open, over: over,
+                        staged: staged, glyph: browser.prefs.glyph, glass: browser.prefs.glassPins, lit: lit, size: size, count: count, open: open, over: over,
                         folder: folder, space: space, pointed: context.pointedID == item.id, hold: hold, look: context.look)
         guard force || look != current else { return }
         SwitchMeter.note({

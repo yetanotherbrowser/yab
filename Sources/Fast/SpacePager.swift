@@ -1040,7 +1040,7 @@ final class SpacePager {
                             floating: Bool, shared: Bool, browser: Browser) -> String {
         let folders = browser.folderBook
         var key = "\(ObjectIdentifier(browser).hashValue) \(id) \(rows) \(size) \(floating) \(shared) \(browser.prefs.sideWidth) \(browser.barShown(row, travelling: travelling)) \(browser.namesSpaces)"
-        key += " \(NSApp.effectiveAppearance.name.rawValue) \(paint.map { "\($0)" } ?? "-") \(browser.prefs.glyph) \(browser.prefs.density)"
+        key += " \(NSApp.effectiveAppearance.name.rawValue) \(paint.map { "\($0)" } ?? "-") \(browser.prefs.glyph) \(browser.prefs.glassPins) \(browser.prefs.density)"
         key += " \(browser.prefs.backdrop) \(browser.prefs.wearsGlass)"
         key += " \(row?.active?.uuidString ?? "-") \(row?.pairs.map { "\($0.first)\($0.second)\($0.share)" } ?? [])"
         key += " \(SidePlate.extensionPlate(in: browser, space: id, tab: ((row?.tabs ?? []) + travelling).first { $0.id == row?.active }, shown: browser.sidePlated(row)))"

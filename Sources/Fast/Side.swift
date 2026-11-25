@@ -3254,6 +3254,8 @@ struct PinSquare: View {
     let browser: Browser
     /// Marks or letters (Settings › Appearance › Tab icons).
     let glyph: Glyph
+    /// Glass or flat (Settings › Appearance › Glass pins).
+    let glass: Bool
     /// Out over the page in full screen rather than beside it: a card with
     /// its own corners and no hairline down its side.
     var floating = false
@@ -3278,6 +3280,7 @@ struct PinSquare: View {
          width: CGFloat = SideBar.square, height: CGFloat = SideBar.square, lifted: Bool = false, pressed: Bool = false) {
         self.browser = browser
         glyph = prefs.glyph
+        glass = prefs.glassPins
         self.floating = floating
         self.tab = tab
         self.live = live
@@ -3291,8 +3294,6 @@ struct PinSquare: View {
     }
 
     @Environment(\.tone) private var tone
-    /// The column's light or dark, the tone's own when it wears one.
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// In a cell of the AppKit column: where it stands is the page's to say.
     @Environment(\.columnHosted) private var hosted
@@ -3341,14 +3342,7 @@ struct PinSquare: View {
         // corner, and is the button while it joins (PinMeeting).
         .modifier(PinMeeting(browser: browser, tab: tab, calls: browser.calls, radius: SideBar.corner(scale)))
         .background {
-            // A picked pin gets the open one's ground, as a picked row
-            // gets the open row's, and both wear the open tab's selection.
-            if live || picked {
-                SelectionPlate(corner: SideBar.corner(scale), state: .selected, prefs: browser.prefs)
-            } else {
-                RoundedRectangle(cornerRadius: SideBar.corner(scale), style: .continuous)
-                    .fill(Palette.pin(on: tone, dark: scheme == .dark, hovering: hovering))
-            }
+            PinGround(corner: SideBar.corner(scale), live: live, picked: picked, hovering: hovering, glass: glass, prefs: browser.prefs)
         }
         .background {
             if lifted {

@@ -290,6 +290,10 @@ struct AppearancePage: View {
                 .settingsAnchor("sidebar-button")
             MenuRow("Tab icons", options: [("Letters", Glyph.letters), ("Site icons", Glyph.icons)], selection: $prefs.glyph)
                 .settingsAnchor("tab-icons")
+            if WindowGlassPolicy.supported {
+                SettingsSwitch("Glass pins", isOn: $prefs.glassPins)
+                    .settingsAnchor("glass-pins")
+            }
             MenuRow("Spaces", options: [("Emoji", false), ("Dots", true)], selection: $prefs.spaceDots)
                 .settingsAnchor("space-dots")
             MenuRow("Density", options: [("Comfortable", Density.comfortable), ("Compact", Density.compact)], selection: $prefs.density)

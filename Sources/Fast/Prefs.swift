@@ -462,6 +462,12 @@ final class Preferences: ObservableObject, Relaying {
         willSet { relay.send(\.glyph, newValue) }
         didSet { store.set(glyph.rawValue, forKey: "tabs.glyph") }
     }
+    /// Pinned tabs' squares as panes of Liquid Glass where the system has
+    /// it (PinGround), or flat. On unless turned off.
+    var glassPins: Bool {
+        willSet { relay.send(\.glassPins, newValue) }
+        didSet { store.set(glassPins, forKey: "pins.glass") }
+    }
     /// How roomy the column is (Density). One size for every window: the
     /// sizes are read from Density.current, so each window's column is
     /// told and drawn anew.
@@ -1127,6 +1133,7 @@ final class Preferences: ObservableObject, Relaying {
             ?? (store.string(forKey: "manner") == "side")
         sideShut = store.bool(forKey: "sidebar.shut")
         sidebarButton = store.object(forKey: "sidebar.button") as? Bool ?? true
+        glassPins = store.object(forKey: "pins.glass") as? Bool ?? true
         stripShut = store.bool(forKey: "strip.shut")
         spaceDots = store.bool(forKey: "spaces.dots")
         spaceNames = store.object(forKey: "spaces.names") as? Bool ?? true

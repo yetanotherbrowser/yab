@@ -612,6 +612,11 @@ public enum Shadow {
     /// separation, with less black gathered under it.
     public static let selection = Cast(opacity: 0.14, radius: 4, y: 1)
     public static let selectionDark = Cast(opacity: 0.06, radius: 4, y: 1)
+    /// A pin's pane of glass standing on the column (PinGround): close, a
+    /// point down, the foot a pane casts. Deeper in the dark, where its
+    /// edge is all that is light.
+    public static let pane = Cast(opacity: 0.1, radius: 2, y: 1)
+    public static let paneDark = Cast(opacity: 0.35, radius: 2, y: 1)
     /// The field's card standing off the page, full and compact, as
     /// Raycast's window stands off a white page: a close shadow that
     /// gives it a foot, and a wide, faint one round it, never a dark
