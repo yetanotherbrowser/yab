@@ -87,20 +87,20 @@ final class DuoRotationUITests: XCTestCase {
                 XCTAssertEqual(measured["viewX"] as? Double ?? -1, 0, accuracy: 1)
                 XCTAssertTrue(measured["liveProfile"] as? Bool == true)
                 let left = measured["columnLeft"] as? Bool == true
-                // The page runs under the column (#1890); the scroll bar
-                // stands beside it, counted once (#1945).
-                XCTAssertEqual(measured["leftInset"] as? Double ?? -1, 0, accuracy: 1)
-                XCTAssertEqual(measured["rightInset"] as? Double ?? -1, 0, accuracy: 1)
+                // The page lays out beside the column (#989); the scroll bar
+                // stands beside it too, counted once (#1945).
+                XCTAssertEqual(measured["leftInset"] as? Double ?? -1, left ? 84 : 0, accuracy: 1)
+                XCTAssertEqual(measured["rightInset"] as? Double ?? -1, left ? 0 : 84, accuracy: 1)
                 XCTAssertEqual(measured["leftIndicator"] as? Double ?? -1, left ? 84 : 0, accuracy: 1)
                 XCTAssertEqual(measured["rightIndicator"] as? Double ?? -1, left ? 0 : 84, accuracy: 1)
                 XCTAssertTrue(measured["indicatorsAdjusted"] as? Bool == false)
                 let web = app.webViews.firstMatch
                 let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Layout width '")).firstMatch
-                let expected = app.frame.width
+                let expected = app.frame.width - 84
                 XCTAssertTrue(wait {
                     let width = CGFloat(Double(report.label.replacingOccurrences(of: "Layout width ", with: "")) ?? 0)
                     return abs(width - expected) <= 1
-                }, "WebKit layout width must equal the window's width: \(report.label), expected \(expected)")
+                }, "WebKit layout width must equal the window's width beside the column: \(report.label), expected \(expected)")
                 record(phase)
                 if landscape {
                     app.buttons["chrome.plus"].tap()
