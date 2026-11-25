@@ -2580,7 +2580,8 @@ final class Agents: ObservableObject {
         if let cursor = session.cursor {
             session.lastSent = text
             session.result = ""
-            asked(session, text)
+            // A quiet memory turn's words are never put down as a user's.
+            if !session.remembering { asked(session, text) }
             cursor.say(text)
             return
         }
@@ -3336,6 +3337,11 @@ final class Agents: ObservableObject {
 
     private func cursor(_ heard: [CursorServer.Heard], _ session: Session) {
         for event in heard {
+            // A quiet memory turn's words stay out of the chat: only its
+            // end gets through, for the turn it closes.
+            if session.remembering {
+                guard case .ended = event else { continue }
+            }
             switch event {
             case .ready(let thread):
                 session.thread = thread

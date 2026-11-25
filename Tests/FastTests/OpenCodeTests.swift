@@ -142,4 +142,60 @@ struct OpenCodeTests {
         #expect(item.id.hasPrefix("cursor.tool."))
         #expect(item.name == "Run")
     }
+
+    /// The quiet memory turn stays out of an OpenCode chat: its prompt is
+    /// never put down as a user's, its words grow no answer, and only its
+    /// end gets through to close the turn.
+    @Test @MainActor func theQuietMemoryTurnStaysOutOfAnOpenCodeChat() throws {
+        let fixture = IsolatedProviderConsent("opencode")
+        defer { fixture.close() }
+        @MainActor final class Wire {
+            var lines: [[String: Any]] = []
+            lazy var server = CursorServer(write: { [unowned self] data in
+                if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
+            }, name: "OpenCode", askMode: nil)
+            func reply(_ result: [String: Any]) -> [CursorServer.Heard] {
+                server.heard(["jsonrpc": "2.0", "id": lines.last?["id"] ?? 0, "result": result])
+            }
+        }
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [])
+        _ = wire.reply(["protocolVersion": 1])
+        guard case .ready = wire.reply(["sessionId": "ses_1"]).first else { Issue.record("no conversation"); return }
+        let agents = Agents()
+        let session = Agents.Session(id: "quiet-" + UUID().uuidString.prefix(6), cli: "opencode", name: "OpenCode", prompt: "Fix it", state: .running)
+        session.providerPermit = try #require(fixture.consent.permit("opencode"))
+        session.cursor = wire.server
+        session.quiet = true
+        session.items = [ChatItem(id: "q1", kind: .asked, text: "Fix it", state: .done)]
+        session.remembering = true
+
+        // The extraction prompt is told to the CLI, but never shows as yours.
+        agents.send(session, Agents.extractionPrompt(session))
+        #expect(session.items.map(\.id) == ["q1"])
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+        #expect(session.result.isEmpty)
+
+        // Its reply says nothing in the chat either.
+        agents.hear(["method": "session/update", "params": ["sessionId": "ses_1", "update": [
+            "sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "Kept a short episodic entry"]]]], on: session)
+        #expect(session.items.map(\.id) == ["q1"])
+        #expect(session.result.isEmpty)
+
+        // The tool call of the quiet turn says nothing in the chat either.
+        agents.hear(["method": "session/update", "params": ["sessionId": "ses_1", "update": [
+            "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "remember"]]], on: session)
+        #expect(session.items.map(\.id) == ["q1"])
+        #expect(session.result.isEmpty)
+
+        // Its end does get through: the stdin it closes is how the quiet
+        // turn's process goes, and its exit ends the remembering.
+        let pipe = Pipe()
+        session.input = pipe.fileHandleForWriting
+        let reader = pipe.fileHandleForReading.fileDescriptor
+        _ = fcntl(reader, F_SETFL, fcntl(reader, F_GETFL) | O_NONBLOCK)
+        agents.hear(["jsonrpc": "2.0", "id": wire.lines.last?["id"] ?? 0, "result": [:]], on: session)
+        var byte: UInt8 = 0
+        #expect(read(reader, &byte, 1) == 0)
+    }
 }
