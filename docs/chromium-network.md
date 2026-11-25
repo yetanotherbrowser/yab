@@ -32,6 +32,16 @@ downloads a newer package from the store's download hosts. With no store extensi
 installed it calls nothing. It is the same question WebKit's daily check asks
 `clients2.google.com/service/update2/crx`.
 
+## What a page can't make it do
+
+Profile preferences, rewritten into every profile at each start, as WebKit tabs
+behave:
+
+| Preference | Value | What it stops |
+|---|---|---|
+| `net.network_prediction_options` | 2, no prediction | Prefetch and prerender a page asks for with speculation rules, and Chromium's own preloading |
+| `enable_a_ping` | false | `<a ping>` posts |
+
 ## Where it is set
 
 `YabCore/src/core.mm` (`OnBeforeCommandLineProcessing`) for switches and features.

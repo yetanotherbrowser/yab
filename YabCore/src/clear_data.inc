@@ -41,6 +41,9 @@ static NSDictionary* ChosenPreferences() {
     @"profile.content_settings.exceptions.local_network": @{},
     @"profile.content_settings.exceptions.loopback_network": @{},
     @"unified_consent.url_keyed_anonymized_data_collection.enabled": @NO,
+    // As WebKit tabs: no preloading and no <a ping>. 2 is "no prediction".
+    @"net.network_prediction_options": @2,
+    @"enable_a_ping": @NO,
   };
 }
 void SeedPreferences(NSString* path) {
