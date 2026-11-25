@@ -310,6 +310,43 @@ static bool ShieldStoppedTop(CefRefPtr<CefBrowser> browser) {
   found->second.topStopped = false;
   return true;
 }
+// Third-party cookies stay blocked but on a top-level host whose Shield is off,
+// derived from Shield's list. Yab owns every "*,<host>" entry; others are kept.
+static void ShieldCookieExceptions(CefRefPtr<CefRequestContext> context) {
+  auto config = ShieldNow();
+  if (!context || !config) return;
+  static const char kExceptions[] = "profile.content_settings.exceptions.cookies";
+  auto now = context->GetPreference(kExceptions);
+  auto next = CefDictionaryValue::Create();
+  if (now && now->GetType() == VTYPE_DICTIONARY) {
+    auto held = now->GetDictionary();
+    CefDictionaryValue::KeyList keys;
+    held->GetKeys(keys);
+    for (const auto& key : keys)
+      if (key.ToString().rfind("*,", 0) != 0) next->SetValue(key, held->GetValue(key)->Copy());
+  }
+  // The host and its www, as ShieldOff matches: not the site's other subdomains.
+  for (const auto& site : config->off) {
+    const bool address = site.find_first_not_of("0123456789.") == std::string::npos || site.find(':') != std::string::npos;
+    for (const std::string& host : address ? std::vector<std::string>{site} : std::vector<std::string>{site, "www." + site}) {
+      auto allow = CefDictionaryValue::Create();
+      allow->SetInt("setting", CEF_CONTENT_SETTING_VALUE_ALLOW);
+      next->SetDictionary("*," + host, allow);
+    }
+  }
+  auto value = CefValue::Create();
+  value->SetDictionary(next);
+  if (now && now->IsEqual(value)) return;
+  CefString error;
+  if (!context->SetPreference(kExceptions, value, error))
+    fprintf(stderr, "YabCore: cookie exceptions not written: %s\n", error.ToString().c_str());
+}
+static void ShieldCookieExceptionsEverywhere() {
+  // A private profile inherits these from its parent, the global one included.
+  ShieldCookieExceptions(CefRequestContext::GetGlobalContext());
+  for (auto& [key, profile] : profiles)
+    if (profile.ready && !profile.privateMode) ShieldCookieExceptions(profile.context);
+}
 static void ShieldConfigure(NSDictionary* params) {
   auto next = std::make_shared<ShieldConfig>();
   auto old = ShieldNow();
@@ -321,6 +358,7 @@ static void ShieldConfigure(NSDictionary* params) {
   double stamp = [params[@"stamp"] doubleValue];
   bool load = !path.empty() && (path != next->path || stamp != next->stamp);
   std::atomic_store(&shieldConfig, std::shared_ptr<const ShieldConfig>(next));
+  ShieldCookieExceptionsEverywhere();
   if (!load) { ShieldRearm(); return; }
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     auto engine = std::make_shared<shield::Engine>();

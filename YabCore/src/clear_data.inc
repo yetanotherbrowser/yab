@@ -41,6 +41,12 @@ static NSDictionary* ChosenPreferences() {
     @"profile.content_settings.exceptions.local_network": @{},
     @"profile.content_settings.exceptions.loopback_network": @{},
     @"unified_consent.url_keyed_anonymized_data_collection.enabled": @NO,
+    // As WebKit tabs: no preloading, <a ping>, LAN address over WebRTC or third-party
+    // cookies (ShieldCookieExceptions). 2 is "no prediction"; 1 is "block third party".
+    @"net.network_prediction_options": @2,
+    @"enable_a_ping": @NO,
+    @"webrtc.ip_handling_policy": @"default_public_interface_only",
+    @"profile.cookie_controls_mode": @1,
   };
 }
 void SeedPreferences(NSString* path) {

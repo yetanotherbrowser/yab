@@ -32,6 +32,29 @@ downloads a newer package from the store's download hosts. With no store extensi
 installed it calls nothing. It is the same question WebKit's daily check asks
 `clients2.google.com/service/update2/crx`.
 
+## What a page can't make it do
+
+Profile preferences, rewritten into every profile at each start, as WebKit tabs
+behave:
+
+| Preference | Value | What it stops |
+|---|---|---|
+| `net.network_prediction_options` | 2, no prediction | Prefetch and prerender a page asks for with speculation rules, and Chromium's own preloading |
+| `enable_a_ping` | false | `<a ping>` posts |
+| `webrtc.ip_handling_policy` | `default_public_interface_only` | Host candidates: a page learns no LAN address over WebRTC |
+| `profile.cookie_controls_mode` | 1, block third party | Third-party cookies being set or read by scripts |
+
+Turning Shield off for a site lets third-party cookies back in on it: YabCore
+derives `*,host` and `*,www.host` allow exceptions in
+`profile.content_settings.exceptions.cookies` from Shield's list each time Yab sends
+it (`ShieldCookieExceptions`), the same hosts Shield is off on. Yab owns every `*,`
+entry there.
+
+Chromium 156 has already retired Topics, Protected Audience, Shared Storage and
+Attribution Reporting: `document.browsingTopics()` throws, `joinAdInterestGroup`
+does nothing and `runAdAuction` gives null, `window.sharedStorage` is missing, and
+there are no Privacy Sandbox prompts. Nothing is set for them.
+
 ## Where it is set
 
 `YabCore/src/core.mm` (`OnBeforeCommandLineProcessing`) for switches and features.

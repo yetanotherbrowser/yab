@@ -1979,6 +1979,7 @@ static void ProfileOpened(const std::string& key) {
   auto found = profiles.find(key);
   if (found == profiles.end()) return;
   found->second.ready = true;
+  if (!found->second.privateMode) ShieldCookieExceptions(found->second.context);
   Mark("profile.ready");
   NSString* name = @(key.c_str());
   NSDictionary* opened = ProfileReply(found->second, name);
