@@ -206,6 +206,7 @@ static NSDictionary* NativeHookCapabilities() {
            @"nativeVideoPiP": @(YABCORE_NATIVE_VIDEO_PIP),
            @"downloadProvenance": @(YABCORE_DOWNLOAD_PROVENANCE),
            @"externalFocus": @(YABCORE_EXTERNAL_FOCUS),
+           @"frameInterval": @(YABCORE_FRAME_INTERVAL),
            @"nativeTextInput": @(YABCORE_TEXT_INPUT),
            @"nativeTextFocus": @(YABCORE_NATIVE_TEXT_FOCUS),
            @"nativeTextFocusVersion": @(YABCORE_NATIVE_TEXT_FOCUS ? 1 : 0),

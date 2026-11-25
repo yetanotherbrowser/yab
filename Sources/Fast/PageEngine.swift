@@ -39,6 +39,14 @@ protocol PageSleepActivity: AnyObject {
     var sleepActivityUnavailable: Bool { get }
 }
 
+/// An engine that can draw a page no one sees at a slower rate while the
+/// page itself still counts as shown (Bench.paceRoom). Without it, a page in
+/// the bench's room draws at its display's rate.
+@MainActor
+protocol PageFramePace: AnyObject {
+    var restsFrames: Bool { get set }
+}
+
 /// The world a script runs in. Scripts in different worlds see the same
 /// document but none of each other's variables; the page's own scripts see
 /// only `.page`.

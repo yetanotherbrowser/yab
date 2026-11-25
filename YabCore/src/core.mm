@@ -86,6 +86,11 @@
 #else
 #define YABCORE_EXTERNAL_HOST 0
 #endif
+#if defined(CEF_YAB_FRAME_INTERVAL_VERSION) && CEF_API_ADDED(CEF_EXPERIMENTAL)
+#define YABCORE_FRAME_INTERVAL 1
+#else
+#define YABCORE_FRAME_INTERVAL 0
+#endif
 #include "extensions_native.h"
 #include "extensions_actions.h"
 
@@ -1965,7 +1970,7 @@ static NSString* Validate(NSDictionary* p) {
   // separate bounded allowance; ordinary input strings keep their old limit.
   for (NSString* key in @[@"function", @"expression"])
     if (p[key] && (![p[key] isKindOfClass:NSString.class] || [p[key] lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 1024 * 1024)) return @"Invalid script source";
-  for (NSString* key in @[@"width", @"height", @"scale", @"x", @"y", @"deltaX", @"deltaY", @"modifiers", @"keyCode", @"phase", @"momentumPhase", @"clickCount"])
+  for (NSString* key in @[@"width", @"height", @"scale", @"x", @"y", @"deltaX", @"deltaY", @"modifiers", @"keyCode", @"phase", @"momentumPhase", @"clickCount", @"interval"])
     if (p[key] && (![p[key] isKindOfClass:NSNumber.class] || !std::isfinite([p[key] doubleValue]) || fabs([p[key] doubleValue]) > 1e15)) return @"Invalid numeric parameter";
   for (NSString* key in @[@"private", @"visible", @"enabled", @"accept", @"repeat", @"userGesture", @"muted", @"forward", @"allow"])
     if (p[key] && ![p[key] isKindOfClass:NSNumber.class]) return @"Invalid boolean parameter";
@@ -2453,6 +2458,19 @@ static void Request(NSDictionary* request) {
       }
     }
     Reply(id);
+  } else if ([method isEqual:@"tab.frames"]) {
+    // A page no one sees, between an agent's calls: drawn at a slower rate
+    // and still visible (CEF 0137). The stock SDK has no way to.
+    if (!p[@"interval"]) { Reply(id, nil, @"interval is required"); return; }
+    double asked = [p[@"interval"] doubleValue];
+    if (!(asked >= 0 && asked <= 1000)) { Reply(id, nil, @"interval must be 0 to 1000 ms"); return; }
+    int interval = (int)lround(asked);
+#if YABCORE_FRAME_INTERVAL
+    if (!b->GetHost()->SetFrameInterval(interval)) { Reply(id, nil, @"The page has no compositor to pace"); return; }
+    Reply(id, @{@"interval": @(interval)});
+#else
+    Reply(id, nil, @"Frame pacing needs CEF patch 0137");
+#endif
   } else if ([method isEqual:@"input.send"]) Input(t, p, id);
   else if (NativeDialogRequest(t, method, p, id)) { return;
   } else if ([method isEqual:@"page.frame"]) {

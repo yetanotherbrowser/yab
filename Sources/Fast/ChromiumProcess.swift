@@ -36,6 +36,9 @@ final class ChromiumProcess {
     /// 0116, `extension.command.run`); the button's command needs no more
     /// than its press.
     var runsExtensionCommands: Bool { nativeHooks["extensionCommands"] == .bool(true) || nativeHooks["extensionCommands"] == .number(1) }
+    /// The helper can slow a page's frames and keep it shown (CEF patch 0137,
+    /// `tab.frames`). The stock SDK can't.
+    var pacesFrames: Bool { nativeHooks["frameInterval"] == .bool(true) || nativeHooks["frameInterval"] == .number(1) }
     /// Identity of this helper lifetime, never a renderer document identity.
     var connectionGeneration: UUID { generation }
     func isCurrent(_ core: YabCoreClient) -> Bool { client === core }

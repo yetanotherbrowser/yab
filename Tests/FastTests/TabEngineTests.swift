@@ -8,8 +8,9 @@ import WebKit
 struct TabEngineTests {
     /// An NSView with no WebKit inheritance proves ownership and state
     /// delivery do not depend on the compatibility accessors.
-    fileprivate final class Page: NSView, PageHandle, PageAudioControl, PageSleepActivity {
+    fileprivate final class Page: NSView, PageHandle, PageAudioControl, PageSleepActivity, PageFramePace {
         let engine: PageEngineKind
+        var restsFrames = false
         weak var events: (any PageEvents)?
         weak var stateEvents: (any PageStateEvents)?
         var url: URL?
@@ -295,6 +296,55 @@ struct TabEngineTests {
         #expect(page.window == nil && tab.builtPage === page)
         Bench.shared.house(tab)
         #expect(page.window?.identifier == Bench.roomID && factory.pages.count == 1)
+    }
+
+    @Test func anAgentPageInTheRoomDrawsSlowlyOnlyBetweenItsCalls() throws {
+        try #require(Bench.shared.callsInFlight == 0, "a bench call of another test is still waiting for its answer")
+        let factory = Factory()
+        let tab = Tab(bench: true, engine: .chromium, factory: factory.factory)
+        defer { Bench.shared.rest(tab); tab.close() }
+        let first = Bench.shared.answerOnce(within: 600) { _ in }
+        first.names(tab)
+        Bench.shared.house(tab)
+        let page = tab.page as! Page
+        #expect(page.window?.identifier == Bench.roomID && !page.restsFrames)
+        first.answer([:])
+        #expect(page.restsFrames, "no call is in flight for it")
+        let next = Bench.shared.answerOnce(within: 600) { _ in }
+        next.names(tab)
+        #expect(!page.restsFrames, "a call that names it wakes it before it is housed")
+        Bench.shared.house(tab)
+        next.answer([:])
+        #expect(page.restsFrames)
+        Bench.shared.rest(tab)
+        #expect(page.window == nil && !page.restsFrames)
+    }
+
+    @Test func aPageAnAgentOpenedDrawsFullyUntilNoCallIsInFlight() throws {
+        try #require(Bench.shared.callsInFlight == 0, "a bench call of another test is still waiting for its answer")
+        let factory = Factory()
+        let tab = Tab(bench: true, engine: .chromium, factory: factory.factory)
+        defer { Bench.shared.rest(tab); tab.close() }
+        let open = Bench.shared.answerOnce(within: 600) { _ in }
+        Bench.shared.house(tab)
+        let page = tab.page as! Page
+        #expect(!page.restsFrames)
+        open.answer([:])
+        #expect(page.restsFrames)
+    }
+
+    @Test func aNameThatComesAfterItsCallsAnswerWakesNothing() throws {
+        try #require(Bench.shared.callsInFlight == 0, "a bench call of another test is still waiting for its answer")
+        let factory = Factory()
+        let tab = Tab(bench: true, engine: .chromium, factory: factory.factory)
+        defer { Bench.shared.rest(tab); tab.close() }
+        Bench.shared.house(tab)
+        let page = tab.page as! Page
+        #expect(page.restsFrames)
+        let late = Bench.shared.answerOnce(within: 600) { _ in }
+        late.answer([:])
+        late.names(tab)
+        #expect(page.restsFrames)
     }
 
     @Test func sleepSafetyKeepsUnknownChromiumActivityAwake() {
