@@ -154,5 +154,5 @@ failed URL through PageCertificate.failingURL so an HTTP-to-HTTPS redirect
 can show the existing Untrusted screen before its final address commits.
 WebKit leaves that optional field nil and retains its previous lookup.
 Primary implementation:
-https://github.com/chromiumembedded/cef/blob/4fa4ab516dacf6c49fc7e6e70d2b7ebce29fa35f/libcef/browser/chrome/chrome_browser_host_impl.cc
-https://github.com/chromiumembedded/cef/blob/4fa4ab516dacf6c49fc7e6e70d2b7ebce29fa35f/libcef/browser/certificate_query.cc
+https://github.com/chromiumembedded/cef/blob/6028375a4532fb89d23b58635f5c0d3a82c93959/libcef/browser/chrome/chrome_browser_host_impl.cc
+https://github.com/chromiumembedded/cef/blob/6028375a4532fb89d23b58635f5c0d3a82c93959/libcef/browser/certificate_query.cc

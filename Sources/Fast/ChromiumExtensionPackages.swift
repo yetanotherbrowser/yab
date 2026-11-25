@@ -3,6 +3,10 @@ import CryptoKit
 
 /// Keep original packages separate from WebKit's rewritten extension folders.
 enum ChromiumExtensionPackages {
+    /// The store picks a package by the asking browser's version: the pinned
+    /// engine's, the same one scripts/cef/fetch.sh downloads.
+    static let engineVersion = "156.0.8078.96"
+
     /// A stable key keeps the copied native folder's identity independent of
     /// the farm/profile path. Never pass WebKit's rewritten files to Chromium.
     static func unpackedKey(_ source: URL) throws -> Data {
@@ -200,7 +204,7 @@ enum ChromiumExtensionPackages {
             return try Data(contentsOf: URL(fileURLWithPath: folder).appendingPathComponent(id + ".crx"))
         }
         var parts = URLComponents(url: Crx.downloadURL(for: id), resolvingAgainstBaseURL: false)!
-        parts.queryItems = parts.queryItems?.map { $0.name == "prodversion" ? URLQueryItem(name: "prodversion", value: "156.0.8078.48") : $0 }
+        parts.queryItems = parts.queryItems?.map { $0.name == "prodversion" ? URLQueryItem(name: "prodversion", value: engineVersion) : $0 }
         var request = URLRequest(url: parts.url!)
         request.timeoutInterval = 60
         let (data, response) = try await URLSession.shared.data(for: request)

@@ -14,7 +14,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-VERSION = '156.0.14+g4fa4ab5+chromium-156.0.8078.48'
+VERSION = '156.0.30+g6028375+chromium-156.0.8078.96'
 BASE = 'https://cef-builds.spotifycdn.com/'
 root = Path(os.environ.get('YAB_CEF_CACHE', str(Path.home() / '.local/state/yab-spike-cef')))
 root.mkdir(parents=True, exist_ok=True)
