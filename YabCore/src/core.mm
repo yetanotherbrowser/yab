@@ -2815,6 +2815,8 @@ class App : public CefApp, public CefBrowserProcessHandler {
     // Chrome's own pref needs its UniversalOptOut settings UI; this is the
     // switch behind chrome://flags#enable-global-privacy-control.
     features += ",GlobalPrivacyControlForce";
+    // Sites see one language, as in WebKit tabs; a shorter intl.accept_languages would drop spellcheck dictionaries.
+    features += ",ReduceAcceptLanguageCount:MaxAcceptLanguage/1";
 #if YABCORE_DISCARD
     // Native discard is off by default on macOS.
     features += ",WebContentsDiscard";
