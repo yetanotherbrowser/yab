@@ -430,6 +430,10 @@ final class KeyTip {
         guard hushed !== owner else { return }
         hushed = nil
         let work = DispatchWorkItem { [weak self, weak view] in
+            // Another app's window is what the pointer is over (yab behind
+            // it, or in another Space): no tip over that app, as the
+            // system's own tooltips never stand over a window not theirs.
+            guard KeyTip.pointerOverYab() else { return }
             if let view, KeyTip.covered(view) { return }
             // Resolve moving anchors after the dwell, not when hover began.
             let at: NSRect
@@ -462,6 +466,16 @@ final class KeyTip {
         guard let hit = content.hitTest(content.superview?.convert(at, from: nil) ?? at),
               let over = self.host(of: hit) else { return false }
         return over !== host && !host.isDescendant(of: over)
+    }
+
+    /// The frontmost window under the pointer, of any app, is one of yab's.
+    /// WebKit's hover tracking is active always and the page script's tip
+    /// (chromium-tips.js) keeps answering, so a page behind another app
+    /// still names its title=""s; this panel, at the pop-up menu's level
+    /// and a full screen's auxiliary, would put them over that app.
+    static func pointerOverYab() -> Bool {
+        let number = NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)
+        return NSApp.window(withWindowNumber: number) != nil
     }
 
     /// The nearest SwiftUI host `view` is in, of any root, a subclass's too.
