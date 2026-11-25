@@ -86,7 +86,7 @@ final class DownloadStoreTests: XCTestCase {
         first.begin(failed, name: "broken.zip", host: "acme.com", total: 100, isPrivate: false, control: .init())
         first.fail(failed, retry: {})
         try finished(first, "whole.pdf")
-        XCTAssertEqual(store().entries.map(\.name), ["whole.pdf"])
+        XCTAssertEqual(self.store().entries.map(\.name), ["whole.pdf"])
     }
 
     func testAPrivateFileStaysOutAndGoesWithThePrivateTabs() throws {
@@ -99,7 +99,7 @@ final class DownloadStoreTests: XCTestCase {
         XCTAssertEqual(first.list(isPrivate: false).map(\.name), ["open.pdf"])
         XCTAssertEqual(first.list(isPrivate: true).map(\.name), ["secret.pdf"])
         XCTAssertNil(first.nowItem(isPrivate: false).flatMap { $0.title == "secret.pdf" ? $0 : nil }, "the ordinary line never names it")
-        XCTAssertEqual(store().entries.map(\.name), ["open.pdf"], "never in the index")
+        XCTAssertEqual(self.store().entries.map(\.name), ["open.pdf"], "never in the index")
         first.forgetPrivate()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertEqual(first.entries.map(\.name), ["open.pdf"])
@@ -267,5 +267,32 @@ final class DownloadStoreTests: XCTestCase {
         let kept = PageLinkMenu.withoutDownload([group, lonely])
         XCTAssertEqual(kept.count, 1)
         XCTAssertEqual((kept.first as? UIMenu)?.children.compactMap { ($0 as? UIAction)?.title }, ["Copy Link"])
+    }
+
+    /// The system's transfers (BackgroundDownloads) fill the same rows: one
+    /// that ended while Yab was gone gets its row, a failure keeps Retry.
+    func testTheSystemsTransfersFillTheSameRows() throws {
+        let store = store(), sink = store.backgroundSink
+        var stopped = false
+        let going = UUID()
+        sink.begin(.init(id: going, name: "../big.zip", host: "www.acme.com", total: 10)) { stopped = true }
+        XCTAssertEqual(store.entry(going)?.name, "big.zip", "a name of the system's is cleaned as WebKit's")
+        XCTAssertEqual(store.entry(going)?.host, "acme.com")
+        XCTAssertFalse(store.entry(going)?.isPrivate ?? true)
+        XCTAssertTrue(store.canStop(going))
+        store.stop(going)
+        XCTAssertTrue(stopped)
+
+        let gone = UUID()
+        XCTAssertTrue(sink.finish(.init(id: gone, name: "report.pdf", host: "acme.com", total: nil), try incoming()))
+        XCTAssertEqual(store.entry(gone)?.state, .done)
+        XCTAssertEqual(self.store().entries.map(\.name), ["report.pdf"], "kept in the index for the next launch")
+
+        let failed = UUID()
+        sink.fail(.init(id: failed, name: "lost.zip", host: "acme.com", total: nil)) {}
+        XCTAssertEqual(store.entry(failed)?.state, .failed)
+        XCTAssertTrue(store.canRetry(failed))
+        sink.drop(going)
+        XCTAssertNil(store.entry(going))
     }
 }
