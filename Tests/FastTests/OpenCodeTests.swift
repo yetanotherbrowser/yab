@@ -65,12 +65,12 @@ struct OpenCodeTests {
     /// OpenCode's ACP has no "ask" mode: a text-only run takes its
     /// no-tools helper through session/set_config_option first, then
     /// prompts, and its words carry OpenCode's own id and name.
-    @Test func opencodeACPHasNoAskModeRoundTrip() {
-        final class Wire {
+    @Test @MainActor func opencodeACPHasNoAskModeRoundTrip() {
+        @MainActor final class Wire {
             var lines: [[String: Any]] = []
-            lazy var server = CursorServer(name: "OpenCode", askMode: nil) { [unowned self] data in
+            lazy var server = CursorServer(write: { [unowned self] data in
                 if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
-            }
+            }, name: "OpenCode", askMode: nil)
             func reply(_ result: [String: Any]) -> [CursorServer.Heard] {
                 server.heard(["jsonrpc": "2.0", "id": lines.last?["id"] ?? 0, "result": result])
             }
@@ -109,8 +109,8 @@ struct OpenCodeTests {
         #expect(outcome?["outcome"] as? String == "cancelled")
     }
 
-    @Test func cursorStillSpeaksWithItsOwnName() {
-        final class Wire {
+    @Test @MainActor func cursorStillSpeaksWithItsOwnName() {
+        @MainActor final class Wire {
             var lines: [[String: Any]] = []
             lazy var server = CursorServer { [unowned self] data in
                 if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
@@ -124,6 +124,8 @@ struct OpenCodeTests {
         _ = wire.reply(["protocolVersion": 1])
         _ = wire.reply(["sessionId": "C1"])
         #expect(wire.lines.contains { ($0["method"] as? String) == "session/set_mode" })
+        _ = wire.reply([:])
+        wire.server.say("say")
         let heard = wire.server.heard(["method": "session/update", "params": ["sessionId": "C1", "update": [
             "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Run"]]])
         guard case .tool(let item) = heard.first else { Issue.record("no tool"); return }

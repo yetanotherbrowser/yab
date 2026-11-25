@@ -125,7 +125,7 @@ final class CursorServer {
                 guard let id = update["toolCallId"] as? String else { return [] }
                 let status = update["status"] as? String ?? "in_progress"
                 return [.tool(ChatItem(id: "\(name.lowercased()).tool.\(streamID)." + id, kind: .tool,
-                    name: update["title"] as? String ?? "\(name) tool", text: Self.text(update["content"]),
+                    name: "\(name) tool", text: Self.text(update["content"]),
                     state: status == "failed" ? .failed : status == "completed" ? .done : .running))]
             default: return []
             }
@@ -163,9 +163,9 @@ final class CursorServer {
             thread = id
             opening = nil
             if textOnly {
-                guard let askMode else {
-                    // No "ask" of its own (OpenCode): a text-only run
-                    // takes the no-tools helper first, then its model.
+                guard let askMode, configModel == nil else {
+                    // No "ask" of its own (OpenCode), or a model asked for: a
+                    // text-only run takes the no-tools helper first, then its model.
                     loading = true
                     request("session/set_config_option",
                             ["sessionId": id, "configId": "mode", "value": Self.helperMode], .mode)
