@@ -172,12 +172,26 @@ final class SyncBridge {
     /// Opening an inherited pin stays in the chosen space. Its today's copy
     /// has its own identity; the shared pin keeps its original sync parent.
     func openSharedPin(_ id: Tab.ID, in space: Space.ID) -> Bool {
-        guard sharesPins, let app, let target = app.browser.space(space),
+        guard let pin = inheritedPin(id, shownIn: space) else { return false }
+        app?.openFromMac(pin, in: space)
+        return true
+    }
+
+    /// Duplicate Tab on an inherited pin: a new copy in the chosen space, as
+    /// opening it stays there. Personal may be gone here (detachedSharedPin).
+    func duplicateSharedPin(_ id: Tab.ID, in space: Space.ID) -> Bool {
+        guard let pin = inheritedPin(id, shownIn: space) else { return false }
+        app?.duplicateFromMac(pin, in: space)
+        return true
+    }
+
+    /// A shared pin `space`'s page shows that isn't one of that space's own tabs.
+    private func inheritedPin(_ id: Tab.ID, shownIn space: Space.ID) -> SyncTab? {
+        guard sharesPins, let target = app?.browser.space(space), target.tab(id) == nil,
               !target.isPrivate, !target.ownSignIns,
               let source = ids.known(id), let pin = mirror.tabs[source],
-              pin.space == SyncCollection.firstSpace, pin.list == .pinned else { return false }
-        app.openFromMac(pin, in: space)
-        return true
+              pin.space == SyncCollection.firstSpace, pin.list == .pinned else { return nil }
+        return pin
     }
 
     private func detachedSharedPin(_ id: Tab.ID) -> SyncTab? {
@@ -545,7 +559,7 @@ final class SyncBridge {
         guard let setup else { return false }
         switch setup.keys.keep(seal, share: share) {
         case .localFailure:
-            joinError = "This iPhone could not save the Sync key. Unlock it and try again."
+            joinError = "This \(DeviceWord.name) could not save the Sync key. Unlock it and try again."
             Haptics.play(.error, reason: "sync key not saved")
             return false
         case .localOnly:
@@ -882,7 +896,7 @@ final class SyncBridge {
             return true
         } catch {
             log.error("sync didn't start: \(String(describing: error), privacy: .public)")
-            joinError = "Sync could not start on this iPhone. Unlock it and try again. Your saved data is unchanged."
+            joinError = "Sync could not start on this \(DeviceWord.name). Unlock it and try again. Your saved data is unchanged."
             phase = .off
             Motion.sheetRise.run { showsJoin = true }
             return false
@@ -1007,7 +1021,7 @@ final class SyncBridge {
             prepareAssistantNotifications()
             reconcileAssistantApprovals()
         case let .refused(why):
-            let words = why.replacingOccurrences(of: "This Mac", with: "This iPhone")
+            let words = why.replacingOccurrences(of: "This Mac", with: "This \(DeviceWord.name)")
             folderArtwork.reset()
             phase = .refused(words)
             Motion.sheetRise.run { showsJoin = true }
@@ -2072,7 +2086,7 @@ final class SyncBridge {
             case .syncChanged: "Sync changed while this question was being prepared. Ask again."
             case .unsupportedAgent: ChatAgent.unsupported
             case .chatNotReady: "Your Mac hasn't synced this chat yet. Wait for sync before sending more."
-            case .privateConversation: "Private conversations stay on this iPhone. Ask about a public page to use your Mac."
+            case .privateConversation: "Private conversations stay on this \(DeviceWord.name). Ask about a public page to use your Mac."
             }
         }
     }
@@ -2501,7 +2515,7 @@ final class SyncBridge {
         app?.tasks.arrived = nil
         SettingsUI.shared.recoveryShown = nil
         probe?.say("state", "turned off")
-        app?.say("Sync Is Off on This iPhone", glyph: .arrowRotateClockwise)
+        app?.say("Sync Is Off on This \(DeviceWord.name)", glyph: .arrowRotateClockwise)
     }
 
     /// The journal, key, token and id let go: what Join Again and Turn Off share.
@@ -2531,7 +2545,7 @@ final class SyncBridge {
     func openJoinLink(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "yab", url.host?.lowercased() == "join" else { return false }
         if phase == .on {
-            app?.say("This iPhone Is in Sync Already", glyph: .macbook)
+            app?.say("This \(DeviceWord.name) Is in Sync Already", glyph: .macbook)
         } else {
             joinWithInvite(url.absoluteString)
         }
@@ -2577,7 +2591,7 @@ final class SyncBridge {
                     switch failure {
                     case .server(409): self.joinError = "That code was used already. On your Mac, choose Add a Device for a new one."
                     case .expired: self.joinError = "That code ran out. On your Mac, choose Add a Device for a new one."
-                    default: self.joinError = "Your Mac couldn't let this iPhone in. Try again with a new code."
+                    default: self.joinError = "Your Mac couldn't let this \(DeviceWord.name) in. Try again with a new code."
                     }
                 }
             }

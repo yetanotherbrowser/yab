@@ -19,6 +19,10 @@ struct TabGalleryLayout: Equatable {
     var circle: CGRect? = nil
     /// Three cards whole across an unfolded Duo, side by side, none over another.
     var across = false
+    /// Where the page stands when it isn't the whole window: the iPad's
+    /// page card, beside its sidebar and under its toolbar. Cards grow out
+    /// of it and back into it, so the workspace never jumps when they go.
+    var pageFrame: CGRect? = nil
 
     private typealias G = Metrics.TabGallery
 
@@ -30,10 +34,11 @@ struct TabGalleryLayout: Equatable {
 
     /// The page as a card shows it whole: the whole screen, the bar floating
     /// over its foot as it does over the live page.
-    var page: CGRect { CGRect(x: 0, y: 0, width: screen.width, height: screen.height) }
+    var page: CGRect { pageFrame ?? CGRect(x: 0, y: 0, width: screen.width, height: screen.height) }
 
-    /// The share of a page's picture above its content area.
-    var contentTop: CGFloat { screen.height > 0 ? Metrics.statusBar / screen.height : 0 }
+    /// The share of a page's picture above its content area: none where the
+    /// page starts under a toolbar rather than under the status bar.
+    var contentTop: CGFloat { pageFrame != nil ? 0 : screen.height > 0 ? Metrics.statusBar / screen.height : 0 }
 
     /// How wide a card's kept picture is, in points (TabPictures): as wide as
     /// the widest card at rest, the tab in front's beside the focus.

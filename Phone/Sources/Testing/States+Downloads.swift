@@ -39,11 +39,28 @@ extension StateCatalog {
         },
         NamedState("downloads.now.open", "Now: done", "report-2026.pdf, Open: for about two seconds.") { app in
             let first = seed(app, running: false)
-            app.downloads.pretend(app.downloads.entries, flash: first)
+            app.downloads.pretend(app.downloads.entries, arrived: first)
         },
         NamedState("downloads.now.failed", "Now: failed", "report-2026.pdf, Failed; the row has Retry.") { app in
             let first = seed(app, running: false, failed: true)
-            app.downloads.pretend(app.downloads.entries, flash: first)
+            app.downloads.pretend(app.downloads.entries, arrived: first)
+        },
+        // On iPad, downloads.now and downloads.now.open are the sidebar's
+        // button with its ring and with the file's icon; these are the band's.
+        NamedState("downloads.tablet.ring", "iPad: file going, sidebar away", "The band's downloads button, beside + and All Tabs: the ring round its mark at 42%.") { app in
+            app.workspace.preferences.sidebarShown = false
+            seed(app)
+        },
+        NamedState("downloads.tablet.waiting", "iPad: file in, sidebar away", "The band's downloads button holds report-2026.pdf's icon, with no timer, until the list or the file opens.") { app in
+            app.workspace.preferences.sidebarShown = false
+            let first = seed(app, running: false)
+            app.downloads.pretend(app.downloads.entries, arrived: first)
+        },
+        NamedState("downloads.tablet.flight", "iPad: file thrown", "Download Linked File from mid-page: the dark disc with its white arrow halfway along its arc to the sidebar's downloads button, already shrinking.") { app in
+            app.workspace.preferences.sidebarShown = true
+            seed(app)
+            let size = app.workspace.windowSize
+            app.downloads.pretend(flight: "report-2026.pdf", from: CGPoint(x: size.width * 0.6, y: size.height * 0.45), held: 0.6)
         },
         NamedState("downloads.ask", "First file from a site", "A glass card over the plate: the file, “host · 2.9 MB”, Cancel and Download; the page live.") { app in
             app.downloads.pretend(ask: DownloadAsk(id: UUID(), name: "report-2026.pdf", host: host(app), size: 2_900_000, isPrivate: false))

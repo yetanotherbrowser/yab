@@ -63,7 +63,7 @@ final class TabletWorkspaceUITests: XCTestCase {
         try picture("ipad-compact-keyboard-dismissed")
         app.buttons["field.close"].tap()
         XCTAssertTrue(wait { !input.exists })
-        app.buttons["tablet.newTab"].tap()
+        app.buttons["tablet.sidebar.newTab"].tap()
         XCTAssertTrue(app.buttons["tablet.search.recent.0"].waitForExistence(timeout: 10))
         try picture("ipad-compact-new-tab")
         app.buttons["tablet.search.recent.0"].tap()
@@ -86,10 +86,12 @@ final class TabletWorkspaceUITests: XCTestCase {
         try picture("ipad-site-blocker-off")
         blocker.tap()
         XCTAssertTrue(wait { (blocker.value as? String) == "On" })
+        // An iPad asks for desktop sites, as Safari does; the switch asks for this one's mobile site.
         let desktop = app.buttons["site.desktop.toggle"]
+        XCTAssertEqual(desktop.value as? String, "On")
         desktop.tap()
-        XCTAssertTrue(wait { (desktop.value as? String) == "On" })
-        try picture("ipad-site-desktop-on")
+        XCTAssertTrue(wait { (desktop.value as? String) == "Off" })
+        try picture("ipad-site-desktop-off")
         app.buttons["site.zoom.in"].tap()
         XCTAssertTrue(wait { (self.app.buttons["site.zoom.reset"].value as? String) == "110%" })
         app.buttons["site.zoom.reset"].tap()
@@ -106,6 +108,24 @@ final class TabletWorkspaceUITests: XCTestCase {
         app.buttons["site.more"].tap()
         XCTAssertTrue(app.buttons["Yab Settings…"].waitForExistence(timeout: 5))
         try picture("ipad-site-more")
+    }
+
+    /// Print… in Site Controls shows the system's print panel on iPad:
+    /// present(animated:) is valid there, from the window.
+    func testTabletPrintShowsThePrintPanel() throws {
+        guard Atlas.model == "ipad" else { throw XCTSkip("Tablet UI") }
+        launch("page.1")
+        XCTAssertTrue(app.buttons["tablet.siteControls"].waitForExistence(timeout: 15))
+        app.buttons["tablet.siteControls"].tap()
+        XCTAssertTrue(element("site.more").waitForExistence(timeout: 10))
+        element("site.more").tap()
+        let print = app.buttons["Print…"]
+        XCTAssertTrue(print.waitForExistence(timeout: 10))
+        XCTAssertTrue(print.isEnabled, "a drawn page can print")
+        print.tap()
+        let panel = app.descendants(matching: .any).matching(NSPredicate(format: "label IN {'Print Options', 'Printer', 'Print'} OR identifier == 'Printer'")).firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 15), "no print panel")
+        try picture("ipad-print-panel")
     }
 
     func testTabletToolbarSearchSiteControlsAndStack() throws {
@@ -151,7 +171,9 @@ final class TabletWorkspaceUITests: XCTestCase {
         XCTAssertTrue(card.exists); card.tap()
         XCTAssertTrue(wait { !self.element("tabs.gallery").exists })
         try picture("ipad-tab-stack-closed")
-        app.buttons["tablet.newTab"].tap()
+        // The sidebar's + while it is there, the band's while it is away.
+        let sidebarNew = app.buttons["tablet.sidebar.newTab"]
+        (sidebarNew.exists && sidebarNew.isHittable ? sidebarNew : app.buttons["tablet.newTab"]).tap()
         let input = app.textFields["field.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 10)); input.typeText("Linear")
         let result = app.buttons["tablet.search.row.0"]
@@ -172,11 +194,11 @@ final class TabletWorkspaceUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(wait { (draft.value as? String) == "Second document stays" && self.app.frame.height > self.app.frame.width })
         XCTAssertFalse(element("tablet.addressBar.workspace-primary").exists)
-        XCTAssertFalse(app.buttons["workspace.menu"].exists)
+        XCTAssertFalse(app.buttons["tablet.paneMenu"].exists)
         try picture("ipad-split-portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         try picture("ipad-split-restoring-landscape")
-        XCTAssertTrue(wait { self.element("tablet.addressBar.workspace-primary").exists && self.app.buttons["workspace.menu"].isHittable })
+        XCTAssertTrue(wait { self.element("tablet.addressBar.workspace-primary").exists && self.app.buttons["tablet.paneMenu"].isHittable })
         XCTAssertEqual(draft.value as? String, "Second document stays")
         try picture("ipad-split-restored-landscape")
         focusCompanion(address: "firstdocument.com")
@@ -192,8 +214,8 @@ final class TabletWorkspaceUITests: XCTestCase {
         focusCompanion(address: "seconddocument.com")
         draft = element("tablet.pane.workspace-secondary").textFields["Draft"]
         XCTAssertTrue(wait { (draft.value as? String) == "Second document stays" })
-        app.buttons["workspace.menu"].tap()
-        app.buttons["Separate Split"].tap()
+        app.buttons["tablet.paneMenu"].tap()
+        app.buttons["Separate Split View"].tap()
         XCTAssertTrue(wait { !self.element("tablet.addressBar.workspace-primary").exists })
         XCTAssertEqual(draft.value as? String, "Second document stays")
         try picture("ipad-full-spread")
@@ -273,7 +295,7 @@ final class TabletWorkspaceUITests: XCTestCase {
         for state in ["page.1", "field.1", "site.1", "site.3", "settings.1", "welcome.5", "welcome.11", "stack.gallery"] {
             launch(state)
             if Atlas.model != "ipad" { XCTAssertFalse(app.buttons["tablet.address"].exists) }
-            if state.hasPrefix("welcome") { XCTAssertFalse(app.buttons["workspace.menu"].exists) }
+            if state.hasPrefix("welcome") { XCTAssertFalse(app.buttons["tablet.paneMenu"].exists) }
             if Atlas.model == "ipad", state.hasPrefix("welcome"), element("welcome.words").exists {
                 XCTAssertLessThanOrEqual(element("welcome.words").frame.width, 525)
             }

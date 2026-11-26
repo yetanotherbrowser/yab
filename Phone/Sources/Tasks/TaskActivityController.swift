@@ -177,7 +177,7 @@ enum TaskActivityContent {
         case .paying:
             state.word = "Paying"
             state.title = def.paying ?? "Pressing the site’s button"
-            state.line = "Signed with Face ID on this iPhone"
+            state.line = "Signed with Face ID on this \(DeviceWord.name)"
             state.buttons = []
         case .failed:
             state.warn = true

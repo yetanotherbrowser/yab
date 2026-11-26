@@ -97,22 +97,38 @@ final class TabletLayoutUITests: XCTestCase {
         try picture("06-pair-from-deck")
     }
 
-    func testExistingAppearanceCanHideAddressBarsAndSearchRemainsAvailable() throws {
+    /// The Mac's Show Address Bar: off, the address is the sidebar's plate;
+    /// on, a band over the page. Search is a tap or ⌘L away in both.
+    func testShowAddressBarMovesTheAddressAndSearchRemainsAvailable() throws {
         launch("page.1")
-        element("tablet.settings").tap()
+        let plate = element("tablet.addressPlate").waitForExistence(timeout: 10)
+        if !plate { try picture("07-before-settings") }
+        XCTAssertTrue(plate, "off, as the Mac: the address is the sidebar's plate")
+        // By touch: the simulator builds the menu on a first key, which can
+        // reach the system's own Settings item instead (⌘, has unit tests).
         let appearance = app.buttons["settings.row.appearance"]
+        app.buttons["tablet.siteControls"].tap()
+        XCTAssertTrue(element("site.more").waitForExistence(timeout: 10)); element("site.more").tap()
+        app.buttons["Yab Settings…"].tap()
         XCTAssertTrue(appearance.waitForExistence(timeout: 15)); appearance.tap()
+        // The iPad's rows stand at the page's foot: scrolled to, they load.
         let bars = app.switches["settings.row.appearance.addressBars"]
-        if !bars.isHittable { app.swipeUp() }
-        XCTAssertTrue(bars.waitForExistence(timeout: 10))
+        // Dragged by the page's margin: a drag started on a row could press it,
+        // and one of them opens the iOS Settings app.
+        let corner = app.buttons["settings.back"].coordinate(withNormalizedOffset: .zero)
+        for _ in 0..<4 where !(bars.waitForExistence(timeout: 2) && bars.isHittable) {
+            corner.withOffset(CGVector(dx: -6, dy: 520)).press(forDuration: 0.05, thenDragTo: corner.withOffset(CGVector(dx: -6, dy: 140)))
+        }
+        if !bars.isHittable { try picture("07-settings-no-switch") }
+        XCTAssertTrue(bars.isHittable)
         try picture("07-current-settings-with-tablet-rows")
-        XCTAssertEqual(bars.value as? String, "1"); bars.tap()
+        XCTAssertEqual(bars.value as? String, "0"); bars.tap()
         app.buttons["settings.back"].tap()
         XCTAssertTrue(app.buttons["settings.close"].waitForExistence(timeout: 10))
         app.buttons["settings.close"].tap()
         XCTAssertTrue(app.buttons["tablet.address"].waitForExistence(timeout: 10))
-        XCTAssertTrue(wait { !self.element("tablet.addressBar.work-figma-onb").exists })
-        try picture("08-address-bars-hidden")
+        XCTAssertTrue(wait { self.element("tablet.addressBar.work-figma-onb").exists && !self.element("tablet.addressPlate").exists })
+        try picture("08-address-bar-shown")
         app.buttons["tablet.address"].tap()
         XCTAssertTrue(app.textFields["field.input"].waitForExistence(timeout: 10))
         app.buttons["field.close"].tap()
@@ -123,6 +139,64 @@ final class TabletLayoutUITests: XCTestCase {
         }
         XCTAssertTrue(app.textFields["field.input"].exists)
         try picture("09-hidden-bars-command-L")
+    }
+
+    /// A site's first file asks from the sidebar's downloads button, and is answerable.
+    func testFirstDownloadAsksFromTheDownloadsButton() throws {
+        launch("downloads.ask")
+        XCTAssertEqual(app.buttons["tablet.downloads.sidebar"].value as? String, "Asking")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        XCTAssertTrue(download.isHittable)
+        try picture("12-download-ask")
+        download.tap()
+        XCTAssertTrue(wait { !download.exists })
+    }
+
+    func testDownloadsButtonListsFiles() throws {
+        launch("downloads.now")
+        app.buttons["tablet.downloads.sidebar"].tap()
+        XCTAssertTrue(element("downloads.page").waitForExistence(timeout: 10))
+        try picture("13-downloads-list")
+    }
+
+    /// A popover goes with a tap on the dimmed ground beside it.
+    private func closePopover() {
+        let ground = app.otherElements["PopoverDismissRegion"]
+        XCTAssertTrue(ground.waitForExistence(timeout: 10)); ground.tap()
+        XCTAssertTrue(wait { !self.app.popovers.firstMatch.exists && !ground.exists }, "the popover stayed")
+    }
+
+    /// The question dismissed, the sidebar hidden, the toolbar's question
+    /// dismissed and the sidebar shown again: its button brings the waiting
+    /// question back, and that popover goes with the answer too.
+    func testAQuestionTheSidebarBringsBackGoesWithItsAnswer() throws {
+        launch("downloads.ask")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        closePopover()
+        app.buttons["tablet.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15), "the toolbar's button asks in turn")
+        closePopover()
+        app.buttons["tablet.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15), "the sidebar's button asks again")
+        download.tap()
+        let ground = app.otherElements["PopoverDismissRegion"]
+        XCTAssertTrue(wait { !self.app.popovers.firstMatch.exists && !ground.exists }, "the list stayed open after the answer")
+    }
+
+    /// A question the person opened the popover for leaves the list open
+    /// once answered.
+    func testAQuestionThePersonOpenedLeavesTheList() throws {
+        launch("downloads.ask")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        closePopover()
+        app.buttons["tablet.downloads.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        download.tap()
+        XCTAssertTrue(wait { !download.exists })
+        XCTAssertTrue(app.popovers.firstMatch.exists, "the person's list stays")
     }
 
     /// All Tabs: a tap on any card takes that tab, the gallery goes, the workspace returns.
@@ -147,7 +221,7 @@ final class TabletLayoutUITests: XCTestCase {
 
     func testNewTabStaysInTheSpaceChosenInTheFooterAfterBrowsingSpaces() throws {
         launch("page.1")
-        element("tablet.settings").press(forDuration: 1)
+        element("tablet.sidebar.newTab").press(forDuration: 1)
         let browse = app.buttons["Spaces and Chats"]
         XCTAssertTrue(browse.waitForExistence(timeout: 5)); browse.tap()
         XCTAssertTrue(element("newtab.spaces").waitForExistence(timeout: 10))
@@ -155,7 +229,7 @@ final class TabletLayoutUITests: XCTestCase {
         let personal = app.buttons["tablet.space.personal"]
         XCTAssertTrue(personal.waitForExistence(timeout: 10)); personal.tap()
         XCTAssertTrue(wait { personal.isSelected })
-        app.buttons["tablet.newTab"].tap()
+        app.buttons["tablet.sidebar.newTab"].tap()
         let input = app.textFields["field.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 10)); input.typeText("example.com\n")
         XCTAssertTrue(wait { !input.exists })
@@ -180,5 +254,46 @@ final class TabletLayoutUITests: XCTestCase {
             XCTAssertTrue(wait { draft.exists && draft.value as? String == id + " saved" }, "back swipe completes in " + id)
             try picture("10-back-swipe-" + id)
         }
+    }
+
+    /// The narrowest split pane, the sidebar away: the address keeps its
+    /// room, and New Tab stays a tap away in the band's one menu.
+    func testNarrowSplitPaneKeepsItsAddressAndControls() throws {
+        launch("tablet.split.narrow")
+        let address = app.buttons["tablet.address"]
+        let newTab = app.buttons["tablet.newTab"]
+        let site = app.buttons["tablet.siteControls"]
+        XCTAssertTrue(newTab.waitForExistence(timeout: 10))
+        try picture("16-narrow-split")
+        XCTAssertGreaterThanOrEqual(address.frame.width, 90, "the address keeps room in a 320-point pane")
+        XCTAssertTrue(address.isHittable)
+        XCTAssertTrue(newTab.isHittable)
+        XCTAssertTrue(site.isHittable)
+        XCTAssertFalse(address.frame.intersects(newTab.frame))
+        XCTAssertFalse(address.frame.intersects(site.frame))
+        XCTAssertTrue(app.frame.contains(newTab.frame))
+        XCTAssertTrue(app.buttons["tablet.sidebar"].isHittable, "the first pane keeps the sidebar's door")
+        newTab.tap()
+        XCTAssertTrue(app.textFields["field.input"].waitForExistence(timeout: 10))
+    }
+
+    /// A space with no tab and the sidebar away still offers New Tab and
+    /// the sidebar's door.
+    func testEmptySpaceKeepsNewTabAndTheSidebarDoor() throws {
+        XCTAssertTrue(Atlas.launch(app, state: "tablet.empty", ready: ready))
+        let door = app.buttons["tablet.sidebar"]
+        let newTab = app.buttons["tablet.newTab"]
+        let shown = door.waitForExistence(timeout: 15) && newTab.waitForExistence(timeout: 5)
+        try picture("17-empty-space")
+        XCTAssertTrue(shown)
+        XCTAssertTrue(door.isHittable)
+        XCTAssertTrue(newTab.isHittable)
+        newTab.tap()
+        XCTAssertTrue(app.textFields["field.input"].waitForExistence(timeout: 10))
+        app.buttons["field.close"].tap()
+        XCTAssertTrue(wait { !self.app.textFields["field.input"].exists })
+        door.tap()
+        XCTAssertTrue(wait { door.value as? String == "shown" })
+        try picture("18-empty-space-sidebar")
     }
 }

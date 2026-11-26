@@ -95,10 +95,10 @@ struct BrowserWorkspaceView<Content: View>: View {
         Menu {
             Button { app.field.openSpaces() } label: { menuLabel("Show Tabs", .yabSidebar) }
             if !app.pageIsPrivate, let current = app.browser.tab, !current.isMail {
-                Button { app.newTabBeside() } label: { menuLabel("Open Beside", .yabSplitPlus) }
+                Button { app.newTabBeside() } label: { menuLabel("Split View", .yabSplitPlus) }
                 if app.workspace.paired {
-                    Button { app.workspace.fullSpread() } label: { menuLabel("Full Spread", .yabSplitSlash) }
-                    Button { app.closeWorkspacePage() } label: { menuLabel("Close Page", .yabTabX) }
+                    Button { app.workspace.fullSpread() } label: { menuLabel("Separate Split View", .yabSplitSlash) }
+                    Button { app.closeWorkspacePage() } label: { menuLabel("Close Split", .yabTabX) }
                 }
             }
         } label: {

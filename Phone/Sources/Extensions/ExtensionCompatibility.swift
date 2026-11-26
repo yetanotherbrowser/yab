@@ -23,7 +23,7 @@ enum ExtensionCompatibility {
         return value as? Bool == true || (value as? String)?.uppercased() == "YES"
     }
 
-    static let waitingForApple = "It runs in the background, which Yab for iPhone can do once Apple grants it the browser permission."
+    static let waitingForApple = "It runs in the background, which Yab for \(DeviceWord.name) can do once Apple grants it the browser permission."
 
     /// What the probe found on an iPhone, by store id (with the browser
     /// entitlement). Their manifests are read too; this is what they do.
@@ -39,18 +39,18 @@ enum ExtensionCompatibility {
         "mnjggcdmjocbbbhaepdhchncahnbgone": Verdict(kind: .works, reason: ""),  // SponsorBlock
         "ddkjiahejlhfcafbddmgiahcphecmpfh": Verdict(kind: .works, reason: ""),  // uBlock Origin Lite
         // Work in part.
-        "nngceckbapebfimnlniiiahkandclblb": Verdict(kind: .limited, reason: "Unlocking with its app on a computer doesn't work on iPhone; sign in with your master password."),  // Bitwarden
-        "aeblfdkhhhdcdjpifhhbdiojplfjncoa": Verdict(kind: .limited, reason: "Unlocking with its app on a computer doesn't work on iPhone; sign in to 1Password in the extension."),  // 1Password
+        "nngceckbapebfimnlniiiahkandclblb": Verdict(kind: .limited, reason: "Unlocking with its app on a computer doesn't work on \(DeviceWord.name); sign in with your master password."),  // Bitwarden
+        "aeblfdkhhhdcdjpifhhbdiojplfjncoa": Verdict(kind: .limited, reason: "Unlocking with its app on a computer doesn't work on \(DeviceWord.name); sign in to 1Password in the extension."),  // 1Password
         "cfhdojbkjhnklbpkdaibdccddilifddb": Verdict(kind: .limited, reason: "It blocks ads, but its counts of what it blocked stay empty."),  // Adblock Plus
         "bhlhnicpbhignbdhedgjhgdocnmhomnp": Verdict(kind: .limited, reason: "Its tools open, but picking a color from the page may not work."),  // ColorZilla
         // Don't work.
-        "gighmmpiobklfepjocnamgkkbiglidom": Verdict(kind: .blocked, reason: "Its background stops on a kind of request iPhone's WebKit doesn't know, so it blocks nothing."),  // AdBlock
-        "dhdgffkkebhmkfjojejmpbldmpobfkfo": Verdict(kind: .blocked, reason: "User scripts can't run on iPhone yet."),  // Tampermonkey
-        "pkehgijcmpdhfbdbbnkijodmdjhbjlgp": Verdict(kind: .blocked, reason: "Its window stays empty and most of its blocking rules aren't taken on iPhone."),  // Privacy Badger
-        "bmnlcjabgnpnenekpadlanbbkooimhnj": Verdict(kind: .blocked, reason: "Its background stops on something iPhone doesn't have, so it finds no coupons."),  // Honey
-        "fmkadmapgofadopljbjfkapdkoienihi": Verdict(kind: .blocked, reason: "It lives in Developer Tools, which iPhone doesn't have."),  // React Developer Tools
-        "liecbddmkiiihnedobmlmillhodjkdmb": Verdict(kind: .blocked, reason: "It records the screen, which an iPhone browser can't."),  // Loom
-        "laookkfknpbbblfpciffpaejjkokdgca": Verdict(kind: .blocked, reason: "It replaces the new tab page, which Yab for iPhone doesn't have."),  // Momentum
+        "gighmmpiobklfepjocnamgkkbiglidom": Verdict(kind: .blocked, reason: "Its background stops on a kind of request \(DeviceWord.name)'s WebKit doesn't know, so it blocks nothing."),  // AdBlock
+        "dhdgffkkebhmkfjojejmpbldmpobfkfo": Verdict(kind: .blocked, reason: "User scripts can't run on \(DeviceWord.name) yet."),  // Tampermonkey
+        "pkehgijcmpdhfbdbbnkijodmdjhbjlgp": Verdict(kind: .blocked, reason: "Its window stays empty and most of its blocking rules aren't taken on \(DeviceWord.name)."),  // Privacy Badger
+        "bmnlcjabgnpnenekpadlanbbkooimhnj": Verdict(kind: .blocked, reason: "Its background stops on something \(DeviceWord.name) doesn't have, so it finds no coupons."),  // Honey
+        "fmkadmapgofadopljbjfkapdkoienihi": Verdict(kind: .blocked, reason: "It lives in Developer Tools, which \(DeviceWord.name) doesn't have."),  // React Developer Tools
+        "liecbddmkiiihnedobmlmillhodjkdmb": Verdict(kind: .blocked, reason: "It records the screen, which an \(DeviceWord.name) browser can't."),  // Loom
+        "laookkfknpbbblfpciffpaejjkokdgca": Verdict(kind: .blocked, reason: "It replaces the new tab page, which Yab for \(DeviceWord.name) doesn't have."),  // Momentum
         "ghbmnnjooekpmoecnnnilnnbdlolhkhi": Verdict(kind: .blocked, reason: "It keeps Google Docs offline in Chrome only."),  // Google Docs Offline
     ]
 
@@ -76,20 +76,20 @@ enum ExtensionCompatibility {
         }
         if let found = known[id] { return found }
         if background["persistent"] as? Bool == true {
-            return Verdict(kind: .blocked, reason: "It keeps a page running in the background all the time, which iPhone doesn't allow.")
+            return Verdict(kind: .blocked, reason: "It keeps a page running in the background all the time, which \(DeviceWord.name) doesn't allow.")
         }
         let action = (manifest["action"] ?? manifest["browser_action"]) as? [String: Any] ?? [:]
         let content = (manifest["content_scripts"] as? [Any])?.isEmpty == false
         if manifest["devtools_page"] != nil, action["default_popup"] == nil, !content {
-            return Verdict(kind: .blocked, reason: "It lives in Developer Tools, which iPhone doesn't have.")
+            return Verdict(kind: .blocked, reason: "It lives in Developer Tools, which \(DeviceWord.name) doesn't have.")
         }
         let asked = Set(((manifest["permissions"] as? [Any] ?? []) + (manifest["optional_permissions"] as? [Any] ?? [])).compactMap { $0 as? String })
         let lacks = Set(asked.compactMap { missing[$0] }).sorted()
         if !lacks.isEmpty {
-            return Verdict(kind: .limited, reason: "Parts of it need " + lacks.joined(separator: ", ") + ", which iPhone doesn't have.")
+            return Verdict(kind: .limited, reason: "Parts of it need " + lacks.joined(separator: ", ") + ", which \(DeviceWord.name) doesn't have.")
         }
         if asked.contains("nativeMessaging") {
-            return Verdict(kind: .limited, reason: "The parts that talk to its app on a computer don't work on iPhone.")
+            return Verdict(kind: .limited, reason: "The parts that talk to its app on a computer don't work on \(DeviceWord.name).")
         }
         return Verdict(kind: .works, reason: "")
     }

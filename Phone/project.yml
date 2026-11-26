@@ -162,7 +162,7 @@ targets:
         NSFaceIDUsageDescription: "Face ID unlocks your private tabs and signs the payment, post or change your Mac asks you to say yes to."
         NSCameraUsageDescription: "Yab uses the camera to scan a QR code or take a photo for a chat when you ask it to, and websites you choose can ask to use it for calls or photos."
         NSMicrophoneUsageDescription: "Yab listens when you search by voice, and websites you choose can ask to use your microphone for calls or recordings."
-        NSSpeechRecognitionUsageDescription: "Yab turns what you say into words when you search by voice, on this iPhone when it can."
+        NSSpeechRecognitionUsageDescription: "Yab turns what you say into words when you search by voice, on this device when it can."
         NSPhotoLibraryAddUsageDescription: "Yab saves the images you choose to your photo library."
         NSLocationWhenInUseUsageDescription: "Websites you choose can ask for your location while you use Yab."
         NSAppTransportSecurity:
@@ -208,7 +208,7 @@ targets:
         INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "Yab uses the camera to scan a QR code or take a photo for a chat when you ask it to, and websites you choose can ask to use it for calls or photos."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Yab listens when you search by voice, and websites you choose can ask to use your microphone for calls or recordings."
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Yab turns what you say into words when you search by voice, on this iPhone when it can."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Yab turns what you say into words when you search by voice, on this device when it can."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Yab saves the images you choose to your photo library."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Websites you choose can ask for your location while you use Yab."
         # A task's Live Activity, and Face ID signing its yes (Tasks/).
@@ -326,6 +326,7 @@ targets:
       - path: Sources/Design/DateOrder.swift  # Date >=/<= of our own (DateOrder.swift)
       - path: Sources/Sync/ApprovalNotice.swift
       - path: Sources/Sync/SyncKeychain.swift
+      - path: Sources/Design/DeviceWord.swift  # SyncKeychain names the device
     dependencies:
       - target: SyncKit
         embed: false

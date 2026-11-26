@@ -446,7 +446,7 @@ final class TaskDesk {
         if !app.isFixture {
             guard let snapshot = app.sync.visibleLiveTask(id), snapshot.observation?.status == .done else { return }
             if !app.tasks.markLiveSeen(snapshot) {
-                app.say("Couldn’t save read status on this iPhone", glyph: .macbook)
+                app.say("Couldn’t save read status on this \(DeviceWord.name)", glyph: .macbook)
             }
             return
         }

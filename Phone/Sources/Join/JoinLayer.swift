@@ -37,7 +37,7 @@ struct JoinContent: View {
                     .accessibilityIdentifier("join.retry")
             }
             if sync.phase == .on, sync.keySharingUnavailable {
-                Text("Connected on this iPhone. iCloud Keychain could not share the key. You can still join another device with a code.")
+                Text("Connected on this \(DeviceWord.name). iCloud Keychain could not share the key. You can still join another device with a code.")
                     .font(.footnote)
                     .foregroundStyle(SettingsInk.footer)
                     .fixedSize(horizontal: false, vertical: true)
@@ -80,7 +80,7 @@ private struct CodeSections: View {
         JoinSection(nil, foot: "Or on your Mac choose Add a Device, and scan the code it shows.") {
             JoinRow(.camera1, "Scan QR", id: "join.scan") { app.sync.showScanner(true) }
         }
-        JoinSection(nil, foot: "A Mac on the same Apple ID shares the key through iCloud Keychain, and this iPhone joins by itself.") {
+        JoinSection(nil, foot: "A Mac on the same Apple ID shares the key through iCloud Keychain, and this \(DeviceWord.name) joins by itself.") {
             JoinRow(.key1, "Use the Recovery Key", id: "join.recovery") { app.sync.showRecovery(true) }
         }
     }
@@ -133,7 +133,7 @@ private struct ScanSections: View {
             .glassPlate(RoundedRectangle(cornerRadius: Metrics.Sync.fieldHeight / 2, style: .continuous))
         }
         JoinSection(nil, foot: nil) {
-            JoinRow(.macbook, "Show This iPhone’s Code", id: "join.back") { app.sync.showScanner(false) }
+            JoinRow(.macbook, "Show This \(DeviceWord.name)’s Code", id: "join.back") { app.sync.showScanner(false) }
         }
     }
 }
@@ -145,7 +145,7 @@ private struct InviteSections: View {
     let check: String
 
     var body: some View {
-        JoinSection("Check Your Mac", foot: "Your Mac asks whether this iPhone shows these digits. If they match, choose Let In there.") {
+        JoinSection("Check Your Mac", foot: "Your Mac asks whether this \(DeviceWord.name) shows these digits. If they match, choose Let In there.") {
             VStack(spacing: Metrics.Sync.codeWordsGap) {
                 Text(check.map(String.init).joined(separator: " "))
                     .font(.system(.largeTitle, design: .rounded).weight(.semibold).monospacedDigit())
@@ -163,7 +163,7 @@ private struct InviteSections: View {
             .padding(.bottom, Metrics.Sync.codeBottom)
         }
         JoinSection(nil, foot: nil) {
-            JoinRow(.macbook, "Show This iPhone’s Code", id: "join.back") { app.sync.showScanner(false) }
+            JoinRow(.macbook, "Show This \(DeviceWord.name)’s Code", id: "join.back") { app.sync.showScanner(false) }
         }
     }
 }
@@ -245,7 +245,7 @@ private struct RefusedSections: View {
     let why: String
 
     var body: some View {
-        JoinSection(nil, foot: "Joining again takes a code from your Mac or the Recovery Key. What is on this iPhone stays as it is.") {
+        JoinSection(nil, foot: "Joining again takes a code from your Mac or the Recovery Key. What is on this \(DeviceWord.name) stays as it is.") {
             HStack(spacing: Metrics.Sync.rowGap) {
                 JoinIcon(.macbook)
                 Text(why)
@@ -281,7 +281,7 @@ private struct InSyncSections: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        JoinSection(nil, foot: "Tabs, chats and tasks sync end to end encrypted: Yab can’t read them. To take this iPhone out, remove it in Settings › Sync on your Mac.") {
+        JoinSection(nil, foot: "Tabs, chats and tasks sync end to end encrypted: Yab can’t read them. To take this \(DeviceWord.name) out, remove it in Settings › Sync on your Mac.") {
             HStack(spacing: Metrics.Sync.rowGap) {
                 JoinIcon(.macbook)
                 Text("In sync with \(app.macName)")

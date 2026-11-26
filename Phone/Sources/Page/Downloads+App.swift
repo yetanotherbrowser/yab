@@ -16,6 +16,13 @@ extension AppModel {
             guard let self else { answer(false); return }
             self.askDownload(question, answer: answer)
         }
+        // A document a tab opened (a PDF) is whole: it shows in the system's
+        // viewer when it may (showsDocument).
+        pages.onViewDownload = { [weak self] tab, entry in
+            guard let self, let file = downloads.entry(entry),
+                  showsDocument(file, for: tab, appActive: UIApplication.shared.applicationState == .active) else { return }
+            openDownload(file)
+        }
         pages.onImageSaved = { [weak self] outcome in
             switch outcome {
             case .saved: self?.say("Saved to Photos", glyph: .checkCircle2)
@@ -24,6 +31,21 @@ extension AppModel {
             case .failed: self?.say("Couldn’t get this image", glyph: .exclamationCircle)
             }
         }
+    }
+
+    /// The viewer opens only over the tab the file is for (WebPool names the
+    /// opener for a window that was only the file), when it may present
+    /// there. Otherwise the file just lands in Downloads.
+    func showsDocument(_ file: DownloadEntry, for tab: Tab.ID, appActive: Bool) -> Bool {
+        presents(for: tab, isPrivate: file.isPrivate, appActive: appActive)
+    }
+
+    /// Something made for a tab after a wait (a document it opened, its page
+    /// as a PDF) shows only over that tab, in front of an active Yab and of
+    /// the page's own privacy, and a private one only while Private may be
+    /// seen: by then the person may have moved on, left Yab or locked Private.
+    func presents(for tab: Tab.ID, isPrivate: Bool, appActive: Bool) -> Bool {
+        appActive && browser.tab?.id == tab && isPrivate == pageIsPrivate && (!isPrivate || privateLock.mayReveal)
     }
 
     /// An allowed site doesn't ask, one told no doesn't send. A private tab
@@ -73,9 +95,9 @@ extension AppModel {
     /// The Now line: Open opens the file; otherwise the sheet comes out of
     /// the plate with Downloads already on it.
     func tapDownloadLine() {
-        if let flash = downloads.flash, let file = downloads.entry(flash), file.isDone,
+        if let arrival = downloads.arrival, arrival.done, !arrival.said, !arrival.seen,
+           let file = downloads.entry(arrival.id),
            downloads.list(isPrivate: pageIsPrivate).allSatisfy({ !$0.isRunning }) {
-            downloads.flashTaken()
             openDownload(file)
             return
         }
@@ -97,19 +119,14 @@ extension AppModel {
 
     func openDownload(_ file: DownloadEntry) {
         guard let url = downloads.url(of: file) else { return }
-        FilePreview.show(url)
+        downloads.seen(file.id)
+        presentPreview(url, isPrivate: file.isPrivate)
     }
 
     func shareDownload(_ file: DownloadEntry) {
         guard let url = downloads.url(of: file) else { return }
         // A turn later, so the row's menu is gone from under it.
-        DispatchQueue.main.async {
-            guard let root = Self.topController() else { return }
-            let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
-            root.present(sheet, animated: !Motion.disabled)
-        }
+        DispatchQueue.main.async { [weak self] in self?.presentShare([url], isPrivate: file.isPrivate) }
     }
 
     func showDownloadInFiles(_ file: DownloadEntry) {

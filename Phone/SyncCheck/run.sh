@@ -45,7 +45,7 @@ xcrun swiftc --version 2>&1 | head -1
 # The engine alone: Phone/Sources/Sync also holds the app's side of sync
 # (SyncBridge, SyncMapping, SyncMarks, SyncProbe, SyncMirror), built on the
 # app's own types; those are checked by the app's tests and sync-e2e.
-ENGINE="Phone/Sources/Sync/PhoneSync.swift Phone/Sources/Sync/SyncKeychain.swift Phone/Sources/Sync/PhonePairing.swift"
+ENGINE="Phone/Sources/Sync/PhoneSync.swift Phone/Sources/Sync/SyncKeychain.swift Phone/Sources/Sync/PhonePairing.swift Phone/Sources/Design/DeviceWord.swift"
 
 if wants ios; then
     SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)

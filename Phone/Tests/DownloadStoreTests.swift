@@ -89,6 +89,41 @@ final class DownloadStoreTests: XCTestCase {
         XCTAssertEqual(store().entries.map(\.name), ["whole.pdf"])
     }
 
+    /// A file that ends while a list of its own kind is open was watched; one
+    /// the open list doesn't show, or one that ends with Yab away, waits.
+    func testAFileEndingInAnOpenListIsSeen() throws {
+        let store = store()
+        store.showsList("button", isPrivate: false)
+        try finished(store, "seen.pdf")
+        XCTAssertEqual(store.arrival?.seen, true)
+        try finished(store, "secret.pdf", isPrivate: true)
+        XCTAssertEqual(store.arrival?.seen, false, "an ordinary list doesn't show a private file")
+        store.leave()
+        try finished(store, "away.pdf")
+        store.comeBack()
+        XCTAssertEqual(store.arrival?.seen, false, "nobody watched it end")
+        store.showsList("button", isPrivate: nil)
+        try finished(store, "closed.pdf")
+        XCTAssertEqual(store.arrival?.seen, false, "the list closed")
+    }
+
+    /// A list opened shows only its own kind's files: the other kind's last
+    /// file still waits on its button.
+    func testOpeningAListSeesOnlyAFileItShows() throws {
+        let store = store()
+        try finished(store, "secret.pdf", isPrivate: true)
+        store.showsList("button", isPrivate: false)
+        XCTAssertEqual(store.arrival?.seen, false, "an ordinary list doesn't show a private file")
+        store.showsList("button", isPrivate: true)
+        XCTAssertEqual(store.arrival?.seen, true)
+        store.showsList("button", isPrivate: nil)
+        try finished(store, "open.pdf")
+        store.showsList("button", isPrivate: true)
+        XCTAssertEqual(store.arrival?.seen, false, "a private list doesn't show an ordinary file")
+        store.showsList("button", isPrivate: false)
+        XCTAssertEqual(store.arrival?.seen, true)
+    }
+
     func testAPrivateFileStaysOutAndGoesWithThePrivateTabs() throws {
         let first = store()
         let id = try finished(first, "secret.pdf", isPrivate: true)
@@ -103,6 +138,130 @@ final class DownloadStoreTests: XCTestCase {
         first.forgetPrivate()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertEqual(first.entries.map(\.name), ["open.pdf"])
+    }
+
+    /// Retry starts a private row again under its id: whatever the new
+    /// transfer says, the row stays private and its file lands in private.
+    func testARetriedPrivateRowStaysPrivate() throws {
+        let store = store()
+        let id = UUID()
+        store.begin(id, name: "secret.pdf", host: "acme.com", total: nil, isPrivate: true, control: .init())
+        store.fail(id, retry: {})
+        store.begin(id, name: "secret.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init())
+        XCTAssertEqual(store.entry(id)?.isPrivate, true)
+        XCTAssertTrue(store.finish(id, from: try incoming()))
+        let entry = try XCTUnwrap(store.entry(id))
+        XCTAssertEqual(try XCTUnwrap(store.url(of: entry)).deletingLastPathComponent().lastPathComponent, "private")
+        XCTAssertTrue(store.list(isPrivate: false).isEmpty)
+    }
+
+    /// The iPad's button: a file pressed for flies from where it was held,
+    /// only where something draws the flight; one with no place only bumps.
+    func testAFileFliesFromWhereItWasHeldOnlyWhereFlightsAreDrawn() {
+        let store = store()
+        let at = CGPoint(x: 120, y: 340)
+        store.begin(UUID(), name: "a.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init(), from: at)
+        XCTAssertTrue(store.flights.isEmpty, "the phone's Now line says it instead")
+        XCTAssertEqual(store.bumps, 1)
+        store.flies = true
+        let thrown = UUID()
+        store.begin(thrown, name: "b.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init(), from: at)
+        XCTAssertEqual(store.flights, [DownloadStore.Flight(id: thrown, from: at, name: "b.pdf")])
+        XCTAssertEqual(store.bumps, 1, "no bump until it lands")
+        store.landed(thrown)
+        XCTAssertTrue(store.flights.isEmpty)
+        XCTAssertEqual(store.bumps, 2)
+        store.begin(UUID(), name: "c.pdf", host: "acme.com", total: nil, isPrivate: false, control: .init())
+        XCTAssertTrue(store.flights.isEmpty, "no place held: the button only gives")
+        XCTAssertEqual(store.bumps, 3)
+    }
+
+    /// One fact, the last file in: the iPad's button keeps a done file's
+    /// icon, with no timer, until the list or the file opens, or the file goes.
+    func testTheLastFileWaitsUntilSeen() throws {
+        let store = store()
+        let first = try finished(store, "one.pdf")
+        XCTAssertEqual(store.arrival?.id, first)
+        XCTAssertEqual(store.arrival?.done, true)
+        XCTAssertEqual(store.arrival?.seen, false)
+        let second = try finished(store, "two.pdf")
+        XCTAssertEqual(store.arrival?.id, second, "the newest one")
+        store.seen(first)
+        XCTAssertEqual(store.arrival?.seen, false, "opening another file leaves it")
+        store.seen(second)
+        XCTAssertEqual(store.arrival?.seen, true)
+        try finished(store, "three.pdf")
+        store.listOpened(isPrivate: false)
+        XCTAssertEqual(store.arrival?.seen, true, "the list opened")
+        let fourth = try finished(store, "four.pdf")
+        store.delete(fourth)
+        XCTAssertNil(store.arrival)
+        let secret = try finished(store, "secret.pdf", isPrivate: true)
+        XCTAssertEqual(store.arrival?.id, secret)
+        store.forgetPrivate()
+        XCTAssertNil(store.arrival, "gone with the private tabs")
+        let broken = UUID()
+        store.begin(broken, name: "broken.zip", host: "acme.com", total: nil, isPrivate: false, control: .init())
+        store.fail(broken, retry: {})
+        XCTAssertEqual(store.arrival?.id, broken)
+        XCTAssertEqual(store.arrival?.done, false, "a failure is the last file in too")
+        store.begin(broken, name: "broken.zip", host: "acme.com", total: nil, isPrivate: false, control: .init())
+        XCTAssertNil(store.arrival, "tried again: not in yet")
+    }
+
+    /// A list opened shows only its own kind's files: the other kind's last
+    /// file still waits on its button.
+    func testShowsListSeesOnlyAFileItShows() throws {
+        let store = store()
+        try finished(store, "secret.pdf", isPrivate: true)
+        store.listOpened(isPrivate: false)
+        XCTAssertEqual(store.arrival?.seen, false, "an ordinary list doesn't show a private file")
+        store.listOpened(isPrivate: true)
+        XCTAssertEqual(store.arrival?.seen, true)
+        try finished(store, "open.pdf")
+        store.listOpened(isPrivate: true)
+        XCTAssertEqual(store.arrival?.seen, false, "a private list doesn't show an ordinary file")
+        store.listOpened(isPrivate: false)
+        XCTAssertEqual(store.arrival?.seen, true)
+    }
+
+    /// The Now line's two seconds are the line's: the icon the iPad keeps
+    /// outlives them, and a file seen ends the line at once.
+    func testTheLineEndsWithoutEndingTheArrival() async throws {
+        let store = store()
+        let id = try finished(store, "report.pdf")
+        XCTAssertEqual(store.nowItem(isPrivate: false)?.subtitle, "Open")
+        try await Task.sleep(for: .milliseconds(2300))
+        XCTAssertNil(store.nowItem(isPrivate: false))
+        XCTAssertEqual(store.arrival?.id, id)
+        XCTAssertEqual(store.arrival?.seen, false, "still waiting on the iPad's button")
+        let next = try finished(store, "next.pdf")
+        store.seen(next)
+        XCTAssertNil(store.nowItem(isPrivate: false), "opened: the line has nothing to say")
+    }
+
+    /// Away, the file is in but nothing says it; back, the line has its
+    /// whole two seconds.
+    func testAwayTheLineWaitsForTheReturn() throws {
+        let store = store()
+        store.leave()
+        let id = try finished(store, "report.pdf")
+        XCTAssertEqual(store.arrival?.id, id)
+        XCTAssertNil(store.nowItem(isPrivate: false), "nothing is said while Yab is away")
+        store.comeBack()
+        XCTAssertEqual(store.nowItem(isPrivate: false)?.subtitle, "Open")
+    }
+
+    /// Documents open as files; pages, pictures and text stay pages.
+    func testWhichTypesOpenInTheViewer() {
+        for type in ["application/pdf", "Application/PDF; charset=binary", "text/pdf",
+                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.apple.keynote"] {
+            XCTAssertTrue(PageDocument.opensInViewer(type), type)
+        }
+        for type in ["text/html", "image/png", "video/mp4", "text/plain", "application/json", ""] {
+            XCTAssertFalse(PageDocument.opensInViewer(type), type)
+        }
+        XCTAssertFalse(PageDocument.opensInViewer(nil))
     }
 
     func testALaunchClearsWhatAKilledPrivateSessionLeft() throws {
@@ -151,7 +310,7 @@ final class DownloadStoreTests: XCTestCase {
         store.finish(done, from: try incoming())
         item = try XCTUnwrap(store.nowItem(isPrivate: false))
         XCTAssertEqual(item.subtitle, "Open")
-        store.flashTaken()
+        store.seen(done)
         XCTAssertNil(store.nowItem(isPrivate: false), "it leaves; the file stays")
         XCTAssertEqual(store.entries.count, 1)
     }

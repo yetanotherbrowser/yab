@@ -266,7 +266,7 @@ final class SyncBridgeTests: XCTestCase {
         let keys = SyncKeychain.testing(folder: folder.appendingPathComponent("keys"))
         let id = keys.deviceID
         server.revoke(id)
-        let told = await until { app.sync.phase == .refused("This iPhone was removed from Sync.") }
+        let told = await until { app.sync.phase == .refused("This \(DeviceWord.name) was removed from Sync.") }
         XCTAssertTrue(told, "\(app.sync.phase)")
         XCTAssertTrue(app.sync.showsJoin)
         app.sync.joinAgain()
@@ -533,6 +533,73 @@ final class SyncBridgeTests: XCTestCase {
         XCTAssertEqual(app.sync.engine?.tab(pinID)?.list, .today)
         XCTAssertEqual(app.sync.engine?.tab(pinID)?.space, work)
         XCTAssertTrue(app.sync.pins(in: try XCTUnwrap(app.browser.space(work))).allSatisfy { $0.id != pinID })
+    }
+
+    /// A hold on a shared pin whose Personal was deleted here: no tab here
+    /// owns it, as a tap on it, Duplicate Tab and Ask About Page open it in
+    /// the space whose page shows it. The pin stays Personal's.
+    func testHoldingASharedPinWithoutItsPersonalCopiesItIntoTheSpaceShowingIt() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let pinID = "AAAAAAAA-0000-4000-8000-000000001481"
+        let url = "https://shared.test/held"
+        try mac.write(SyncCollection.tab, pinID,
+                      SyncTab(id: pinID, space: first, url: url, title: "Held", pin: "H").fields)
+        try mac.write(SyncCollection.setting, SyncBridge.sharedPinsKey, ["value": .bool(true)])
+        try mac.journal.remove(.init(collection: SyncCollection.space, id: first))
+        mac.client.kick()
+        let app = try await phone(server, seal)
+        defer { app.sync.engine?.stop() }
+        let loaded = await until { app.sync.sharesPins && app.browser.space(self.work).map { app.sync.pins(in: $0).contains { $0.id == pinID } } == true }
+        XCTAssertTrue(loaded)
+        let pin = try XCTUnwrap(app.sync.pins(in: try XCTUnwrap(app.browser.space(work))).first { $0.id == pinID })
+        XCTAssertNil(app.browser.space(holding: pinID), "no space here owns it")
+        func copies() -> [Tab] { app.browser.space(work)?.allTabs.filter { $0.navigationURL?.absoluteString == url } ?? [] }
+
+        let duplicate = try XCTUnwrap(TabHold.pageItems(pin, app: app, page: work).first { $0.title == "Duplicate Tab" })
+        duplicate.run()
+        XCTAssertEqual(copies().count, 1)
+        XCTAssertEqual(app.browser.spaceID, work)
+        XCTAssertEqual(app.browser.tab?.navigationURL?.absoluteString, url, "the copy comes in front")
+        XCTAssertNotEqual(app.browser.tab?.id, pinID)
+        duplicate.run()
+        XCTAssertEqual(copies().count, 2, "each Duplicate Tab is a new copy")
+
+        app.browser.select(try XCTUnwrap(app.browser.space(work)?.allTabs.first { $0.navigationURL?.absoluteString != url }?.id))
+        TabHold.ask(pin, app: app, page: work)
+        XCTAssertEqual(app.browser.tab?.navigationURL?.absoluteString, url, "Ask About Page asks about the pin's page")
+
+        app.sync.flushLocal()
+        XCTAssertEqual(app.sync.engine?.tab(pinID)?.space, first)
+        XCTAssertEqual(app.sync.engine?.tab(pinID)?.list, .pinned)
+    }
+
+    /// With Personal here, a shared pin held on another sharing space's
+    /// page is copied into that space, as a tap there opens it there.
+    func testDuplicatingASharedPinStaysInTheSpaceShowingIt() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let pinID = "AAAAAAAA-0000-4000-8000-000000001482"
+        let url = "https://shared.test/owned"
+        try mac.write(SyncCollection.tab, pinID,
+                      SyncTab(id: pinID, space: first, order: "A", url: url, title: "Owned", pin: "O").fields)
+        try mac.write(SyncCollection.setting, SyncBridge.sharedPinsKey, ["value": .bool(true)])
+        let app = try await phone(server, seal)
+        defer { app.sync.engine?.stop() }
+        let local = app.sync.localID(pinID)
+        let loaded = await until { app.sync.sharesPins && app.browser.tab(local) != nil && app.browser.space(self.work) != nil }
+        XCTAssertTrue(loaded)
+        let pin = try XCTUnwrap(app.sync.pins(in: try XCTUnwrap(app.browser.space(work))).first { $0.id == local })
+        XCTAssertNotEqual(app.browser.space(holding: local)?.id, work, "Personal owns it")
+
+        try XCTUnwrap(TabHold.pageItems(pin, app: app, page: work).first { $0.title == "Duplicate Tab" }).run()
+        XCTAssertEqual(app.browser.spaceID, work)
+        XCTAssertEqual(app.browser.tab?.navigationURL?.absoluteString, url)
+        XCTAssertNotEqual(app.browser.tab?.id, local)
+        XCTAssertEqual(app.browser.space(holding: local)?.pins.filter { $0.navigationURL?.absoluteString == url }.count, 1,
+                       "Personal keeps only its pin")
     }
 
     func testPhonePinsAndUnpinsReachTheMac() async throws {
@@ -1231,7 +1298,7 @@ final class SyncBridgeTests: XCTestCase {
     func testJoinAgainAfterRemovalAddsNoSpaceAndLosesNoTab() async throws {
         try await leavesAndJoinsAgain { app, server in
             server.revoke(SyncKeychain.testing(folder: self.folder.appendingPathComponent("keys")).deviceID)
-            let told = await self.until { app.sync.phase == .refused("This iPhone was removed from Sync.") }
+            let told = await self.until { app.sync.phase == .refused("This \(DeviceWord.name) was removed from Sync.") }
             XCTAssertTrue(told, "\(app.sync.phase)")
             app.sync.joinAgain()
         }

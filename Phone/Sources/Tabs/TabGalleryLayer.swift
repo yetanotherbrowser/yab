@@ -52,7 +52,7 @@ struct TabGalleryLayer: View {
         let layout = TabGalleryLayout(screen: size, count: tabs.count,
                                       verticalControls: app.workspace.galleryVerticalControls, leadingRail: app.workspace.leadingRail,
                                       circle: app.workspace.statusColumn ? stack.stackGeometry.circle : nil,
-                                      across: app.workspace.galleryAcross)
+                                      across: app.workspace.galleryAcross, pageFrame: app.workspace.galleryPageFrame)
         let poses = tabs.enumerated().map { i, tab in stack.pose(i, of: tab, in: g, layout: layout) }
         let dark = TabGalleryGround.isDark(app)
         let at = g.phase == .open
@@ -101,6 +101,9 @@ struct TabGalleryLayer: View {
                         Rectangle().opacity(Double(g.bar))
                     }
                 }
+                // On iPad the sidebar and toolbar stay under it, coming and
+                // going with the bar's own fade as the card leaves and lands.
+                .opacity(app.workspace.tabletControls ? 1 - app.surfaces.chromeOpacity : 1)
                 .contentShape(Rectangle())
                 .onTapGesture { stack.chooseFront() }
                 .accessibilityHidden(true)

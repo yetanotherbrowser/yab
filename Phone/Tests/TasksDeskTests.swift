@@ -161,7 +161,7 @@ final class TasksDeskTests: XCTestCase {
         XCTAssertEqual(running.icon, "google")
         XCTAssertEqual(running.buttons.map(\.label), ["Stop"])
         let code = try XCTUnwrap(state(.code, 2))
-        XCTAssertEqual(code.title, "TAP sent a code to this iPhone")
+        XCTAssertEqual(code.title, "TAP sent a code to this \(DeviceWord.name)")
         XCTAssertEqual(code.line, "Your Mac is signing in to flytap.com")
         XCTAssertEqual(code.buttons.map(\.label), ["Enter Code"])
         XCTAssertEqual(code.word, "Code")
@@ -401,7 +401,7 @@ final class TasksDeskTests: XCTestCase {
         _ = await (first, second)
         await wait("done") { app.tasks.run("lisbon")?.status == .done }
         XCTAssertEqual(signer.signs, 1, "a system panel leaves faceID nil while it authenticates")
-        XCTAssertEqual(desk.virtualMac?.diary.filter { $0 == "Checked the Face ID signature from the iPhone" }.count, 1)
+        XCTAssertEqual(desk.virtualMac?.diary.filter { $0 == "Checked the Face ID signature from the \(DeviceWord.name)" }.count, 1)
     }
 
     func testStoppingDuringFaceIDDoesNotDeliverTheYes() async throws {
@@ -418,7 +418,7 @@ final class TasksDeskTests: XCTestCase {
         await approval.value
         XCTAssertEqual(app.tasks.run("lisbon")?.status, .stopped)
         XCTAssertNil(desk.faceID)
-        XCTAssertFalse(desk.virtualMac?.diary.contains("Checked the Face ID signature from the iPhone") ?? true)
+        XCTAssertFalse(desk.virtualMac?.diary.contains("Checked the Face ID signature from the \(DeviceWord.name)") ?? true)
     }
 
     func testReviewAfterNotNowCanStillSignTheYes() async throws {

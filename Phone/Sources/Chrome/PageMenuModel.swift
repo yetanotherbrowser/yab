@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 import os
 
 /// The page menu's own state: it grows out of the plate (≡), its address
@@ -277,9 +278,14 @@ extension AppModel {
         }
     }
 
+    /// An iPad left to its own choice gets Safari's (.recommended): desktop
+    /// at full width, mobile in a narrow pane. Then only the page can say
+    /// which it is, and the switch reads it; any other choice says itself.
     var pageIsDesktop: Bool {
         guard let tab = browser.tab else { return false }
-        return siteSettings.desktop(siteHost(of: tab), isPrivate: pageIsPrivate)
+        let host = siteHost(of: tab)
+        if siteSettings.contentMode(host, isPrivate: pageIsPrivate) == .recommended, let shown = currentPageState.desktop { return shown }
+        return siteSettings.desktop(host, isPrivate: pageIsPrivate)
     }
 
     /// Request Desktop Site ↔ Mobile Site: remembered for the site, and the page again.

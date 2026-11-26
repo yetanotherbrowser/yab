@@ -82,7 +82,7 @@ final class TaskDeskLifetimeTests: XCTestCase {
         XCTAssertFalse(desk.signing)
         XCTAssertNil(desk.faceID)
         XCTAssertEqual(desk.virtualMac?.diary, before)
-        XCTAssertFalse(desk.virtualMac?.diary.contains("Checked the Face ID signature from the iPhone") ?? true)
+        XCTAssertFalse(desk.virtualMac?.diary.contains("Checked the Face ID signature from the \(DeviceWord.name)") ?? true)
         XCTAssertEqual(pending.tasks.run("lisbon")?.status, .yes)
     }
 

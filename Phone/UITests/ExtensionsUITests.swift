@@ -81,7 +81,7 @@ final class ExtensionsUITests: XCTestCase {
         let alert = app.alerts.firstMatch
         XCTAssertTrue(alert.waitForExistence(timeout: 60))
         record(app, "Loom isn't offered")
-        XCTAssertTrue(alert.label.contains("doesn't work on iPhone"), alert.label)
+        XCTAssertTrue(alert.label.contains("doesn't work on \(Atlas.deviceWord)"), alert.label)
         XCTAssertFalse(alert.buttons["Add"].exists, "no way to add it")
         alert.buttons["OK"].tap()
     }

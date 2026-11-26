@@ -204,6 +204,41 @@ struct Motion: Sendable {
     /// The page behind coming back to its size.
     static let pageReturn = spring("pageReturn", response: 0.38)
 
+    // MARK: - iPad downloads
+
+    /// A file thrown at the iPad's downloads button (the Mac's HoardSkyView):
+    /// it lifts off where the link was held, then flies its arc in. The
+    /// points along the way are `DownloadFlight`'s.
+    static let downloadLift = Motion(name: "downloadLift", animation: .easeOut(duration: 0.11), duration: 0.11)
+    static let downloadArc = curve("downloadArc", 0.45, 0, 0.2, 1, 0.56)
+    /// Each arrival, the button gives, as the Mac's does.
+    static let downloadBump = Bump(scale: 1.18, out: 0.1, back: 0.3)
+    /// The last file's mark arriving on the button, grown from this scale.
+    static let downloadMarkScale: CGFloat = 0.4
+
+    /// The flight's shape, as fractions of its way: grown from `liftScale`
+    /// as it lifts, down to the badge's size from `shrinkFrom`, gone from `fadeFrom`.
+    enum DownloadFlight {
+        static let liftScale: CGFloat = 0.4
+        static let shrinkFrom: CGFloat = 0.55
+        static let fadeFrom: CGFloat = 0.94
+    }
+
+    /// A give in two springs: out to `scale` in `out` seconds, back in `back`.
+    /// Still under Reduce Motion.
+    struct Bump: Sendable {
+        let scale: CGFloat
+        let out: TimeInterval
+        let back: TimeInterval
+
+        func keyframes(reduced: Bool) -> some Keyframes<CGFloat> {
+            KeyframeTrack {
+                SpringKeyframe(reduced ? 1 : scale, duration: out)
+                SpringKeyframe(1, duration: back)
+            }
+        }
+    }
+
     // MARK: - running them
 
     /// Off in named-state launches (-YabNoAnim YES) and with Reduce Motion's

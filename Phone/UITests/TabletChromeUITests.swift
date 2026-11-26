@@ -31,13 +31,16 @@ final class TabletChromeUITests: XCTestCase {
     }
     private func wait(_ check: @escaping () -> Bool) -> Bool { TransitionCatalog.wait(15, check) }
 
-    func testSinglePageUsesTheOriginalCapsuleAboveTheDocument() throws {
+    /// The Mac's column: the address a plate in the sidebar under its
+    /// header, no band over the page.
+    func testSinglePageKeepsTheAddressInTheSidebarAsTheMacDoes() throws {
         launch("page.1")
         try picture("single-page")
-        let capsule = element("tablet.singleAddressBar")
-        XCTAssertTrue(capsule.exists, "a single page keeps its original top toolbar capsule")
+        let plate = element("tablet.addressPlate")
+        XCTAssertTrue(plate.exists, "the address is the sidebar's plate")
         let pane = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "tablet.pane.")).firstMatch
-        XCTAssertLessThanOrEqual(capsule.frame.maxY, pane.frame.minY)
+        XCTAssertLessThanOrEqual(plate.frame.maxX, pane.frame.minX)
+        XCTAssertTrue(element("tablet.sidebar.header").exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "tablet.addressBar.")).firstMatch.exists)
         app.buttons["tablet.siteControls"].tap()
         XCTAssertTrue(element("site.settings").waitForExistence(timeout: 10))
@@ -47,7 +50,7 @@ final class TabletChromeUITests: XCTestCase {
         XCTAssertTrue(app.textFields["field.input"].waitForExistence(timeout: 10))
     }
 
-    func testSeparatingTheSplitRestoresTheOriginalToolbarWithoutLosingTheDraft() throws {
+    func testSeparatingTheSplitRestoresTheSidebarAddressWithoutLosingTheDraft() throws {
         launch("workspace.form")
         let secondary = element("tablet.pane.workspace-secondary")
         let draft = secondary.textFields["Draft"]
@@ -56,9 +59,9 @@ final class TabletChromeUITests: XCTestCase {
         try picture("split-sidebar")
         draft.tap(); draft.typeText("Preserved draft")
         if app.keyboards.buttons["Hide keyboard"].firstMatch.exists { app.keyboards.buttons["Hide keyboard"].firstMatch.tap() }
-        app.buttons["workspace.menu"].tap()
-        app.buttons["Separate Split"].tap()
-        XCTAssertTrue(wait { self.element("tablet.singleAddressBar").exists })
+        app.buttons["tablet.paneMenu"].tap()
+        app.buttons["Separate Split View"].tap()
+        XCTAssertTrue(wait { self.element("tablet.addressPlate").exists })
         XCTAssertFalse(element("tablet.addressBar.workspace-secondary").exists)
         XCTAssertFalse(element("tablet.split.row").exists)
         XCTAssertEqual(app.textFields["Draft"].value as? String, "Preserved draft")
@@ -80,6 +83,8 @@ final class TabletChromeUITests: XCTestCase {
                 let end = Date().timeIntervalSince1970
                 let shown = index % 2 == 1
                 XCTAssertEqual(toggle.value as? String, shown ? "shown" : "hidden")
+                // The address moves between the sidebar's plate and the band as it goes.
+                XCTAssertTrue(wait { self.app.buttons.matching(identifier: "tablet.address").count == 1 })
                 XCTAssertEqual(app.buttons["tablet.address"].value as? String, address)
                 marks.append(["start": start, "end": end, "shown": shown])
             }

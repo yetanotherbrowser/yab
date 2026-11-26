@@ -111,7 +111,7 @@ final class TasksTests: XCTestCase {
         XCTAssertLessThanOrEqual(sheet.frame.maxY, padTop - 8 + 2, "the sheet stands over the pad (\(padTop)): \(sheet.frame)")
         XCTAssertGreaterThanOrEqual(sheet.frame.maxY, padTop - 8 - 20, "the sheet stands on the pad (\(padTop)): \(sheet.frame)")
         XCTAssertEqual(sheet.frame.height, 220, accuracy: 2, "the code's sheet: \(sheet.frame)")
-        XCTAssertTrue(has("TAP sent a code to this iPhone"))
+        XCTAssertTrue(has("TAP sent a code to this \(Atlas.deviceWord)"))
         // As QuickType's code from Messages would: all six at once.
         field.typeText("482913")
         XCTAssertTrue(gone(sheet), "the sheet stays after the code")
@@ -221,7 +221,7 @@ final class TasksTests: XCTestCase {
         retry.tap()
         // Again from the same step: the failure goes, the steps go on to the code.
         XCTAssertTrue(gone(retry, timeout: 5), "Retry stays after it was tapped")
-        XCTAssertTrue(has("Waiting for the code TAP sent to this iPhone", timeout: 20), "it never went on to the code")
+        XCTAssertTrue(has("Waiting for the code TAP sent to this \(Atlas.deviceWord)", timeout: 20), "it never went on to the code")
         app.descendants(matching: .any)["task.chat.who"].swipeDown(velocity: .fast)
         nowSays("Needs the code TAP sent you")
     }

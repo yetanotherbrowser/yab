@@ -485,7 +485,7 @@ final class TabStack {
         TabGalleryLayout(screen: screen, count: cards(of: gallery).count,
                          verticalControls: app.workspace.galleryVerticalControls, leadingRail: app.workspace.leadingRail,
                          circle: app.workspace.statusColumn ? stackGeometry.circle : nil,
-                         across: app.workspace.galleryAcross)
+                         across: app.workspace.galleryAcross, pageFrame: app.workspace.galleryPageFrame)
     }
     var stackGeometry: TabStackGeometry {
         TabStackGeometry(button: ChromeGeometry(size: screen, folded: false, hasNow: app.nowItem != nil,

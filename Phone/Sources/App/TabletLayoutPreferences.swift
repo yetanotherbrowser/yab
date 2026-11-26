@@ -2,34 +2,16 @@ import Foundation
 import Observation
 import SwiftUI
 
-extension Metrics {
-    enum Tablet {
-        static let sidebar: CGFloat = 264
-        static let sidebarMinimum: CGFloat = 220
-        static let sidebarMaximum: CGFloat = 360
-        static let toolbar: CGFloat = 44
-        static let paneBar: CGFloat = 44
-        static let row: CGFloat = 44
-        static let splitGap: CGFloat = 8
-        static let resizeTarget: CGFloat = 20
-        static let inset: CGFloat = 10
-        static let pin: CGFloat = 48
-        static let pairInset: CGFloat = 4
-        static let pairGap: CGFloat = 4
-        static let pairRadius: CGFloat = 5
-        static let pairIcon: CGFloat = 15
-        static let pairPadding: CGFloat = 6
-        static let focusStroke: CGFloat = 1.5
-        static let focusColor = Color(red: 86 / 255, green: 125 / 255, blue: 168 / 255)
-    }
-}
-
 /// Local layout choices never travel through sync. Fixture worlds use memory only.
 @MainActor @Observable
 final class TabletLayoutPreferences {
     @ObservationIgnored private let defaults: UserDefaults?
     var sidebarShown: Bool { didSet { save(sidebarShown, "ipadSidebarShown") } }
-    var addressBars: Bool { didSet { save(addressBars, "ipadAddressBars") } }
+    /// The Mac's Show Address Bar: a band over the page card; off, the
+    /// address is a plate in the sidebar, as the Mac's default.
+    var addressBars: Bool { didSet { save(addressBars, "ipadAddressBar") } }
+    /// The Mac's Show Tabs in Sidebar: off, the tabs go across the top.
+    var tabsInSidebar: Bool { didSet { save(tabsInSidebar, "ipadTabsInSidebar") } }
     var framed: Bool { didSet { save(framed, "ipadPageFrame") } }
     private(set) var sidebarWidth: CGFloat
     private(set) var splitFraction: CGFloat
@@ -40,7 +22,9 @@ final class TabletLayoutPreferences {
             defaults?.object(forKey: key) == nil ? fallback : defaults!.bool(forKey: key)
         }
         sidebarShown = flag("ipadSidebarShown", true)
-        addressBars = flag("ipadAddressBars", true)
+        // A new key: the old one defaulted to the band the Mac keeps off.
+        addressBars = flag("ipadAddressBar", false)
+        tabsInSidebar = flag("ipadTabsInSidebar", true)
         framed = flag("ipadPageFrame", true)
         let width = defaults?.object(forKey: "ipadSidebarWidth") as? Double ?? Double(Metrics.Tablet.sidebar)
         sidebarWidth = Self.width(CGFloat(width))

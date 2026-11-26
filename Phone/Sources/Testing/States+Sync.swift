@@ -94,7 +94,7 @@ extension StateCatalog {
             app.sync.pretend(.joining(.recovery(wrong: true)))
         },
         NamedState("join.5", "Removed from sync", "The account no longer takes this iPhone: why, and a way to sign in again.") { app in
-            app.sync.pretend(.refused("This iPhone was removed from Sync."))
+            app.sync.pretend(.refused("This \(DeviceWord.name) was removed from Sync."))
         },
         NamedState("join.6", "Scan QR", "The code from the Mac (Add a Device): the VisionKit camera, QR only; in the simulator, words saying there's no camera, and a field for the code.") { app in
             app.sync.pretend(.joining(.scan))

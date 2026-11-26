@@ -692,7 +692,7 @@ struct TaskTurnsView: View {
     private var waitRow: some View {
         switch status {
         case .code:
-            needs(.key1, "Waiting for the code \(codeSender) sent to this iPhone")
+            needs(.key1, "Waiting for the code \(codeSender) sent to this \(DeviceWord.name)")
         case .yes:
             needs(.creditCard1, "Waiting for you: \((def.yes ?? "your yes").replacingOccurrences(of: "?", with: ""))")
         case .failed:

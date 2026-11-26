@@ -82,8 +82,8 @@ final class TabletArcSplitUITests: XCTestCase {
         app.buttons["field.close"].tap()
         XCTAssertTrue(pane("secondary").buttons["tablet.address"].exists)
         app.buttons["tablet.paneMenu"].tap()
-        app.buttons["Separate Split"].tap()
-        XCTAssertTrue(wait { self.element("tablet.singleAddressBar").exists })
+        app.buttons["Separate Split View"].tap()
+        XCTAssertTrue(wait { self.element("tablet.addressPlate").exists })
     }
 
     func testInactiveNavigationActsOnItsOwnHistory() throws {
@@ -116,7 +116,7 @@ final class TabletArcSplitUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Next workspace document"].waitForExistence(timeout: 10))
             let closed = survivor == "primary" ? "secondary" : "primary"
             app.buttons["tablet.close.workspace-" + closed].tap()
-            XCTAssertTrue(wait { self.element("tablet.singleAddressBar").exists })
+            XCTAssertTrue(wait { self.element("tablet.addressPlate").exists })
             XCTAssertFalse(element("tablet.split.row").exists)
             XCTAssertFalse(pane(closed).exists)
             app.buttons["tablet.back"].tap()
@@ -134,7 +134,7 @@ final class TabletArcSplitUITests: XCTestCase {
         dismissKeyboard()
         chip("secondary").tap()
         app.buttons["tablet.close.workspace-secondary"].tap()
-        XCTAssertTrue(wait { self.element("tablet.singleAddressBar").exists })
+        XCTAssertTrue(wait { self.element("tablet.addressPlate").exists })
         XCTAssertEqual(app.textFields["Draft"].value as? String, "Left survives")
         try picture("06-closed-active")
     }

@@ -220,6 +220,17 @@ final class BrowserBasicsTests: XCTestCase {
         XCTAssertTrue(menu.children.last === system, "the system's actions stay under ours")
     }
 
+    /// The Mac's Open in Split View, offered where a split can stand.
+    func testTheMenuOffersSplitViewOnlyWhenAsked() throws {
+        let plain = try XCTUnwrap(PageLinkMenu.menu([]) { _ in }.children.first as? UIMenu)
+        XCTAssertFalse(plain.children.map(\.accessibilityIdentifier).contains("link.beside"))
+        var opened: PageLinkMenu.Opening?
+        let wide = try XCTUnwrap(PageLinkMenu.menu([], beside: true) { opened = $0 }.children.first as? UIMenu)
+        XCTAssertEqual(wide.children.compactMap { ($0 as? UIAction)?.title }.last, PageLinkMenu.beside)
+        XCTAssertEqual(wide.children.last?.accessibilityIdentifier, "link.beside")
+        _ = opened
+    }
+
     func testOnlyWebLinksOfThePageInFrontGetTheMenu() async throws {
         let pages = pool(), page = tab("menu.links")
         _ = try await ready(pages, page)

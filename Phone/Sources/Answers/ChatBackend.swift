@@ -15,12 +15,12 @@ struct AskContext: Sendable {
         var parts: [String] = []
         let previous = history.filter { $0.role == .you || $0.role == .answer }.suffix(8)
         if !previous.isEmpty {
-            parts.append("Earlier conversation on this iPhone:\n" + previous.map {
+            parts.append("Earlier conversation on this \(DeviceWord.name):\n" + previous.map {
                 "\($0.role == .you ? "You" : "Assistant"): \(String($0.plain.prefix(2000)))"
             }.joined(separator: "\n"))
         }
         if let page {
-            parts.append("Page on this iPhone:\nTitle: \(page.title)\nURL: \(page.address)\nPage text:\n\(String(page.text.prefix(12000)))")
+            parts.append("Page on this \(DeviceWord.name):\nTitle: \(page.title)\nURL: \(page.address)\nPage text:\n\(String(page.text.prefix(12000)))")
         }
         guard !parts.isEmpty else { return question }
         parts.insert("Question: " + question, at: 0)
@@ -63,8 +63,8 @@ final class Answerers {
         case unavailable, interrupted
         var errorDescription: String? {
             switch self {
-            case .unavailable: "Apple Intelligence isn't available on this iPhone. Enable it in Settings, then ask again. This question stayed on this iPhone."
-            case .interrupted: "This iPhone couldn't answer. Ask again, or choose Your Mac for public page questions in Settings. This question stayed on this iPhone."
+            case .unavailable: "Apple Intelligence isn't available on this \(DeviceWord.name). Enable it in Settings, then ask again. This question stayed on this \(DeviceWord.name)."
+            case .interrupted: "This \(DeviceWord.name) couldn't answer. Ask again, or choose Your Mac for public page questions in Settings. This question stayed on this \(DeviceWord.name)."
             }
         }
     }

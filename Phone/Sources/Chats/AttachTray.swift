@@ -308,7 +308,7 @@ private struct AttachMainPage: View {
     private func camera() {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             app.closeAttachTray()
-            app.say("No camera on this iPhone", glyph: .camera1)
+            app.say("No camera on this \(DeviceWord.name)", glyph: .camera1)
             return
         }
         app.attachTrayHandOver { $0.attachCamera = true }

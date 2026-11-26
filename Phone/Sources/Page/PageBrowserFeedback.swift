@@ -51,7 +51,7 @@ struct PageLoadFailure: Equatable, Sendable {
     }
     var explanation: String {
         switch kind {
-        case .offline: "\(site) will open when this iPhone is back online."
+        case .offline: "\(site) will open when this \(DeviceWord.name) is back online."
         case .connection: "\(site) didn't respond. It may be down for a moment."
         case .timeout: "\(site) took too long to respond. Try again."
         case .secureConnection: "A secure connection to this website couldn't be established."

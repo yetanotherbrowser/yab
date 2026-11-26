@@ -85,6 +85,28 @@ enum Ink {
     static let onDark = Color.white
     /// A private tab's glass: rgba(44, 42, 52, .78).
     static let privateGlass = Color(red: 44 / 255, green: 42 / 255, blue: 52 / 255)
+    /// The Mac's thrown file on iPad: near black with a teal glow.
+    static let downloadDiscFill = Color(red: 13 / 255, green: 26 / 255, blue: 20 / 255)
+    static let downloadDiscGlow = Color(red: 90 / 255, green: 190 / 255, blue: 170 / 255)
+    /// The iPad's chrome, as the Mac's: a control's ground, the tab in front,
+    /// a pin at rest, a press, a dimmed mark, the band and its line.
+    static let tabletWash = primary.opacity(0.055)
+    static let tabletSelected = primary.opacity(0.09)
+    static let tabletPinRest = primary.opacity(0.04)
+    static let tabletPressed = primary.opacity(0.1)
+    static let tabletDisabled = secondary.opacity(0.5)
+    static let tabletBand = Ink.surface.opacity(0.92)
+    static let tabletRule = primary.opacity(0.08)
+    /// A split's chip; the row in front (a tab's, the split's); a pin in
+    /// front and at rest; the space in front in the foot; Clear's line.
+    static let tabletPairChip = primary.opacity(0.07)
+    static let tabletRowFront = Ink.surface.opacity(0.85)
+    static let tabletPinFront = Ink.surface.opacity(0.95)
+    static let tabletPinGround = Ink.surface.opacity(0.5)
+    static let tabletSpaceFront = Ink.surface.opacity(0.8)
+    static let tabletClearRule = primary.opacity(0.12)
+    /// The focused pane's rim in an iPad split.
+    static let splitFocus = Color(red: 86 / 255, green: 125 / 255, blue: 168 / 255)
 }
 
 extension Color {

@@ -74,7 +74,7 @@ final class VirtualMac: TaskBackend {
         if let job = jobs[order.id], job.phase != .done, job.phase != .stopped { return }
         let job = Job(id: order.id, words: order.words, step: order.step)
         jobs[order.id] = job
-        note("from iPhone · \(order.words)")
+        note("from \(DeviceWord.name) · \(order.words)")
         start(job)
     }
 
@@ -106,7 +106,7 @@ final class VirtualMac: TaskBackend {
     private var pendingYes: [TaskRun.ID: SignedYes] = [:]
 
     func notNow(_ id: TaskRun.ID) {
-        note("The yes waits on the iPhone")
+        note("The yes waits on the \(DeviceWord.name)")
     }
 
     func retry(_ id: TaskRun.ID) {
@@ -123,7 +123,7 @@ final class VirtualMac: TaskBackend {
         job.answer?.resume(returning: nil)
         job.answer = nil
         job.phase = .stopped
-        note("Stopped from the iPhone")
+        note("Stopped from the \(DeviceWord.name)")
         emit(.stopped(id))
     }
 
@@ -292,7 +292,7 @@ final class VirtualMac: TaskBackend {
             if step.needs == .code, !job.codeGiven {
                 job.phase = .needsCode
                 let request = script.code ?? CodeRequest(sender: def.name, icon: step.icon, site: def.name)
-                note("Waiting for the code from the iPhone")
+                note("Waiting for the code from the \(DeviceWord.name)")
                 emit(.needsCode(job.id, request))
                 guard case let .code(code)? = await answer(job) else { return }
                 if let expected = script.expectedCode, code.filter(\.isNumber) != expected {
@@ -302,14 +302,14 @@ final class VirtualMac: TaskBackend {
                 }
                 job.codeGiven = true
                 job.phase = .working
-                note("\(step.done) with the code from your iPhone")
+                note("\(step.done) with the code from your \(DeviceWord.name)")
                 continue // the same step, signed in now
             }
             if step.needs == .yes, !job.yesGiven {
                 job.phase = .needsYes
                 let request = script.yes ?? YesRequest(kind: .pay, icon: step.icon, title: def.yes ?? "Go on?", subtitle: def.name,
                                                        facts: [], button: "Approve with Face ID", waiting: "Waiting for you")
-                note("Asked on the iPhone: you’ve been away \(self.script.idleMinutes) min")
+                note("Asked on the \(DeviceWord.name): you’ve been away \(self.script.idleMinutes) min")
                 emit(.needsYes(job.id, request))
                 let given: SignedYes?
                 if let early = pendingYes.removeValue(forKey: job.id) {
@@ -323,13 +323,13 @@ final class VirtualMac: TaskBackend {
                     job.phase = .failed
                     job.runner = nil
                     note("The signature didn’t check out")
-                    emit(.failed(job.id, TaskFailure(line: "The yes didn’t check out · nothing was paid", long: "Your Mac couldn’t check the signature from this iPhone, so it pressed nothing.",
+                    emit(.failed(job.id, TaskFailure(line: "The yes didn’t check out · nothing was paid", long: "Your Mac couldn’t check the signature from this \(DeviceWord.name), so it pressed nothing.",
                                                      lockTitle: "Nothing was paid", lockLine: "The yes didn’t check out. Retry from Yab.")))
                     return
                 }
                 job.yesGiven = true
                 job.phase = .paying
-                note("Checked the Face ID signature from the iPhone")
+                note("Checked the Face ID signature from the \(DeviceWord.name)")
                 emit(.paying(job.id))
                 guard await pause(payPause) else { return }
                 finish(job, def)

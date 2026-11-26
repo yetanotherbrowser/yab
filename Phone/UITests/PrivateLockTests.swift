@@ -55,6 +55,51 @@ final class PrivateLockUITests: XCTestCase {
         try assertPrivateNeverPersisted()
     }
 
+    /// iPad: Save as PDF from Site Controls on a private page, then Yab
+    /// goes Home with Open with Face ID. Back, Private is locked, and no
+    /// share sheet with the private PDF stands over the lock.
+    func testAPrivatePagesPDFSheetGoesWhenPrivateLocksOnHome() throws {
+        let app = launch(results: "allow,allow")
+        guard app.buttons["tablet.siteControls"].exists else { throw XCTSkip("Save as PDF is in the iPad's Site Controls") }
+        openSecretOnTablet(app)
+        app.buttons["tablet.siteControls"].tap()
+        let more = element(app, "site.more")
+        XCTAssertTrue(more.waitForExistence(timeout: 8))
+        more.tap()
+        let saveAsPDF = app.buttons["Save as PDF"]
+        XCTAssertTrue(saveAsPDF.waitForExistence(timeout: 8))
+        saveAsPDF.tap()
+        let sheet = app.otherElements["ActivityListView"]
+        let shown = { sheet.exists || app.collectionViews["ActivityListView"].exists || app.navigationBars["UIActivityContentView"].exists }
+        XCTAssertTrue(wait(shown), "the share sheet with the private PDF")
+        save(app, "Private PDF in the share sheet")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["private.unlock"].waitForExistence(timeout: 10))
+        save(app, "Back: Private is locked, no share sheet")
+        XCTAssertFalse(shown(), "the share sheet stood over the lock")
+        assertNoSecret(app)
+        app.buttons["private.unlock"].tap()
+        XCTAssertTrue(app.webViews.staticTexts["Secret fixture document"].waitForExistence(timeout: 10))
+        XCTAssertFalse(shown(), "unlocked, the sheet doesn't come back")
+    }
+
+    private func openSecretOnTablet(_ app: XCUIApplication) {
+        let newTab = app.buttons["tablet.newTab"]
+        XCTAssertTrue(newTab.waitForExistence(timeout: 5))
+        newTab.tap()
+        let eyes = element(app, "field.eyes")
+        XCTAssertTrue(eyes.waitForExistence(timeout: 5))
+        eyes.tap()
+        XCTAssertEqual(eyes.value as? String, "on")
+        if app.buttons["private.unlock"].waitForExistence(timeout: 3) { app.buttons["private.unlock"].tap() }
+        let input = app.textFields["field.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.typeText(site.url.appendingPathComponent("secret").absoluteString + "\n")
+        XCTAssertTrue(app.webViews.staticTexts["Secret fixture document"].waitForExistence(timeout: 15))
+        XCTAssertTrue(wait { !input.exists })
+    }
+
     private func launch(results: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-YabProfileDirectory", folder.path, "-YabURL", site.url.appendingPathComponent("public").absoluteString,

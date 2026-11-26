@@ -26,6 +26,12 @@ extension WebPool {
         return siteSettings.desktop(site.host, isPrivate: site.isPrivate)
     }
 
+    func contentMode(_ id: Tab.ID, url: URL?) -> WKWebpagePreferences.ContentMode {
+        guard let siteSettings else { return SiteSettings.defaultContentMode(prefersDesktop: SiteSettings.devicePrefersDesktop) }
+        let site = site(id, url: url)
+        return siteSettings.contentMode(site.host, isPrivate: site.isPrivate)
+    }
+
     // MARK: - find on page
 
     /// iOS's find bar over the page, with `text` in it if given.

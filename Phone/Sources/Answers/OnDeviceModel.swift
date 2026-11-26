@@ -20,7 +20,7 @@ final class OnDeviceModel: ChatBackend {
 
     func answer(_ context: AskContext) async throws -> String {
         let session = LanguageModelSession(instructions: """
-        You answer questions about the web page a person has open in Yab, a browser on their iPhone. \
+        You answer questions about the web page a person has open in Yab, a browser on their \(DeviceWord.name). \
         Answer from the page's words in two or three plain sentences, in the language of the question. \
         No headings, lists or markup. If the page doesn't say, say so in one sentence.
         """)

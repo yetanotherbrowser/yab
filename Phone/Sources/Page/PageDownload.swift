@@ -28,6 +28,12 @@ final class PageDownload: NSObject, WKDownloadDelegate {
     private let download: WKDownload
     private let downloads: DownloadStore
     private let approved: Bool
+    /// Where the person pressed for it, in the window: it flies from there.
+    private let from: CGPoint?
+    /// A document the tab was opening (a PDF): it opens in the system's
+    /// viewer once it is whole, and the site isn't asked first.
+    private let opens: Bool
+    private let viewed: @MainActor (UUID) -> Void
     /// May the site send this? Answered at once, or by the card.
     private let ask: @MainActor (DownloadAsk, @escaping @MainActor (Bool) -> Void) -> Void
     private let retry: @MainActor (UUID, WKWebsiteDataStore?, URLRequest) -> Bool
@@ -44,12 +50,14 @@ final class PageDownload: NSObject, WKDownloadDelegate {
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
 
     /// `entry`: the failed row a Retry starts again under, already asked about.
-    init(download: WKDownload, source: Source, store: DownloadStore, entry: UUID? = nil,
+    init(download: WKDownload, source: Source, store: DownloadStore, entry: UUID? = nil, from: CGPoint? = nil, opens: Bool = false,
          ask: @escaping @MainActor (DownloadAsk, @escaping @MainActor (Bool) -> Void) -> Void,
-         retry: @escaping @MainActor (UUID, WKWebsiteDataStore?, URLRequest) -> Bool, ended: @escaping @MainActor (UUID) -> Void) {
+         retry: @escaping @MainActor (UUID, WKWebsiteDataStore?, URLRequest) -> Bool, ended: @escaping @MainActor (UUID) -> Void,
+         viewed: @escaping @MainActor (UUID) -> Void = { _ in }) {
         id = entry ?? UUID()
         self.download = download; self.source = source; downloads = store
-        approved = entry != nil
+        approved = entry != nil || opens
+        self.from = from; self.opens = opens; self.viewed = viewed
         self.ask = ask; self.retry = retry; self.ended = ended
         self.store = download.webView?.configuration.websiteDataStore
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("yab-download-\(UUID())", isDirectory: true)
@@ -118,16 +126,27 @@ final class PageDownload: NSObject, WKDownloadDelegate {
         let characters = component.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && $0 != ":" }
         let clean = String(String.UnicodeScalarView(characters)).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, clean != ".", clean != ".." else { return "Download" }
+        // A long name is cut before its extension, so a .pdf stays one.
+        let ending = (clean as NSString).pathExtension
+        // One character can be hundreds of bytes: the extension is held to
+        // bytes too, so it and "Download" always fit.
+        let tail = ending.isEmpty || ending.count > Self.endingLimit || ending.utf8.count > Self.endingBytes ? "" : "." + ending
+        let base = clean.dropLast(tail.count)
         var name = "", byteCount = 0
         // Keep whole graphemes within both the existing character limit and the
         // filesystem's 255-byte component limit. A single huge grapheme falls back.
-        for character in clean.prefix(120) {
+        for character in base.prefix(120 - tail.count) {
             let bytes = String(character).utf8.count
-            guard byteCount + bytes <= 255 else { break }
+            guard byteCount + bytes <= 255 - tail.utf8.count else { break }
             name.append(character); byteCount += bytes
         }
-        return name.isEmpty ? "Download" : name
+        return (name.isEmpty ? "Download" : name) + tail
     }
+
+    /// The longest extension kept whole when a name is cut ("numbers" fits):
+    /// past it, the dot is part of the name.
+    private static let endingLimit = 10
+    private static let endingBytes = 40
 
     private func answerDestination(_ url: URL?) {
         destinationAnswer?(url)
@@ -158,7 +177,7 @@ final class PageDownload: NSObject, WKDownloadDelegate {
             phase = .transferring
             destination = target
             downloads.begin(id, name: name, host: source.host, total: total, isPrivate: source.isPrivate,
-                        control: .init(stop: { [weak self] in self?.cancel() }, retry: nil))
+                        control: .init(stop: { [weak self] in self?.cancel() }, retry: nil), from: opens ? nil : from)
             if away { away = false; leave() }
             answerDestination(target)
         } catch { showFailure() }
@@ -186,6 +205,7 @@ final class PageDownload: NSObject, WKDownloadDelegate {
         phase = moved ? .ready : .failed
         Haptics.play(moved ? .success : .error, reason: moved ? Haptics.Reason.downloadReady : Haptics.Reason.downloadFailed)
         finish()
+        if moved, opens { viewed(id) }
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         guard self.download === download, !cancelling, !removed else { return }

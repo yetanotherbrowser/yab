@@ -8,19 +8,36 @@ let keysLog = Logger(subsystem: "dev.serafim.fast.iphone", category: "keys")
 /// an iPad lists them, and ⌘W is the tab's: the system's Close Window, which
 /// closes a single-window app outright, is taken out of the menu.
 enum BrowserKey: Hashable, Sendable {
-    case newTab, openLocation, closeTab, reopenTab
+    case newTab, newPrivateTab, openLocation, closeTab, reopenTab
     case reload, back, forward, find
-    case nextTab, previousTab, toggleSidebar
+    case nextTab, previousTab, toggleSidebar, settings
+    /// The Mac's ⇧⌘S: tabs in the sidebar or across the top; Safari's ⇧⌘\ for All Tabs.
+    case toggleTabsInSidebar, allTabs
+    /// The Mac's View and File keys for the page.
+    case zoomIn, zoomOut, actualSize, stop, reader, copyLink, print
     /// ⌘1 to ⌘8 the tab at that place, ⌘9 the last one.
     case tab(Int)
 
-    static let all: [BrowserKey] = [.newTab, .openLocation, .closeTab, .reopenTab,
-                                    .reload, .back, .forward, .find, .nextTab, .previousTab, .toggleSidebar]
+    static let all: [BrowserKey] = [.newTab, .newPrivateTab, .openLocation, .closeTab, .reopenTab,
+                                    .reload, .back, .forward, .find, .nextTab, .previousTab, .toggleSidebar, .settings,
+                                    .toggleTabsInSidebar, .allTabs,
+                                    .zoomIn, .zoomOut, .actualSize, .stop, .reader, .copyLink, .print]
         + (1...9).map { .tab($0) }
 
     var title: String {
         switch self {
         case .newTab: "New Tab"
+        case .newPrivateTab: "New Private Tab"
+        case .settings: "Settings…"
+        case .toggleTabsInSidebar: "Show Tabs in Sidebar"
+        case .allTabs: "Show All Tabs"
+        case .zoomIn: "Zoom In"
+        case .zoomOut: "Zoom Out"
+        case .actualSize: "Actual Size"
+        case .stop: "Stop Loading"
+        case .reader: "Show Reader"
+        case .copyLink: "Copy Link"
+        case .print: "Print…"
         case .openLocation: "Open Location"
         case .closeTab: "Close Tab"
         case .reopenTab: "Reopen Closed Tab"
@@ -40,6 +57,18 @@ enum BrowserKey: Hashable, Sendable {
         switch self {
         case .newTab, .reopenTab: "t"
         case .openLocation: "l"
+        case .newPrivateTab: "n"
+        case .settings: ","
+        case .toggleTabsInSidebar: "s"
+        case .allTabs: "\\"
+        // ⌘= is ⌘+ on the keyboard, as Safari's Zoom In.
+        case .zoomIn: "="
+        case .zoomOut: "-"
+        case .actualSize: "0"
+        case .stop: "."
+        case .reader: "r"
+        case .copyLink: "c"
+        case .print: "p"
         case .closeTab: "w"
         case .reload: "r"
         case .back: "["
@@ -53,7 +82,7 @@ enum BrowserKey: Hashable, Sendable {
 
     var modifiers: UIKeyModifierFlags {
         switch self {
-        case .reopenTab: [.command, .shift]
+        case .reopenTab, .newPrivateTab, .toggleTabsInSidebar, .allTabs, .reader, .copyLink: [.command, .shift]
         case .nextTab: .control
         case .previousTab: [.control, .shift]
         default: .command
@@ -89,6 +118,10 @@ enum BrowserKey: Hashable, Sendable {
     static let viewMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.view")
     static let historyMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.history")
     static let tabsMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.switch")
+    static let settingsMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.settings")
+    static let pageMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.page")
+    static let printMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.print")
+    static let copyMenu = UIMenu.Identifier("dev.serafim.fast.iphone.keys.copy")
 
     /// File holds the tabs, View Reload, History Back and Forward, Window
     /// the tab switching, Edit Find on Page: where Safari keeps them.
@@ -106,19 +139,34 @@ enum BrowserKey: Hashable, Sendable {
         // The system's Find would reach only a focused web view, not the tab in front.
         builder.remove(menu: .find)
 
-        let tabs = inline(filesMenu, [.newTab, .openLocation, .closeTab, .reopenTab])
+        // Settings where the Mac keeps it, in the app's own menu under About.
+        let settings = inline(settingsMenu, [.settings])
+        if builder.menu(for: .preferences) != nil { builder.replace(menu: .preferences, with: settings) }
+        else if builder.menu(for: .about) != nil { builder.insertSibling(settings, afterMenu: .about) }
+        else if builder.menu(for: .application) != nil { builder.insertChild(settings, atStartOfMenu: .application) }
+
+        let tabs = inline(filesMenu, [.newTab, .newPrivateTab, .openLocation, .closeTab, .reopenTab])
         if builder.menu(for: .file) != nil { builder.insertChild(tabs, atStartOfMenu: .file) }
         else { builder.insertSibling(UIMenu(title: "File", children: [tabs]), afterMenu: .application) }
 
+        let printing = inline(printMenu, [.print])
+        if builder.menu(for: .file) != nil { builder.insertChild(printing, atEndOfMenu: .file) }
+
         let find = inline(findMenu, [.find])
-        if builder.menu(for: .edit) != nil { builder.insertChild(find, atEndOfMenu: .edit) }
+        if builder.menu(for: .edit) != nil {
+            builder.insertChild(inline(copyMenu, [.copyLink]), atEndOfMenu: .edit)
+            builder.insertChild(find, atEndOfMenu: .edit)
+        }
         else { builder.insertSibling(UIMenu(title: "Edit", children: [find]), afterMenu: .file) }
 
-        let reload = inline(viewMenu, [.reload, .toggleSidebar])
-        if builder.menu(for: .view) != nil { builder.insertChild(reload, atStartOfMenu: .view) }
+        let reload = inline(viewMenu, [.reload, .stop, .toggleSidebar, .toggleTabsInSidebar, .allTabs])
+        if builder.menu(for: .view) != nil {
+            builder.insertChild(reload, atStartOfMenu: .view)
+            builder.insertChild(inline(pageMenu, [.reader, .zoomIn, .zoomOut, .actualSize]), atEndOfMenu: .view)
+        }
 
         var history: [BrowserKey] = [.back, .forward]
-        if builder.menu(for: .view) == nil { history.insert(contentsOf: [.reload, .toggleSidebar], at: 0) }
+        if builder.menu(for: .view) == nil { history.insert(contentsOf: [.reload, .toggleSidebar, .toggleTabsInSidebar, .allTabs], at: 0) }
         let historyTop = UIMenu(title: "History", identifier: historyMenu, children: history.map(\.command))
         let after: UIMenu.Identifier = builder.menu(for: .view) != nil ? .view : .edit
         builder.insertSibling(historyTop, afterMenu: after)
@@ -135,12 +183,25 @@ extension AppModel {
     /// puts it away.
     func mayUse(_ key: BrowserKey) -> Bool {
         if privateContentBlocked || privateLock.presentsPrompt { return false }
+        // Always ours, Settings up or not: a ⌘, we turn down goes to the
+        // system's own Settings item, which leaves Yab for the Settings app.
+        if key == .settings { return true }
         if surfaces.settings || surfaces.join || surfaces.chat != nil { return false }
         if surfaces.coversChrome { return key == .closeTab && surfaces.field != nil }
+        return offers(key)
+    }
+
+    /// Whether the key has something to do for the browser as it is, with
+    /// nothing over it: the field asks this of the commands it offers.
+    func offers(_ key: BrowserKey) -> Bool {
         let tab = browser.tab
         switch key {
-        case .newTab: return true
-        case .toggleSidebar: return workspace.tabletControls
+        case .newTab, .newPrivateTab, .settings: return true
+        case .toggleSidebar, .toggleTabsInSidebar: return workspace.tabletControls
+        case .allTabs, .zoomIn, .zoomOut, .actualSize, .copyLink: return tab != nil
+        case .print: return pageCanBeDrawn
+        case .stop: return tab != nil && currentPageState.isLoading
+        case .reader: return tab != nil && (currentPageState.readerAvailable || currentPageState.readerEnabled)
         case .openLocation, .reload, .find: return tab != nil
         case .closeTab: return tab != nil
         case .reopenTab: return backStack.closed != nil
@@ -155,7 +216,21 @@ extension AppModel {
         guard mayUse(key) else { return }
         switch key {
         case .newTab: openNewTab()
+        case .newPrivateTab: openNewTab(privately: true)
+        case .settings:
+            // Taken but idle while something covers the browser (mayUse).
+            guard !surfaces.settings, !surfaces.join, surfaces.chat == nil, !surfaces.coversChrome else { return }
+            openSettingsFromSpaces(at: nil)
         case .toggleSidebar: workspace.sidebarShown.toggle()
+        case .toggleTabsInSidebar: workspace.preferences.tabsInSidebar.toggle()
+        case .allTabs: TabStack.of(self).openGallery()
+        case .zoomIn: pageMenuZoom(1)
+        case .zoomOut: pageMenuZoom(-1)
+        case .actualSize: pageMenuZoom(0)
+        case .stop: if let id = browser.tab?.id { pages.stop(id) }
+        case .reader: pageMenuReader()
+        case .copyLink: if let tab = browser.tab { copyLink(of: tab) }
+        case .print: printPage()
         case .openLocation: Motion.fieldOpen.run { surfaces.openField(.address) }
         case .closeTab:
             if surfaces.field != nil { field.close(); return }
@@ -184,5 +259,45 @@ extension AppModel {
         closeWorkspacePage()
         guard browser.tab(id) == nil else { return }
         if let closed { backStack.offer(closed) }
+    }
+}
+
+extension BrowserKey {
+    /// Kept out of the field: a tab by place, the field itself, Find (the
+    /// field's own On This Page row) and Settings (its own row).
+    var commandable: Bool {
+        switch self {
+        case .tab, .nextTab, .previousTab, .openLocation, .find, .settings: false
+        default: true
+        }
+    }
+
+    /// Other words the field knows a command by.
+    var aliases: [String] {
+        switch self {
+        case .newPrivateTab: ["private", "incognito"]
+        case .reopenTab: ["reopen", "undo close"]
+        case .reload: ["refresh"]
+        case .zoomIn: ["bigger", "larger"]
+        case .zoomOut: ["smaller"]
+        case .actualSize: ["reset zoom", "100%"]
+        case .reader: ["reader", "reading mode"]
+        case .copyLink: ["copy address", "copy url"]
+        case .toggleSidebar: ["sidebar", "hide sidebar"]
+        case .toggleTabsInSidebar: ["tab bar", "vertical tabs"]
+        case .allTabs: ["tabs", "tab overview"]
+        default: []
+        }
+    }
+
+    /// The keys as the menu writes them: ⇧⌘R.
+    var shortcut: String {
+        var marks = ""
+        if modifiers.contains(.control) { marks += "⌃" }
+        if modifiers.contains(.alternate) { marks += "⌥" }
+        if modifiers.contains(.shift) { marks += "⇧" }
+        if modifiers.contains(.command) { marks += "⌘" }
+        let key = switch input { case "\t": "⇥"; case "=": "+"; default: input.uppercased() }
+        return marks + key
     }
 }

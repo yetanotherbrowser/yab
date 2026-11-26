@@ -118,12 +118,13 @@ final class TabletLayoutTests: XCTestCase {
         context.isPad = true
         content = SettingsContent(store: store, context: context, tabletLayout: layout)
         let group = try XCTUnwrap(content.sections(.appearance).first { $0.id == "appearance.browser" })
-        XCTAssertEqual(group.rows.count, 3)
+        XCTAssertEqual(group.rows.map(\.id), ["appearance.sidebar", "appearance.tabsInSidebar", "appearance.addressBars", "appearance.pageFrame"])
         let row = try XCTUnwrap(group.rows.first { $0.id == "appearance.addressBars" })
         guard case let .toggle(binding) = row.kind else { return XCTFail("an ordinary Settings switch") }
-        binding.wrappedValue = false
-        XCTAssertFalse(layout.addressBars)
-        XCTAssertTrue(store.tablet.addressBars, "a fixture's choices never touch the live preference store")
+        XCTAssertFalse(layout.addressBars, "off, as the Mac's Show Address Bar")
+        binding.wrappedValue = true
+        XCTAssertTrue(layout.addressBars)
+        XCTAssertFalse(store.tablet.addressBars, "a fixture's choices never touch the live preference store")
         XCTAssertEqual(content.sections(.appearance).prefix(2).map(\.id), ["appearance", "websites"])
     }
 
@@ -172,9 +173,15 @@ final class TabletLayoutTests: XCTestCase {
         app.workspace.preferences.resizeSidebar(to: 340)
         app.workspace.preferences.resizeSplit(to: 0.65)
         try await until { app.workspace.paneFrame != prior && a.bounds.width > b.bounds.width }
+        // Each page of a split keeps its band either way; the address setting
+        // leaves the panes as they are, the tab bar takes height from them.
         let withBars = app.workspace.paneFrame.height
         app.workspace.preferences.addressBars = false
-        try await until { app.workspace.paneFrame.height > withBars + 40 }
+        try await until { app.workspace.paneFrame.height == withBars }
+        app.workspace.preferences.tabsInSidebar = false
+        try await until { app.workspace.paneFrame.height < withBars - 40 }
+        app.workspace.preferences.tabsInSidebar = true
+        try await until { app.workspace.paneFrame.height == withBars }
         app.browser.select(first.id)
         app.reconcileWorkspace()
         app.workspace.preferences.resizeSidebar(to: 360)

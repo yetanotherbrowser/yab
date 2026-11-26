@@ -29,9 +29,9 @@ final class TabFolderEditingUITests: XCTestCase {
                                    extra: ["-settings.appearance", dark ? "dark" : "light"]))
         let mode = dark ? "dark" : "light"
         try picture(mode + "-column")
-        hold("newtab.pin.edit-pin", expecting: "Rename…")
+        hold("newtab.pin.edit-pin", expecting: "Rename Tab…")
         try picture(mode + "-pin-menu")
-        button("Rename…").tap()
+        button("Rename Tab…").tap()
         XCTAssertTrue(app.alerts["Rename Tab"].waitForExistence(timeout: 10))
         try picture(mode + "-rename-alert")
         let text = app.alerts.textFields.firstMatch
@@ -40,8 +40,8 @@ final class TabFolderEditingUITests: XCTestCase {
         if button("Select All").waitForExistence(timeout: 2) { button("Select All").tap() }
         text.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 60) + "My reference")
         app.alerts.buttons["Save"].tap()
-        hold("newtab.pin.edit-pin", expecting: "Rename…")
-        button("Rename…").tap()
+        hold("newtab.pin.edit-pin", expecting: "Rename Tab…")
+        button("Rename Tab…").tap()
         XCTAssertTrue(app.alerts.buttons["Reset"].waitForExistence(timeout: 10))
         app.alerts.buttons["Reset"].tap()
         hold("newtab.tab.edit-tab", expecting: "Move to Folder")

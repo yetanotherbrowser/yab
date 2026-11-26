@@ -22,11 +22,145 @@ final class TabletWorkspaceTests: XCTestCase {
     func testSearchAndFrameRespectKeyboardAndSidebarBounds() {
         let size = CGSize(width: 1024, height: 768)
         let open = TabletWorkspaceGeometry(size: size, statusBar: 24, sidebar: true, framed: true)
-        XCTAssertEqual(open.page, CGRect(x: 272, y: 76, width: 744, height: 684))
+        XCTAssertEqual(open.page, CGRect(x: 272, y: 32, width: 744, height: 728))
         XCTAssertLessThanOrEqual(open.top + 24 + open.searchHeight(keyboard: 350), size.height - 350)
+        // Framed, the page keeps its card with the sidebar away, as on the Mac.
         let closed = TabletWorkspaceGeometry(size: size, statusBar: 24, sidebar: false, framed: true)
-        XCTAssertEqual(closed.rim, 0)
-        XCTAssertEqual(closed.page.width, size.width)
+        XCTAssertEqual(closed.rim, 8)
+        XCTAssertEqual(closed.page, CGRect(x: 8, y: 32, width: 1008, height: 728))
+        let bare = TabletWorkspaceGeometry(size: size, statusBar: 24, sidebar: false, framed: false)
+        XCTAssertEqual(bare.rim, 0)
+        XCTAssertEqual(bare.page.width, size.width)
+    }
+
+    /// The Mac's rule: a row fills the width, rows stay even, four across at most.
+    func testPinColumnsFollowTheMacsSidebar() {
+        let wide: CGFloat = 264 - 2 * Metrics.Tablet.inset
+        XCTAssertEqual(Metrics.Tablet.pinColumns(1, width: wide), 1)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(3, width: wide), 3)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(4, width: wide), 4)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(5, width: wide), 3)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(6, width: wide), 3)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(8, width: wide), 4)
+        let narrow: CGFloat = 200
+        XCTAssertEqual(Metrics.Tablet.pinColumns(4, width: narrow), 2)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(3, width: narrow), 3)
+        XCTAssertEqual(Metrics.Tablet.pinColumns(0, width: narrow), 1)
+    }
+
+    /// The Mac's two layouts: tabs in the sidebar with the address as a plate
+    /// there, or the band over the card; tabs across the top in a 46-point bar.
+    func testChromePlanFollowsTheMacsLayouts() {
+        let column = TabletChromePlan(strip: false, sidebarInView: true, addressBars: false)
+        XCTAssertTrue(column.addressPlate); XCTAssertTrue(column.headerNav); XCTAssertFalse(column.band)
+        let bar = TabletChromePlan(strip: false, sidebarInView: true, addressBars: true)
+        XCTAssertFalse(bar.addressPlate); XCTAssertTrue(bar.band); XCTAssertTrue(bar.bandNav); XCTAssertFalse(bar.bandWorkspace)
+        let away = TabletChromePlan(strip: false, sidebarInView: false, addressBars: false)
+        XCTAssertTrue(away.band); XCTAssertTrue(away.bandNav); XCTAssertTrue(away.bandWorkspace, "nothing else holds the door and the tab buttons")
+        let split = TabletChromePlan(strip: false, sidebarInView: true, addressBars: false, split: true)
+        XCTAssertFalse(split.addressPlate, "each page of a split keeps its own band")
+        XCTAssertTrue(split.bandNav); XCTAssertFalse(split.headerNav)
+        let strip = TabletChromePlan(strip: true, sidebarInView: false, addressBars: false)
+        XCTAssertTrue(strip.band); XCTAssertFalse(strip.bandNav); XCTAssertFalse(strip.bandWorkspace)
+        let g = TabletWorkspaceGeometry(size: CGSize(width: 1024, height: 768), statusBar: 24, sidebar: true, framed: true, strip: true)
+        XCTAssertEqual(g.sidebarWidth, 0, "the tab bar takes the sidebar's place")
+        XCTAssertEqual(g.top, 24 + Metrics.Tablet.strip)
+    }
+
+    /// The band's ends size to its pane: equal while there is room to keep
+    /// the site centered, each its own width when not, and the tab buttons
+    /// in one menu when even that leaves the address too little.
+    func testBandFitsANarrowSplitPane() {
+        let away = TabletChromePlan(strip: false, sidebarInView: false, addressBars: false, split: true)
+        let narrow = TabletBandPlan(chrome: away, width: 320, first: false, last: true, focused: true, downloads: true)
+        XCTAssertEqual(narrow.address, 96, "a 320-point pane keeps room for its address")
+        XCTAssertEqual(narrow.workspace, .menu, "+, All Tabs and downloads fold into one menu")
+        XCTAssertFalse(narrow.close, "the split menu holds Close Split")
+        XCTAssertEqual(narrow.leadingWidth, 108)
+        XCTAssertEqual(narrow.trailingWidth, 108)
+        let beside = TabletBandPlan(chrome: away, width: 320, first: true, last: false, focused: false, downloads: true)
+        XCTAssertTrue(beside.sidebarDoor)
+        XCTAssertEqual(beside.workspace, .none, "the tab buttons stand on the window's trailing pane only")
+        XCTAssertTrue(beside.close)
+        XCTAssertEqual(beside.leadingWidth, 144)
+        XCTAssertEqual(beside.trailingWidth, 36)
+        let medium = TabletBandPlan(chrome: away, width: 520, first: false, last: true, focused: true, downloads: true)
+        XCTAssertEqual(medium.workspace, .doors)
+        XCTAssertFalse(medium.centered)
+        XCTAssertEqual(medium.leadingWidth, 108)
+        XCTAssertEqual(medium.trailingWidth, 224, "four doors and the 44-point downloads")
+        let single = TabletChromePlan(strip: false, sidebarInView: false, addressBars: false)
+        let wide = TabletBandPlan(chrome: single, width: 1000, first: true, last: true, focused: true, downloads: true)
+        XCTAssertTrue(wide.centered)
+        XCTAssertEqual(wide.workspace, .doors)
+        XCTAssertEqual(wide.leadingWidth, 152, "centered on the trailing end's width")
+        XCTAssertEqual(wide.trailingWidth, 152)
+    }
+
+    /// Downloads is a 44-point button among 36-point doors: the band
+    /// charges its own width when it chooses doors or the menu and when it
+    /// sizes the trailing end, so the doors never take the address's room.
+    /// The focused trailing pane of a split, sidebar away: Back, Forward and
+    /// Reload lead (108); Site Controls, the split menu, Close Split, + and
+    /// All Tabs trail (180), with downloads 224; the address keeps 96 and
+    /// the band 4 at each end.
+    func testBandChargesDownloadsItsOwnWidth() {
+        let away = TabletChromePlan(strip: false, sidebarInView: false, addressBars: false, split: true)
+        func pane(_ width: CGFloat, _ downloads: Bool) -> TabletBandPlan {
+            TabletBandPlan(chrome: away, width: width, first: false, last: true, focused: true, downloads: downloads)
+        }
+        for (downloads, threshold, trailing) in [(true, CGFloat(436), CGFloat(224)), (false, 392, 180)] {
+            let below = pane(threshold - 1, downloads)
+            XCTAssertEqual(below.workspace, .menu, "\(threshold - 1) points, downloads \(downloads)")
+            XCTAssertGreaterThanOrEqual(below.address, Metrics.Tablet.bandAddressMinimum)
+            for width in [threshold, threshold + 1] {
+                let band = pane(width, downloads)
+                XCTAssertEqual(band.workspace, .doors, "\(width) points, downloads \(downloads)")
+                XCTAssertTrue(band.close)
+                XCTAssertEqual(band.leadingWidth, 108)
+                XCTAssertEqual(band.trailingWidth, trailing, "\(width) points, downloads \(downloads)")
+                XCTAssertEqual(band.address, width - 8 - 108 - trailing)
+                XCTAssertGreaterThanOrEqual(band.address, Metrics.Tablet.bandAddressMinimum)
+            }
+        }
+        XCTAssertEqual(pane(428, true).workspace, .menu, "224 points of doors leave a 428-point pane too little address")
+        XCTAssertEqual(pane(428, false).workspace, .doors)
+    }
+
+    /// No tab in the space, the sidebar away: the page area still gets a band
+    /// with the sidebar's door and New Tab.
+    func testEmptySpaceKeepsTheBandsDoors() {
+        let away = TabletChromePlan(strip: false, sidebarInView: false, addressBars: false)
+        XCTAssertEqual(away.pages([]), [.empty])
+        XCTAssertEqual(away.pages(["a"]), [.tab("a")])
+        let column = TabletChromePlan(strip: false, sidebarInView: true, addressBars: false)
+        XCTAssertEqual(column.pages([]), [], "the sidebar holds them")
+        let empty = TabletBandPlan(chrome: away, width: 1000, first: true, last: true, focused: false, downloads: false, page: false)
+        XCTAssertTrue(empty.sidebarDoor)
+        XCTAssertEqual(empty.workspace, .doors)
+        XCTAssertFalse(empty.navigation)
+        XCTAssertFalse(empty.siteControls)
+    }
+
+    func testSidebarSpacesPageAsTheMacsDo() {
+        XCTAssertEqual(TabletSidebar.paged(-100, index: 1, count: 3, width: 264), -50, "half the finger's travel")
+        XCTAssertEqual(TabletSidebar.paged(-900, index: 1, count: 3, width: 264), -264, "a page at most")
+        XCTAssertEqual(TabletSidebar.paged(100, index: 0, count: 3, width: 264), 7.5, accuracy: 0.001, "give past the first")
+        XCTAssertEqual(TabletSidebar.paged(-100, index: 2, count: 3, width: 264), -7.5, accuracy: 0.001, "and past the last")
+    }
+
+    /// A chat stands beside the workspace: the page and toolbar narrow, never sit under it.
+    func testChatColumnNarrowsTheWorkspace() {
+        let wide = CGSize(width: 1376, height: 1032)
+        XCTAssertEqual(TabletWorkspaceGeometry.conversation(in: wide, expanded: true, chat: true), Metrics.Workspace.conversation)
+        XCTAssertEqual(TabletWorkspaceGeometry.conversation(in: wide, expanded: true, chat: false), 0)
+        XCTAssertEqual(TabletWorkspaceGeometry.conversation(in: wide, expanded: false, chat: true), 0)
+        XCTAssertEqual(TabletWorkspaceGeometry.conversation(in: CGSize(width: 600, height: 900), expanded: true, chat: true), 0)
+    }
+
+    func testEachSitePermissionHasItsOwnMark() {
+        XCTAssertEqual(SiteSettings.Permission.downloads.tabletAsset, MacGlyph.yabDownload.rawValue)
+        XCTAssertEqual(Set(SiteSettings.Permission.allCases.map(\.tabletAsset)).count, SiteSettings.Permission.allCases.count)
     }
 
     func testTabletSearchClosesWithoutLandingInThePhonePlate() async throws {

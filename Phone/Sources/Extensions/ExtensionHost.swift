@@ -483,7 +483,7 @@ final class ExtensionHost: NSObject {
                 let (name, reach, verdict) = try await preview(id)
                 // One that can't work on an iPhone isn't offered: why, and OK.
                 if verdict.kind == .blocked {
-                    let sheet = UIAlertController(title: "“\(name)” doesn't work on iPhone yet", message: verdict.reason, preferredStyle: .alert)
+                    let sheet = UIAlertController(title: "“\(name)” doesn't work on \(DeviceWord.name) yet", message: verdict.reason, preferredStyle: .alert)
                     sheet.view.accessibilityIdentifier = "extensions.blocked"
                     sheet.addAction(UIAlertAction(title: "OK", style: .cancel))
                     Self.top()?.present(sheet, animated: !Motion.disabled)
@@ -578,7 +578,7 @@ extension ExtensionHost: WKWebExtensionControllerDelegate {
         }
         note("native message \(applicationIdentifier ?? "")")
         // No other app on an iPhone answers a browser extension.
-        throw NSError(domain: "Yab", code: 1, userInfo: [NSLocalizedDescriptionKey: "Native messaging is not available on iPhone"])
+        throw NSError(domain: "Yab", code: 1, userInfo: [NSLocalizedDescriptionKey: "Native messaging is not available on \(DeviceWord.name)"])
     }
 }
 
