@@ -5,8 +5,8 @@ import Testing
 @MainActor
 struct SideExtensionLayoutTests {
     private func layout(width: CGFloat, count: Int, door: CGFloat) -> SideExtensionLayout {
-        SideExtensionLayout(width: width, count: count, door: door, margin: SideBar.margin,
-                            columns: SideBar.pinColumns(count, width: width), gap: SideBar.pinGap)
+        // As SiteControls has it, for the room it keeps and the grid it draws.
+        SideExtensionLayout(sidebar: width, count: count, door: door)
     }
 
     @Test func emptyAndSinglePinKeepAddressHeight() {
@@ -42,15 +42,40 @@ struct SideExtensionLayoutTests {
             }
         }
     }
-    @Test func extensionTilesUseTheFavoritesGrid() {
-        for width: CGFloat in [200, 220, 240, 300, 360] {
-            for count in [4, 5, 6, 12] {
-                let extensions = layout(width: width, count: count, door: 28)
-                let favorites = ColumnLayout.grid(count: count, width: width)
-                #expect(extensions.columns == favorites.cols)
-                #expect(abs(extensions.cell - favorites.width) < 0.01)
-                #expect(extensions.gap == SideBar.pinGap)
-            }
+    /// Arc: six pinned extensions over four Favorites across, three over two.
+    @Test func extensionsStandHalfAgainAsManyAcrossAsFavorites() {
+        for width in stride(from: Metrics.sideMin, through: Metrics.sideMax, by: 5) {
+            let favorites = SideBar.pinColumns(12, width: width)
+            #expect(SideBar.extensionColumns(60, width: width) == favorites * 3 / 2, "width \(width)")
+            let tiles = layout(width: width, count: 60, door: 28)
+            #expect(tiles.gap == SideBar.pinGap)
+        }
+    }
+
+    /// Five or six of them: one row where Favorites go four across, as
+    /// Arc's do, not three and two; three and two or three and three where
+    /// they go two across, not two, two and one.
+    @Test func aFewExtensionsTakeTheRowsArcsDo() throws {
+        let widths = Array(stride(from: Metrics.sideMin, through: Metrics.sideMax, by: 5))
+        let wide = try #require(widths.first { SideBar.pinColumns(12, width: $0) == 4 })
+        let narrow = try #require(widths.first { SideBar.pinColumns(12, width: $0) == 2 })
+        for count in [5, 6] {
+            #expect(SideBar.extensionColumns(count, width: wide) == count)
+            #expect(SideBar.extensionColumns(count, width: narrow) == 3)
+        }
+    }
+
+    /// The room kept for six over the pins, at the width where pins first
+    /// go four across and a point narrower, in both densities: one row of
+    /// six, then two of three.
+    @Test func theRoomKeptIsTheRowsDrawn() throws {
+        let widths = Array(stride(from: Metrics.sideMin, through: Metrics.sideMax, by: 1))
+        let four = try #require(widths.first { SideBar.pinColumns(12, width: $0) == 4 })
+        for door: CGFloat in [26, 28] {
+            let one = layout(width: four, count: 6, door: door), two = layout(width: four - 1, count: 6, door: door)
+            try #require(one.separate && two.separate)
+            #expect(one.columns == 6 && one.height == door + one.gap)
+            #expect(two.columns == 3 && two.height == 2 * (door + two.gap))
         }
     }
 

@@ -614,9 +614,22 @@ struct SideBar: View {
     /// even: six pins go three and three rather than four and two, five go
     /// three and two.
     static func pinColumns(_ count: Int, width: CGFloat) -> Int {
+        even(count, fits: pinFits(width))
+    }
+
+    /// Arc's pinned extensions over its Favorites: half again as many
+    /// across, six over four in a wide column and three over two in a
+    /// narrow one, so a few of them stand in one row, kept even the same way.
+    static func extensionColumns(_ count: Int, width: CGFloat) -> Int {
+        even(count, fits: pinFits(width) * 3 / 2)
+    }
+
+    private static func pinFits(_ width: CGFloat) -> Int {
+        min(pinMaxColumns, max(1, Int((width - 2 * margin + pinGap) / (pinMinWidth + pinGap))))
+    }
+
+    private static func even(_ count: Int, fits: Int) -> Int {
         guard count > 0 else { return 1 }
-        let room = width - 2 * margin + pinGap
-        let fits = min(pinMaxColumns, max(1, Int(room / (pinMinWidth + pinGap))))
         let rows = (count + fits - 1) / fits
         return (count + rows - 1) / rows
     }

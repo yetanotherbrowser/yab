@@ -1120,10 +1120,7 @@ struct SidePlate: View {
         } else {
             ids = (Extensions.unread(signIn) ?? []).filter { $0.enabled && $0.pinned == true }.map(\.id)
         }
-        let height = SideExtensionLayout(width: browser.prefs.sideWidth,
-                                   count: ids.count,
-                                   door: door, margin: SideBar.margin,
-                                   columns: SideBar.pinColumns(ids.count, width: browser.prefs.sideWidth), gap: SideBar.pinGap).height
+        let height = SideExtensionLayout(sidebar: browser.prefs.sideWidth, count: ids.count, door: door).height
         return .init(shown: shown, extensionHeight: height, extensions: ids)
     }
 
@@ -1131,8 +1128,7 @@ struct SidePlate: View {
         let facts = SiteFacts(tab: tab)
         let site = facts.site
         let pinned = tab.engineKind == .chromium ? column.buttons(for: tab) : extensions.buttons.filter(\.pinned)
-        let layout = SideExtensionLayout(width: width, count: pinned.count, door: Self.door, margin: SideBar.margin,
-                                         columns: SideBar.pinColumns(pinned.count, width: width), gap: SideBar.pinGap)
+        let layout = SideExtensionLayout(sidebar: width, count: pinned.count, door: Self.door)
         // A pin's popup up keeps the plate as it is under the pointer: the
         // popup hangs from the pin, and the pointer going down into the
         // popup took the pin away, and the popup with it, before a password

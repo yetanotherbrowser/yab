@@ -19,4 +19,11 @@ struct SideExtensionLayout {
         let rows = count > 0 ? (count + self.columns - 1) / self.columns : 0
         height = separate ? CGFloat(rows) * (door + gap) : 0
     }
+
+    /// The row over the pins in a sidebar this wide: the room kept for it
+    /// ahead and the grid drawn in it are the same one.
+    init(sidebar width: CGFloat, count: Int, door: CGFloat) {
+        self.init(width: width, count: count, door: door, margin: SideBar.margin,
+                  columns: SideBar.extensionColumns(count, width: width), gap: SideBar.pinGap)
+    }
 }
