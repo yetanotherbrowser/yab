@@ -26,6 +26,8 @@ struct AutomaticPiPEntryTests {
         let initialMaster: Bool
         let wasAllowed = AutomaticPiPSites.shared.allows(URL(string: "https://youtube.com/"))
         var nativeWindow: NSWindow?
+        /// A picture holds its controller weakly: the fixture keeps them.
+        var controllers: [NSViewController] = []
 
         init() {
             _ = NSApplication.shared
@@ -114,7 +116,10 @@ struct AutomaticPiPEntryTests {
             window.contentView = web
             nativeWindow = window
             let rect = web.convert(web.bounds, to: nil)
-            let picture = try #require(SitePiP.benchPicture(view: NSView(frame: rect), window: window, rect: rect))
+            let controller = NSViewController()
+            controllers.append(controller)
+            let picture = try #require(SitePiP.benchPicture(view: NSView(frame: rect), window: window, rect: rect, controller: controller))
+            #expect(picture.controller === controller)
             return picture
         }
 

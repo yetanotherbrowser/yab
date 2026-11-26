@@ -35,7 +35,7 @@ enum SitePiP {
         let rect: CGRect
         /// The video's width over its height, nil when WebKit didn't say.
         let shape: CGSize?
-        fileprivate weak var controller: NSViewController?
+        private(set) weak var controller: NSViewController?
         var gone: (() -> Void)?
         var rejectedAutomaticDeparture = false
 
@@ -54,10 +54,11 @@ enum SitePiP {
     }
 
     /// Synthetic native-take boundary only; no PIP.framework swizzle or
-    /// private controller is invoked by this test picture.
-    @MainActor static func benchPicture(view: NSView, window: NSWindow, rect: CGRect) -> Picture? {
+    /// private controller is invoked by this test picture. The picture only
+    /// holds its controller weakly, so the caller keeps `controller` alive.
+    @MainActor static func benchPicture(view: NSView, window: NSWindow, rect: CGRect, controller: NSViewController) -> Picture? {
         guard Store.testing else { return nil }
-        return Picture(view: view, window: window, rect: rect, shape: CGSize(width: 640, height: 360), controller: NSViewController())
+        return Picture(view: view, window: window, rect: rect, shape: CGSize(width: 640, height: 360), controller: controller)
     }
 
     @MainActor private static func rejects(_ picture: Picture) -> Bool {

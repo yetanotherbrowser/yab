@@ -24,6 +24,8 @@ struct FullscreenPiPDepartureTests {
         let playerHost: NSWindow
         var frame: FullscreenPiPDeparture.Frame?
         var pending: [@MainActor @Sendable () -> Void] = []
+        /// A picture holds its controller weakly: the fixture keeps them.
+        var controllers: [NSViewController] = []
         var originalPlayerOnSpace = false
         var originalPlayerUsable = true
         var sourceFocused = false
@@ -127,7 +129,11 @@ struct FullscreenPiPDepartureTests {
             let web = try #require(tab.built)
             source.contentView = web
             let rect = web.convert(web.bounds, to: nil)
-            return try #require(SitePiP.benchPicture(view: NSView(frame: rect), window: source, rect: rect))
+            let controller = NSViewController()
+            controllers.append(controller)
+            let picture = try #require(SitePiP.benchPicture(view: NSView(frame: rect), window: source, rect: rect, controller: controller))
+            #expect(picture.controller === controller)
+            return picture
         }
 
         func fire() throws { try #require(!pending.isEmpty); pending.removeFirst()() }
