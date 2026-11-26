@@ -75,7 +75,7 @@ struct DevExtraTool: View {
                             Button { openSearchResult(result) } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(url).lineLimit(1)
-                                    Text("\(result["matchesCount"] ?? 0) matches").foregroundStyle(Palette.muted)
+                                    Text(verbatim: "\(result["matchesCount"] ?? 0) matches").foregroundStyle(Palette.muted)
                                 }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                             }.buttonStyle(.plain)
                         }

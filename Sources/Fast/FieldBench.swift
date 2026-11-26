@@ -333,7 +333,7 @@ extension Bench {
                 for frame in frames.prefix(20) {
                     group.enter()
                     page.call(script, in: .page, frame: frame) { result in
-                        let value = (try? result.get()).map { "\($0 ?? "nil")" } ?? "(unread)"
+                        let value = (try? result.get()).map { "\($0)" } ?? "(unread)"
                         out.append(["origin": "\(frame.origin.scheme)://\(frame.origin.host)",
                                     "url": frame.url?.absoluteString ?? "", "value": value])
                         group.leave()
