@@ -272,6 +272,84 @@ struct EmptyFolderDragTests {
         }
     }
 
+    /// #737: a kept tab carried step by step, as a hand does, onto the line
+    /// between two shut folders, from below and from above, lands between
+    /// them; every place there was inside one of them, which then sprang
+    /// open under the hand.
+    @Test(arguments: Density.allCases, [false, true])
+    func aTabGoesBetweenTwoShutFolders(_ density: Density, _ down: Bool) async throws {
+        try await world(density) { f in
+            let a = Nest(name: "A", open: false), b = Nest(name: "B", open: false)
+            let loose = down ? f.tab("Loose", kept: true) : nil
+            let one = f.tab("One", kept: true, nest: a), two = f.tab("Two", kept: true, nest: b)
+            let held = loose ?? f.tab("Loose", kept: true)
+            try f.render([a, b])
+            var drag = try f.beginTab(held, want: down ? 0.3 : 1.7)
+            for step in stride(from: 0.4, through: 1.4, by: 0.1) { try f.move(&drag, want: down ? step : 2 - step) }
+            try f.move(&drag, want: 1.5 - (down ? 0 : 1))
+            #expect(!f.drawn(a).hold.aimed && !f.drawn(b).hold.aimed, "between, not into either")
+            try f.end(drag)
+            #expect(held.kept && held.nest == nil && one.nest === a && two.nest === b)
+            #expect(f.browser.tabs.map(\.id) == [one.id, held.id, two.id])
+            #expect(!a.open && !b.open)
+            f.expectReleased()
+        }
+    }
+
+    /// The same hand stopping on a shut folder's middle still files the tab
+    /// there.
+    @Test(arguments: Density.allCases)
+    func aTabHeldOnAShutFoldersMiddleGoesIn(_ density: Density) async throws {
+        try await world(density) { f in
+            let a = Nest(name: "A", open: false), b = Nest(name: "B", open: false)
+            _ = f.tab("One", kept: true, nest: a)
+            _ = f.tab("Two", kept: true, nest: b)
+            let held = f.tab("Loose", kept: true)
+            try f.render([a, b])
+            var drag = try f.beginTab(held, want: 1.7)
+            for step in stride(from: 1.6, through: 1.0, by: -0.1) { try f.move(&drag, want: step) }
+            #expect(f.drawn(b).hold.aimed)
+            try f.end(drag)
+            try await Task.sleep(for: .milliseconds(800))
+            f.sync()
+            #expect(held.nest === b)
+        }
+    }
+
+    /// #737 with ten split view pairs above the two shut folders, each pair
+    /// drawn as one row: the hand on A's bottom edge still lands between A
+    /// and B. The place just under A's run is index 21 among the tabs, past
+    /// the slots the search looked at, and the tab went among the pairs.
+    @Test(arguments: Density.allCases)
+    func aTabGoesBetweenTwoShutFoldersUnderPairs(_ density: Density) async throws {
+        try await world(density) { f in
+            let pairs = (0..<10).map { _ in (f.tab("Left", kept: true), f.tab("Right", kept: true)) }
+            f.browser.pairs = pairs.map { Pair(first: $0.0.id, second: $0.1.id) }
+            let a = Nest(name: "A", open: false), b = Nest(name: "B", open: false)
+            let one = f.tab("One", kept: true, nest: a), two = f.tab("Two", kept: true, nest: b)
+            let held = f.tab("Loose", kept: true)
+            try f.render([a, b])
+            let slots = f.folders.slots(f.browser.tabs, joined: true)
+            try #require(slots.folders[a.key] == 10 && slots.folders[b.key] == 11, "the ten pairs are ten rows")
+            let from = try #require(slots.tabs[held.id])
+            // The fixture's `beginTab` counts a pair as two rows; start from
+            // the row as drawn.
+            let start = CGPoint(x: 120, y: try #require(f.page.rowMiddle(held.id.uuidString)))
+            var drag = Fixture.Drag(start: start, from: from, last: start)
+            try f.send(.leftMouseDown, start)
+            for step in stride(from: Double(from) - 0.3, through: 10.5, by: -0.1) { try f.move(&drag, want: step) }
+            try f.move(&drag, want: 10.4)
+            try #require(f.page.hand.dragging == held.id, "EMPTY_DRAG_FIXTURE_INVALID: actual tab drag required")
+            #expect(!f.drawn(a).hold.aimed && !f.drawn(b).hold.aimed, "between, not into either")
+            try f.end(drag)
+            #expect(held.kept && held.nest == nil && one.nest === a && two.nest === b)
+            let order = pairs.flatMap { [$0.0.id, $0.1.id] } + [one.id, held.id, two.id]
+            #expect(f.browser.tabs.map(\.id) == order, "kept: \(f.browser.tabs.map { "\($0.title)/\($0.nest?.name ?? "-")" })")
+            #expect(!a.open && !b.open)
+            f.expectReleased()
+        }
+    }
+
     /// #1037: split view pairs among the kept, each drawn as one row, and a
     /// folder of today's carried up and let go just above Clear, under an
     /// open folder of yours: it stays a folder of its own there. Measured
@@ -523,6 +601,16 @@ struct EmptyFolderDragTests {
             try #require(page.hand.grip.heard["began", default: 0] == before + 1,
                          "EMPTY_DRAG_FIXTURE_INVALID: the real local monitor must begin exactly one drag")
             try #require(folders.carried == nest.key, "EMPTY_DRAG_FIXTURE_INVALID: actual .nest carry required")
+            return drag
+        }
+
+        func beginTab(_ tab: Tab, want: Double) throws -> Drag {
+            let from = try #require(folders.slots(browser.tabs.filter { $0.pin == nil }, joined: false).tabs[tab.id])
+            let start = CGPoint(x: 120, y: try #require(page.rowMiddle(tab.id.uuidString)))
+            try send(.leftMouseDown, start)
+            var drag = Drag(start: start, from: from, last: start)
+            try move(&drag, want: want)
+            try #require(page.hand.dragging == tab.id, "EMPTY_DRAG_FIXTURE_INVALID: actual tab drag required")
             return drag
         }
 
