@@ -259,7 +259,9 @@ extension Leaving {
         // No native document yet: nothing typed, nothing to ask.
         guard let remote = page.remoteID else { return .leave }
         guard let core = ChromiumProcess.shared.connectedClient else { return .unavailable }
-        return await ChromiumCloseBatch(core: core).approve(tab, page, remote: remote)
+        // Entries only hold their batch weakly: keep it in a local while it asks.
+        let batch = ChromiumCloseBatch(core: core)
+        return await batch.approve(tab, page, remote: remote)
     }
 
     @discardableResult static func chromiumClosed(_ page: ChromiumPage, closedRemote: String? = nil) -> Bool {
