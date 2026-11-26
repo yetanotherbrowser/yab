@@ -107,7 +107,7 @@ extension AppModel {
             guard let root = Self.topController() else { return }
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
             sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
+            sheet.popoverPresentationController?.sourceRect = Self.shareAnchor(in: root.view)
             root.present(sheet, animated: !Motion.disabled)
         }
     }
