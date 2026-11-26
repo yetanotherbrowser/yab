@@ -1,0 +1,24 @@
+--- a/cef/libcef/browser/download_manager_delegate_impl.cc
++++ b/cef/libcef/browser/download_manager_delegate_impl.cc
+@@ -20,6 +20,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/download/download_core_service.h"
+ #include "chrome/browser/download/download_core_service_factory.h"
++#include "chrome/browser/extensions/external_action_origin.h"
+ #include "chrome/browser/extensions/api/downloads/downloads_api.h"
+ #include "extensions/browser/extension_registry.h"
+ #include "extensions/common/constants.h"
+@@ -557,6 +558,13 @@
+       content::DownloadItemUtils::GetWebContents(item);
+   if (contents) {
+     browser = CefBrowserHostBase::GetBrowserForContents(contents);
++    // An action popup has no CefBrowser; its download is its owner page's.
++    if (!browser) {
++      auto* origin = extensions::ExternalActionOrigin::Get(contents);
++      auto* owner = origin ? origin->Owner(contents) : nullptr;
++      if (owner && owner->GetBrowserContext() == contents->GetBrowserContext())
++        browser = CefBrowserHostBase::GetBrowserForContents(owner);
++    }
+     LOG_IF(WARNING, !browser) << "No CefBrowser for download item";
+   }
+   if (!browser) {

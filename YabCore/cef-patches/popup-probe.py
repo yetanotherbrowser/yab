@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Extension action popup hosting (patches 0006, 0011); farm display job only.
+"""Extension action popup hosting (patches 0006, 0011, 0137); farm display job only.
 
 Opt-in normal-window path (YAB_CEF_EXTENSION_WINDOWS=1): load the test
 extension with a popup action, press its toolbar button, and check that
 Chromium names the owner tab, extension and token in popup.layer, that the popup's
 own compositor context carries pixels (ScreenCaptureKit through the layer host),
-that popup.input reaches that exact popup, and that closing reports popup.closed.
+that popup.input reaches that exact popup, that a file the popup saves opens on
+its owner tab (download.open), and that closing reports popup.closed.
 """
 import argparse
 import http.server
@@ -145,6 +146,16 @@ def main():
             check('popup input reaches the popup', 'error' not in click, click)
             other = request('popup.input', {'tab': manage, 'token': shown['token'], 'kind': 'mouseMove', 'x': 20, 'y': 20}, allow_error=True)
             check('another tab cannot drive the popup', 'error' in other, other)
+            saved = len(events)
+            for kind in ('mouseDown', 'mouseUp'):
+                request('popup.input', {'tab': owner, 'token': shown['token'], 'kind': kind, 'x': 20, 'y': 20})
+            opened = eventually('popup download', lambda: next((e['params'] for e in events[saved:]
+                                if e['event'] == 'download.open'), None), 15, pump=owner)
+            report['popupDownload'] = opened
+            check('popup download belongs to its owner tab', opened.get('tab') == owner and
+                  opened.get('url', '').startswith(f'blob:chrome-extension://{extension}/') and
+                  opened.get('name') == 'popup-save.md', opened)
+            request('download.cancel', {'tab': owner, 'download': opened['download']})
             request('popup.close', {'tab': owner, 'token': shown['token']})
             eventually('popup closed', lambda: any(e['event'] == 'popup.layer' and e['params'].get('state') == 'closed'
                        for e in events[mark:]) or any(e['event'] == 'popup.closed' for e in events[mark:]), 15, pump=owner)
