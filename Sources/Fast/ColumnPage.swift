@@ -456,12 +456,32 @@ final class ColumnPage: NSView {
         guard let browser, let look else { return nil }
         // A space not on screen lights the tab it was left on, as its page
         // beside the one on screen shows it (PagedSpace's `row.active`).
-        let live = space == browser.spaceID ? (browser.newTabLit ? nil : browser.activeID) : restingActive
-        return ColumnCell.Context(browser: browser, look: look, liveID: live, pointedID: pointedID)
+        let onScreen = space == browser.spaceID
+        let live = onScreen ? (browser.newTabLit ? nil : browser.activeID) : restingActive
+        return ColumnCell.Context(browser: browser, look: look, liveID: live, newTabLit: onScreen ? browser.newTabLit : restingActive == nil,
+                                  pointedID: pointedID)
     }
 
     /// The tab in front in this space's row as it was parked.
     private var restingActive: Tab.ID?
+
+    /// Its pins stand still over the row of spaces (ColumnPages.stillPins):
+    /// they are the space on screen's then, lit as it lights them from the
+    /// switch on. They kept the space left's pin lit until the row landed.
+    var holdsPins = false {
+        didSet { if holdsPins != oldValue { relightHeld() } }
+    }
+
+    private var heldContext: ColumnCell.Context? {
+        guard let browser, let look else { return nil }
+        return ColumnCell.Context(browser: browser, look: look, liveID: browser.newTabLit ? nil : browser.activeID,
+                                  newTabLit: browser.newTabLit, pointedID: pointedID)
+    }
+
+    /// The held pins lit as the space on screen has them now.
+    func relightHeld() {
+        placeHead(animate: false, curve: ColumnMotion.keptShift, rebind: false)
+    }
 
     /// The cells for what is in sight, each where its row stands.
     private func place(animate: Bool, curve: ColumnMotion.Curve, rebind: Bool) {
@@ -595,7 +615,7 @@ final class ColumnPage: NSView {
 
     /// The pins and the name, where they stand over the rows.
     private func placeHead(animate: Bool, curve: ColumnMotion.Curve, rebind: Bool) {
-        guard let context else { return }
+        guard let context = holdsPins ? heldContext : context else { return }
         if head.frame != bounds { head.frame = bounds }
         var wanted = Set<String>()
         for item in headItems {

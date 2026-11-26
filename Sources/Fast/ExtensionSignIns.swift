@@ -101,6 +101,13 @@ extension Extensions {
     /// store act when nothing names a window.
     static var here: Extensions { of(BrowserWindows.shared.activeBrowser ?? shared.browser) }
 
+    /// A space's sign-in's, only once made: for a parked space's look,
+    /// which mustn't start them.
+    static func made(space: UUID) -> Extensions? {
+        let signIn = signIn(of: space)
+        return all.first { $0.signIn == signIn }
+    }
+
     /// A space's own sign-in's, made and started the first time it is asked for.
     static func of(signIn id: UUID) -> Extensions {
         if let made = others[id] { return made }

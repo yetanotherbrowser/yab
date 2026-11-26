@@ -344,19 +344,29 @@ struct SideBar: View {
 
                 // The address, when nothing over the page has it.
                 if browser.sidePlated, !ColumnKit.cut.contains("plate") {
-                    Group {
+                    // One plate takes the other's place at once: both carry
+                    // the extensions' row, and dissolving them into each
+                    // other on the rows' animation (a change of space)
+                    // flared the row for a frame.
+                    ZStack {
                         if let tab = plateTab {
                             // Still the last turn's answer as it is made.
                             SidePlate(browser: browser, tab: tab, near: near, width: prefs.sideWidth, fromAsking: plateAsking,
                                       frosted: plateFrosted)
+                                .transition(.identity)
                         } else {
-                            EmptyPlate(browser: browser, frosted: plateFrosted)
+                            EmptyPlate(browser: browser, near: near, frosted: plateFrosted)
+                                .transition(.identity)
                         }
                     }
                     .padding(.top, -SidePlate.lift)
                     .padding(.bottom, SidePlate.below)
                     .transition(.opacity)
-                    .onChange(of: plateTab == nil, initial: true) { _, empty in plateAsking = empty }
+                    // Only for a tab coming in where the plate asked: one
+                    // that comes with a change of space is just there, as
+                    // Arc's address is, with no glass going out after the slide.
+                    .onChange(of: plateTab == nil, initial: true) { _, empty in plateAsking = empty && !SpacePager.shared.active }
+                    .onChange(of: browser.spaceID) { _, _ in plateAsking = false }
                     .zIndex(1)
                 }
 

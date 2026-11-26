@@ -3677,6 +3677,26 @@ final class Extensions: NSObject, ObservableObject {
         press(id)
     }
 
+    /// Whether its button does something with no page in front: a popup or
+    /// a side panel needs no tab, an action on the page does. One not
+    /// loaded yet is pressed when it is, and may.
+    func standsAlone(_ id: String) -> Bool {
+        guard let context = contexts[id] else { return true }
+        return ApplePasswordExtensionRoute.matches(id) || popupURL(for: context) != nil || ExtensionShims.panelOnClick.contains(id)
+    }
+
+    #if DEBUG
+    /// The list as installed, each asleep until used, for tests of what the
+    /// column draws; what was there, to put back.
+    @discardableResult
+    func installedForTest(_ list: [Installed], asleep sleeping: Set<String>) -> (installed: [Installed], asleep: Set<String>) {
+        let was = (installed, asleep)
+        installed = list
+        asleep = sleeping
+        return was
+    }
+    #endif
+
     /// The page the button's popup is now: one the extension set for this
     /// tab or for all of them, else its manifest's.
     private func popupURL(for context: WKWebExtensionContext) -> URL? {

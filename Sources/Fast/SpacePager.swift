@@ -391,7 +391,7 @@ final class SpacePager {
 
     /// Nil until setup has restored an unknown row. Diagnostics and
     /// picture-ahead checks never restore tabs or their configurations.
-    private static func movesPlate(_ browser: Browser, toward target: Int?, load: Bool = false) -> Bool? {
+    static func movesPlate(_ browser: Browser, toward target: Int?, load: Bool = false) -> Bool? {
         if withMail(browser, toward: target) { return true }
         guard ColumnKit.on else { return false }
         let order = browser.turnOrder.map(\.id)

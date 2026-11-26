@@ -330,6 +330,8 @@ final class ColumnPages: NSView {
         // takes the rows down with it, and its let-go changes nothing.
         if !browser.inMail { frame.lead = ColumnLayout.lead(browser, pins: browser.pinCellCount + (page.hand.pinGaps?.count ?? 0)) }
         page.live(ColumnLayout.live(browser, shape: page.hand.shape), head: ColumnLayout.head(browser, gaps: page.hand.pinGaps), frame: frame, look: look)
+        // The pins held still over the row are another page's: lit for this space now, not when the row lands.
+        for (id, held) in pages where id != space && held.holdsPins { held.relightHeld() }
         SwitchMarks.lit(browser.activeID)
     }
 
@@ -612,6 +614,7 @@ final class ColumnPages: NSView {
         guard let slide else { return }
         for (id, page) in pages {
             let home = id == slide.order[slide.home]
+            page.holdsPins = slide.still && home
             page.headPins(hidden: slide.still && !home, offset: slide.still && home ? -x : 0, from: from.map { -$0 }, velocity: -velocity)
         }
     }
@@ -650,7 +653,10 @@ final class ColumnPages: NSView {
         layer?.sublayerTransform = CATransform3DIdentity
         layer?.masksToBounds = false
         mailPage?.isHidden = true
-        for page in pages.values { page.headPins(hidden: false, offset: 0, from: nil, velocity: 0) }
+        for page in pages.values {
+            page.holdsPins = false
+            page.headPins(hidden: false, offset: 0, from: nil, velocity: 0)
+        }
         // The page landed on put at no offset in the same commit as the row
         // comes off: committed first, from a landing's completion with no
         // transaction open, the row at rest showed the space it started

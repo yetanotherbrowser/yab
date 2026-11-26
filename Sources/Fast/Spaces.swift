@@ -517,11 +517,17 @@ enum Spaces {
     /// The stores of spaces with their own sign-ins opened in this run.
     static var madeStores: [UUID: WKWebsiteDataStore] { stores }
 
-    static func store(for id: UUID) -> WKWebsiteDataStore {
+    /// The store `store(for:)` gives the space, only once it is made: for a
+    /// look at a parked space that mustn't make one.
+    static func madeStore(for id: UUID) -> WKWebsiteDataStore? {
         if id == Space.mailID || id == Space.pinsID || sharing.contains(id) { return Store.websites }
         let id = signIn(of: id)
-        if id == Space.firstID { return Store.websites }
-        if let made = stores[id] { return made }
+        return id == Space.firstID ? Store.websites : stores[id]
+    }
+
+    static func store(for id: UUID) -> WKWebsiteDataStore {
+        if let made = madeStore(for: id) { return made }
+        let id = signIn(of: id)
         let made = WKWebsiteDataStore(forIdentifier: id)
         // Before anything asks it for its service workers (Extensions.storeMade).
         if #available(macOS 15.4, *) { Extensions.storeMade(made, signIn: id) }

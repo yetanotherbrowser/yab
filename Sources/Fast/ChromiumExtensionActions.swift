@@ -95,9 +95,21 @@ final class ChromiumColumn: ObservableObject {
 
     static func isPrivate(_ tab: Tab) -> Bool { tab.shy || !tab.pageStore.isPersistent }
 
+    /// The profile a new Chromium tab in `space` runs, for a plate with no
+    /// tab in front: one already read for the space's store, never made or
+    /// read for this. A private window's only with "Allow in private tabs".
+    func native(space: UUID, privately: Bool) -> ChromiumExtensions? {
+        guard !privately || ChromiumPrivateProfiles.extensionsAllowed, let store = Spaces.madeStore(for: space) else { return nil }
+        return ChromiumExtensions.existing(in: store)
+    }
+
     /// The list's rows a tab can use: in a private tab, those allowed there.
     func items(_ native: ChromiumExtensions, for tab: Tab) -> [ChromiumExtensions.Item] {
-        Self.isPrivate(tab) ? native.items.filter(\.incognito) : native.items
+        items(native, privately: Self.isPrivate(tab))
+    }
+
+    func items(_ native: ChromiumExtensions, privately: Bool) -> [ChromiumExtensions.Item] {
+        privately ? native.items.filter(\.incognito) : native.items
     }
 
     /// Which buttons a profile's list makes: its pins in pin order, then
@@ -120,7 +132,6 @@ final class ChromiumColumn: ObservableObject {
     func buttons(for tab: Tab, all: Bool = false) -> [Extensions.Button] {
         guard let native = native(for: tab) else { return [] }
         follow(native)
-        let (pinned, rest) = Self.members(items(native, for: tab), pinnedIDs: native.pinnedIDs, all: all)
         var here: [String: Native] = [:]
         if let page = tab.builtPage as? ChromiumPage, let remote = page.remoteID,
            let core = ChromiumProcess.shared.connectedClient {
@@ -128,6 +139,20 @@ final class ChromiumColumn: ObservableObject {
             watch(tab, remote: remote, profile: native.profile, actions: Self.actionIDs(items(native, for: tab), pinnedIDs: native.pinnedIDs))
             here = states[remote] ?? [:]
         }
+        return buttons(native, items: items(native, for: tab), here: here, all: all)
+    }
+
+    /// The pinned buttons of a profile with no page to say how each looks:
+    /// a plate with no tab in front.
+    @available(macOS 15.4, *)
+    func buttons(_ native: ChromiumExtensions, privately: Bool) -> [Extensions.Button] {
+        follow(native)
+        return buttons(native, items: items(native, privately: privately), here: [:], all: false)
+    }
+
+    @available(macOS 15.4, *)
+    private func buttons(_ native: ChromiumExtensions, items: [ChromiumExtensions.Item], here: [String: Native], all: Bool) -> [Extensions.Button] {
+        let (pinned, rest) = Self.members(items, pinnedIDs: native.pinnedIDs, all: all)
         let pins = Set(pinned.map(\.id))
         return (pinned + rest).map { item in
             let state = here[item.id]
@@ -148,7 +173,11 @@ final class ChromiumColumn: ObservableObject {
     /// A parked plate must carry different equal-height native pin sets too.
     func pinnedIDs(for tab: Tab) -> [String] {
         guard let native = native(for: tab) else { return [] }
-        return Self.members(items(native, for: tab), pinnedIDs: native.pinnedIDs, all: false).pinned.map(\.id)
+        return pinnedIDs(native, privately: Self.isPrivate(tab))
+    }
+
+    func pinnedIDs(_ native: ChromiumExtensions, privately: Bool) -> [String] {
+        Self.members(items(native, privately: privately), pinnedIDs: native.pinnedIDs, all: false).pinned.map(\.id)
     }
 
     /// How many the column keeps room for, without reading anything.
