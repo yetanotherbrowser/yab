@@ -58,7 +58,7 @@ enum MainBudget {
     static func chunk<T>(_ name: String, _ work: () async throws -> T) async rethrows -> T {
         guard enabled else { return try await work() }
         let start = ProcessInfo.processInfo.systemUptime
-        let main = Thread.isMainThread
+        let main = pthread_main_np() != 0
         defer { record(name, ProcessInfo.processInfo.systemUptime - start, main: main) }
         return try await work()
     }
