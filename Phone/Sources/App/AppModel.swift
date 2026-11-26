@@ -52,6 +52,8 @@ final class AppModel {
     }()
 
     @ObservationIgnored lazy var tabClear = TabClearCoordinator(app: self)
+    /// The system's panels a private page has open (Page/PagePanels).
+    @ObservationIgnored let privatePanels = PrivatePanels()
     /// Going back: who opened which tab, the pull from the left edge, Undo
     /// after a close (Back/).
     @ObservationIgnored lazy var backStack = BackStack(app: self)
@@ -72,7 +74,7 @@ final class AppModel {
     /// Unit tests that construct a world keep their local fixture pages.
     init(world: World, fixturesEnabled: Bool = true, profile: BrowserProfile? = nil,
          privateAuthentication: (any PrivateAuthenticating)? = nil,
-         privateLockEnabled: (@MainActor () -> Bool)? = nil) {
+         privateLockEnabled: (@MainActor () -> Bool)? = nil, downloads: DownloadStore? = nil) {
         self.world = world
         workspace = BrowserWorkspace(preferences: fixturesEnabled ? TabletLayoutPreferences() : SettingsStore.shared.tablet)
         self.fixturesEnabled = fixturesEnabled
@@ -88,7 +90,7 @@ final class AppModel {
         else if let id = profile?.dataStoreID { websiteDataStore = WKWebsiteDataStore(forIdentifier: id) }
         else { websiteDataStore = .nonPersistent() }
         pages = WebPool(dataStore: websiteDataStore, fixturesEnabled: fixturesEnabled,
-                        downloads: fixturesEnabled || UserDefaults.standard.string(forKey: "YabProfileDirectory") != nil ? .temporary() : .standard())
+                        downloads: downloads ?? (fixturesEnabled || UserDefaults.standard.string(forKey: "YabProfileDirectory") != nil ? .temporary() : .standard()))
         siteSettings = SiteSettings(defaults: fixturesEnabled ? nil : .standard)
         pages.siteSettings = siteSettings
         pages.spaceForTab = { [weak self] id in self?.browser.space(holding: id) }

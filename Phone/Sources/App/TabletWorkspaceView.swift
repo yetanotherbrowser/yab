@@ -70,7 +70,7 @@ struct TabletWorkspaceView: View {
                 .accessibilityHidden(covered || gallery)
             // Keep the outgoing sidebar at its full width while it travels.
             // Removing the conditional view first made its rows vanish at once.
-            TabletSidebar(width: preferences.sidebarWidth)
+            TabletSidebar(width: preferences.sidebarWidth, shown: g.sidebarWidth > 0)
                 .frame(height: size.height - g.top)
                 .offset(x: Motion.reduced || g.sidebarWidth > 0 ? 0 : -preferences.sidebarWidth, y: g.top)
                 .opacity(g.sidebarWidth > 0 ? 1 : 0)
@@ -198,6 +198,11 @@ struct TabletWorkspaceView: View {
 private struct TabletSingleToolbar: View {
     @Environment(AppModel.self) private var app
     let sidebarShown: Bool
+    /// Both sides as wide as the wider, so the address stays centered.
+    private var sideWidth: CGFloat {
+        let trailing = 2 + (app.workspace.canSplit ? 1 : 0) + (app.showsToolbarDownloads(sidebarShown: sidebarShown) ? 1 : 0)
+        return Metrics.touch * CGFloat(max(3, trailing))
+    }
     private var siteOpen: Binding<Bool> {
         Binding(get: { app.surfaces.menu == .plate }, set: { open in
             if !open { app.surfaces.closeMenu(); app.pageMenu.reset() }
@@ -220,7 +225,7 @@ private struct TabletSingleToolbar: View {
                 macTool("Forward", .yabForward, id: "tablet.forward") { app.pageMenuForward() }
                     .disabled(!app.currentPageState.canGoForward)
             }
-            .frame(width: 132)
+            .frame(width: sideWidth, alignment: .leading)
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 macTool(app.currentPageState.isLoading ? "Stop" : "Reload", app.currentPageState.isLoading ? .yabStop : .yabReload, id: "tablet.reload") {
@@ -262,10 +267,13 @@ private struct TabletSingleToolbar: View {
                 .accessibilityLabel("Split View").accessibilityIdentifier("workspace.menu")
                 .disabled(app.pageIsPrivate || app.browser.tab == nil || app.browser.tab?.isMail == true)
                 }
+                if app.showsToolbarDownloads(sidebarShown: sidebarShown) {
+                    TabletDownloadsButton(active: true, id: "tablet.downloads")
+                }
                 tool("New Tab", asset: "TabletPlus", id: "tablet.newTab") { app.openNewTab() }
                 macTool("All Tabs", .yabTabs, id: "tablet.tabs") { TabStack.of(app).openGallery() }
             }
-            .frame(width: app.workspace.canSplit ? 132 : 88)
+            .frame(width: sideWidth, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .frame(height: TabletWorkspaceGeometry.toolbar)
@@ -318,6 +326,9 @@ private struct TabletToolbar: View {
                 } label: { TabletGlyph("TabletSplitView").frame(width: Metrics.touch, height: Metrics.touch) }
                 .accessibilityLabel("Split View").accessibilityIdentifier("workspace.menu")
                 .disabled(app.pageIsPrivate || app.browser.tab == nil || app.browser.tab?.isMail == true)
+            }
+            if app.showsToolbarDownloads(sidebarShown: sidebarShown) {
+                TabletDownloadsButton(active: true, id: "tablet.downloads")
             }
             Button { app.openNewTab() } label: {
                 TabletGlyph("TabletPlus").frame(width: Metrics.touch, height: Metrics.touch).contentShape(Rectangle())
@@ -425,6 +436,7 @@ private struct TabletGlyph: View {
 
 private struct TabletSiteControls: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var scheme
     @State private var contentHeight: CGFloat = 280
 
     // The desktop panel's 280-point width, 8-point inset, 28-point row marks,
@@ -441,6 +453,7 @@ private struct TabletSiteControls: View {
         ScrollView {
             Group {
                 if app.pageMenu.page == .certificate, let tab = app.browser.tab { certificate(tab) }
+                else if app.pageMenu.page == .downloads { downloads }
                 else { main }
             }
             .padding(8)
@@ -505,9 +518,16 @@ private struct TabletSiteControls: View {
                             Button("Forget Permission") { app.forgetPermission(kind) }
                         } label: {
                             row(kind.title, subtitle: decision.word,
-                                asset: kind == .camera ? "TabletCamera" : MacGlyph.mic.rawValue, on: decision == .allowed)
+                                asset: kind.tabletAsset, on: decision == .allowed)
                         }
                         .accessibilityIdentifier("site.permission.\(kind.rawValue).decision")
+                    }
+                    let here = app.downloads.list(isPrivate: app.pageIsPrivate, host: app.siteHost(of: tab)).count
+                    if here > 0 {
+                        Button { app.openSiteDownloads() } label: {
+                            row("Downloaded Here", subtitle: here == 1 ? "1 file" : "\(here) files", asset: MacGlyph.yabDownload.rawValue)
+                        }
+                        .buttonStyle(.plain).accessibilityIdentifier("site.downloads.here")
                     }
                 }
             }
@@ -528,12 +548,37 @@ private struct TabletSiteControls: View {
                     .buttonStyle(.plain).accessibilityIdentifier("site.connection")
                     Spacer(minLength: 0)
                     Menu {
+                        // The popover goes first: the panel and the sheet stand in its place.
+                        Button("Print…") { app.surfaces.closeMenu(); app.pageMenu.reset(); app.printPage() }
+                            .disabled(!app.pageCanBeDrawn)
+                        Button("Save as PDF") { app.surfaces.closeMenu(); app.pageMenu.reset(); app.savePageAsPDF() }
+                            .disabled(!app.pageCanBeDrawn)
+                        if app.pageDownloadable {
+                            Button("Download") { app.surfaces.closeMenu(); app.pageMenu.reset(); app.downloadPage() }
+                        }
+                        Divider()
                         Button("Clear Cookies and Site Data…", role: .destructive) { app.pageMenu.confirmClear = true }
                         Button("Yab Settings…") { app.pageMenuYabSettings() }
                     } label: { smallFace("TabletMore") }
                     .accessibilityLabel("More Site Settings").accessibilityIdentifier("site.more")
                 }
             }
+        }
+    }
+
+    /// Downloaded Here, or every file: the phone's Downloads page in the popover.
+    private var downloads: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { app.pageMenu.page = .site } label: {
+                HStack(spacing: 8) {
+                    Glyph(mac: .yabBack, size: 14)
+                    Text("Site Controls").font(.system(size: 12.5, weight: .medium))
+                    Spacer(minLength: 0)
+                }.frame(minHeight: Metrics.touch).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).padding(.horizontal, 6).accessibilityIdentifier("site.downloads.back")
+            DownloadsBody(ink: PageMenuInk(dark: app.pageIsPrivate || scheme == .dark),
+                          host: app.pageMenu.downloadsHost, isPrivate: app.pageIsPrivate)
         }
     }
 
@@ -598,5 +643,24 @@ private struct TabletSiteControls: View {
             Text(value).foregroundStyle(Ink.secondary).lineLimit(1).truncationMode(.middle)
         }
         .font(.system(size: 12.5)).frame(minHeight: Metrics.touch)
+    }
+}
+
+extension SiteSettings.Permission {
+    /// Site Controls' mark for the permission, in the popover's asset names.
+    var tabletAsset: String {
+        switch self {
+        case .camera: "TabletCamera"
+        case .microphone: MacGlyph.mic.rawValue
+        case .downloads: MacGlyph.yabDownload.rawValue
+        }
+    }
+}
+
+extension AppModel {
+    /// The Mac's rule: the toolbar's downloads button only from the first
+    /// file, and only while the sidebar's foot, which always has one, is away.
+    func showsToolbarDownloads(sidebarShown: Bool) -> Bool {
+        !sidebarShown && (downloads.asking(isPrivate: pageIsPrivate) != nil || !downloads.list(isPrivate: pageIsPrivate).isEmpty)
     }
 }

@@ -385,24 +385,30 @@ extension AppModel {
         // items iOS offers Add to Home Screen, as from Safari (#2034).
         // Never a private page's: the home screen would keep it.
         let page = tab.isPrivate ? nil : pages.liveView(tab.id)
+        let isPrivate = tab.isPrivate || browser.space(holding: tab.id)?.isPrivate == true
         // A turn later, so the field or the menu is gone from under it.
-        DispatchQueue.main.async {
-            guard let root = Self.topController() else { return }
-            let items: [Any] = page.map { [url, $0] } ?? [url]
-            let sheet = UIActivityViewController(activityItems: items, applicationActivities: [OpenInSafariActivity()])
-            // On iPad it is a popover, and UIKit throws without an anchor
-            // (register 1142), as PageDownload's share does.
-            sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
-            root.present(sheet, animated: !Motion.disabled)
+        DispatchQueue.main.async { [weak self] in
+            self?.presentShare(page.map { [url, $0] } ?? [url], activities: [OpenInSafariActivity()], isPrivate: isPrivate)
         }
     }
 
     static func topController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         var top = scene?.windows.first { $0.isKeyWindow }?.rootViewController ?? scene?.windows.first?.rootViewController
-        while let next = top?.presentedViewController { top = next }
+        // A popover on its way out (Site Controls closing for Share) can't present.
+        while let next = top?.presentedViewController, !next.isBeingDismissed { top = next }
         return top
+    }
+
+    /// Where a share sheet's popover points on iPad: under the toolbar, where
+    /// Site Controls and the downloads button are, or over the phone's plate.
+    static func shareAnchor(in view: UIView) -> CGRect {
+        let traits = view.traitCollection
+        if TabletWorkspaceGeometry.usesToolbar(size: view.bounds.size, regular: traits.horizontalSizeClass == .regular,
+                                               idiom: traits.userInterfaceIdiom) {
+            return CGRect(x: view.bounds.midX, y: view.safeAreaInsets.top + TabletWorkspaceGeometry.toolbar, width: 1, height: 1)
+        }
+        return CGRect(x: view.bounds.midX, y: view.bounds.maxY - 44, width: 1, height: 1)
     }
 
     /// The screen the app draws on.

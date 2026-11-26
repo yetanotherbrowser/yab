@@ -108,6 +108,24 @@ final class TabletWorkspaceUITests: XCTestCase {
         try picture("ipad-site-more")
     }
 
+    /// Print… in Site Controls shows the system's print panel on iPad:
+    /// present(animated:) is valid there, from the window.
+    func testTabletPrintShowsThePrintPanel() throws {
+        guard Atlas.model == "ipad" else { throw XCTSkip("Tablet UI") }
+        launch("page.1")
+        XCTAssertTrue(app.buttons["tablet.siteControls"].waitForExistence(timeout: 15))
+        app.buttons["tablet.siteControls"].tap()
+        XCTAssertTrue(element("site.more").waitForExistence(timeout: 10))
+        element("site.more").tap()
+        let print = app.buttons["Print…"]
+        XCTAssertTrue(print.waitForExistence(timeout: 10))
+        XCTAssertTrue(print.isEnabled, "a drawn page can print")
+        print.tap()
+        let panel = app.descendants(matching: .any).matching(NSPredicate(format: "label IN {'Print Options', 'Printer', 'Print'} OR identifier == 'Printer'")).firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 15), "no print panel")
+        try picture("ipad-print-panel")
+    }
+
     func testTabletToolbarSearchSiteControlsAndStack() throws {
         guard Atlas.model == "ipad" else { throw XCTSkip("Tablet UI") }
         launch("page.1")

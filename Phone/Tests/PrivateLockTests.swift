@@ -316,14 +316,46 @@ final class PrivateLockTests: XCTestCase {
         XCTAssertTrue(input.becomeFirstResponder())
         controller.setInactivePrivacyCover(true)
         XCTAssertFalse(input.isFirstResponder)
-        let curtain = controller.view.subviews.first { $0.accessibilityIdentifier == "private.curtain" }
-        XCTAssertNotNil(curtain)
-        XCTAssertEqual(curtain?.frame, controller.view.bounds)
+        let curtain = window.subviews.last
+        XCTAssertEqual(curtain?.accessibilityIdentifier, "private.curtain")
+        XCTAssertEqual(curtain?.frame, window.bounds)
         XCTAssertFalse(curtain?.isHidden ?? true)
-        XCTAssertEqual(controller.view.subviews.last, curtain)
         XCTAssertTrue(controller.view.accessibilityElementsHidden)
         controller.setInactivePrivacyCover(false)
         XCTAssertTrue(curtain?.isHidden ?? false)
+    }
+
+    /// A panel UIKit presents over the page (Save as PDF's share sheet, the
+    /// print panel, the document viewer) stands above RootController's own
+    /// view: the curtain covers it too before the system's snapshot.
+    func testInactiveCurtainCoversWhatIsPresentedOverThePage() throws {
+        let app = live(Authentication())
+        let controller = RootController(app: app)
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window = try UIWindow(windowScene: XCTUnwrap(scene))
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        defer { controller.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
+        let panel = UIViewController()
+        panel.view.backgroundColor = .red
+        panel.modalPresentationStyle = .fullScreen
+        controller.present(panel, animated: false)
+        let end = Date().addingTimeInterval(5)
+        while panel.view.window == nil || panel.isBeingPresented, Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertFalse(panel.isBeingPresented, "the panel is up")
+        let presented = try XCTUnwrap(window.subviews.first { panel.view.isDescendant(of: $0) }, "the panel is in the window")
+        controller.setInactivePrivacyCover(true)
+        let curtain = try XCTUnwrap(window.subviews.last)
+        XCTAssertEqual(curtain.accessibilityIdentifier, "private.curtain", "the curtain is above the panel")
+        XCTAssertGreaterThan(window.subviews.firstIndex(of: curtain) ?? -1, window.subviews.firstIndex(of: presented) ?? Int.max)
+        XCTAssertEqual(curtain.frame, window.bounds)
+        XCTAssertFalse(curtain.isHidden)
+        XCTAssertTrue(curtain.accessibilityViewIsModal, "VoiceOver reads nothing under it")
+        controller.setInactivePrivacyCover(false)
+        XCTAssertTrue(curtain.isHidden)
     }
 
     func testExplicitDebugAuthenticationRequiresAnIsolatedProfileAndFlag() {

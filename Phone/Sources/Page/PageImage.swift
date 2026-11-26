@@ -83,7 +83,7 @@ enum PageImage {
         guard (try? data.write(to: file)) != nil, let root = AppModel.topController() else { return }
         let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
         sheet.popoverPresentationController?.sourceView = root.view
-        sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
+        sheet.popoverPresentationController?.sourceRect = AppModel.shareAnchor(in: root.view)
         sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: folder) }
         root.present(sheet, animated: !Motion.disabled)
     }
