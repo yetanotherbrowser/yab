@@ -422,7 +422,7 @@ struct ChatComposer: View {
                 guard !InputMethod.composing(), words.isEmpty, let asking, let event = NSApp.currentEvent,
                       event.type == .keyDown, event.window === BrowserWindows.shared.window(for: browser),
                       let pressed = Hotkey(event) else { return .ignored }
-                for (index, choice) in asking.choices.prefix(9).enumerated() {
+                for index in asking.choices.prefix(9).indices {
                     guard let action = Shortcut.numbered("agentChoice", index + 1),
                           Keymap.shared.keys(action) == pressed, Keymap.shared.matches(event, action) else { continue }
                     ChatChoosing.shared.pick(asking, index)
