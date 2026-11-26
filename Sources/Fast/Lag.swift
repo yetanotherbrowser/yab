@@ -12,7 +12,7 @@ import Darwin
 /// nothing here locks. Each kind of entry is a fixed ring: adding one is a
 /// few stores, never an allocation, so a hitch costs the loop nothing more.
 final class Lag: @unchecked Sendable {
-    nonisolated(unsafe) static let shared = Lag()
+    static let shared = Lag()
 
     enum Kind: String, CaseIterable {
         /// From the click or key to the end of the main loop's pass that
