@@ -996,7 +996,7 @@ private struct SpacePage: View {
         let grid = PinGrid(pins: shownPins, open: allPins || space.pinsOpen, width: pinsWidth)
         return ZStack(alignment: .topLeading) {
             ForEach(grid.cells) { cell in
-                PinHold(tab: { if case let .pin(tab) = cell.kind { return tab }; return nil }(), content: AnyView(pinCell(cell)))
+                PinHold(tab: { if case let .pin(tab) = cell.kind { return tab }; return nil }(), page: space.id, content: AnyView(pinCell(cell)))
                     .frame(width: cell.frame.width, height: cell.frame.height)
                     .offset(x: cell.frame.minX, y: cell.frame.minY)
             }
@@ -1197,6 +1197,9 @@ private struct MacTabRow: View {
         Section {
             item("Open Here", .yabTabsPlus) { app.openFromMac(row.tab, in: space) }
             item("Copy Link", .link) { app.copyLink(of: tab) }
+            if !tab.isMail, tab.navigationURL != nil {
+                item("Duplicate Tab", .yabTabPlus) { app.duplicateFromMac(row.tab, in: space) }
+            }
             item("Share", .yabShare) { app.share(tab) }
         }
         Section {
@@ -1666,12 +1669,15 @@ final class CardPullView: UIView {
 
 /// A hold on a tab's row or pin: the column's hold, iOS's own way. The row
 /// lifts with its page's picture over it, the column's menu under it (Copy
-/// Link, Share, Open on Mac; Keep or Unkeep, Move to Space, Ask About Page;
+/// Link, Duplicate Tab, Share, Open on Mac; Keep or Unkeep, Move to Space, Ask About Page;
 /// Close Tab), each with the column's glyph.
 struct TabHold: ViewModifier {
     @Environment(AppModel.self) private var app
     let tab: Tab?
     let list: ColumnLayout.List
+    /// The space whose pins show the tab: a shared pin is shown on every
+    /// sharing space's page, and owned by Personal (or by no space here).
+    var page: Space.ID?
 
     func body(content: Content) -> some View {
         if let tab {
@@ -1688,32 +1694,25 @@ struct TabHold: ViewModifier {
     @ViewBuilder private func menu(_ tab: Tab) -> some View {
         let column = ColumnState.of(app)
         Section {
-            if app.workspace.canSplit, !tab.isPrivate, !tab.isMail, tab.id != app.browser.tab?.id, app.browser.space.tab(tab.id) != nil {
-                item("Open Beside", .yabSplitPlus) { app.openTabBeside(tab) }
-            }
-            item("Copy Link", .link) { app.copyLink(of: tab) }
-            item("Share", .yabShare) { app.share(tab) }
-            if !tab.isPrivate {
-                item("Open on Mac", .yabLaptopRight) {
-                    if app.isFixture { app.say("Opened on \(app.macName)", glyph: .macbook) } else { app.sync.openOnMac(tab) }
-                }
+            ForEach(Self.pageItems(tab, app: app, page: page), id: \.title) { page in
+                item(page.title, page.glyph, action: page.run)
             }
         }
         if !tab.isPrivate {
             Section {
                 if list != .today, !tab.isMail, let space = app.browser.space(holding: tab.id) {
-                    item("Rename…", .pencil) { app.tabEdits.begin(.tab(space.id, tab)) }
+                    item("Rename Tab…", .pencil) { app.tabEdits.begin(.tab(space.id, tab)) }
                 }
                 MoveToFolderMenu(tab: tab)
                 if list == .pins {
-                    if !tab.isMail { item("Unpin", .pinSlash) { column.unpin(tab.id) } }
+                    if !tab.isMail { item("Unpin Tab", .pinSlash) { column.unpin(tab.id) } }
                 } else {
-                    item("Pin", .pin) { column.pin(tab.id) }
+                    item("Pin Tab", .pin) { column.pin(tab.id) }
                 }
                 if list == .today {
-                    item("Keep", .yabAnchor) { column.keep(tab.id) }
+                    item("Keep Tab", .yabAnchor) { column.keep(tab.id) }
                 } else if list != .pins {
-                    item("Unkeep", .anchor) { column.unkeep(tab.id) }
+                    item("Don't Keep Tab", .anchor) { column.unkeep(tab.id) }
                 }
                 let home = app.browser.space(holding: tab.id)?.id
                 let others = app.browser.spaces.filter { !$0.isPrivate && $0.id != home }
@@ -1726,7 +1725,7 @@ struct TabHold: ViewModifier {
                         Label { Text("Move to Space") } icon: { glyph(.square2Layers3d) }
                     }
                 }
-                item("Ask About Page", .yabChatSpark) { Self.ask(tab, app: app) }
+                item("Ask About Page", .yabChatSpark) { Self.ask(tab, app: app, page: page) }
             }
         }
         Section {
@@ -1742,9 +1741,37 @@ struct TabHold: ViewModifier {
         UIImage.menuGlyph(name).map { Image(uiImage: $0) } ?? Image(systemName: "circle")
     }
 
-    /// Ask About Page: the tab in front, then the field to ask about it.
-    static func ask(_ tab: Tab, app: AppModel) {
-        app.browser.select(tab.id)
+    /// One row of a hold menu's first section.
+    struct PageItem {
+        let title: String
+        let glyph: MacGlyph
+        let run: @MainActor () -> Void
+    }
+
+    /// The first section of a hold on a tab, a row's or a pin's (PinHold):
+    /// Split View, Copy Link, Duplicate Tab, Share, Open on Mac.
+    static func pageItems(_ tab: Tab, app: AppModel, page: Space.ID?) -> [PageItem] {
+        var items: [PageItem] = []
+        if app.workspace.canSplit, !tab.isPrivate, !tab.isMail, tab.id != app.browser.tab?.id, app.browser.space.tab(tab.id) != nil {
+            items.append(PageItem(title: "Split View", glyph: .yabSplitPlus) { app.openTabBeside(tab) })
+        }
+        items.append(PageItem(title: "Copy Link", glyph: .link) { app.copyLink(of: tab) })
+        if !tab.isMail, tab.navigationURL != nil {
+            items.append(PageItem(title: "Duplicate Tab", glyph: .yabTabPlus) { app.duplicateFromHold(tab, page: page) })
+        }
+        items.append(PageItem(title: "Share", glyph: .yabShare) { app.share(tab) })
+        if !tab.isPrivate {
+            items.append(PageItem(title: "Open on Mac", glyph: .yabLaptopRight) {
+                if app.isFixture { app.say("Opened on \(app.macName)", glyph: .macbook) } else { app.sync.openOnMac(tab) }
+            })
+        }
+        return items
+    }
+
+    /// Ask About Page: the tab in front, then the field to ask about it. A
+    /// shared pin comes in front as a tap on it brings it, in the page's space.
+    static func ask(_ tab: Tab, app: AppModel, page: Space.ID?) {
+        if page.map({ !app.sync.openSharedPin(tab.id, in: $0) }) ?? true { app.browser.select(tab.id) }
         app.surfaces.closeField()
         let screen = app.screenSize
         Task { @MainActor [app] in
@@ -1840,11 +1867,19 @@ extension AppModel {
         Motion.sheetGrow.run { surfaces.openSettings(keepingField: true) }
     }
 
-    /// A pin or a tab on a space's page: that space comes in front with it.
-    func chooseFromSpacePage(_ id: Tab.ID, in space: Space.ID) {
-        if browser.space(space)?.tab(id) == nil, sync.openSharedPin(id, in: space) { return }
+    /// A choice on a space page makes way: the open field forgets its words
+    /// and closes. The same pages stand in the iPad sidebar's popover, and
+    /// the field may still be flying home: closed, its kept words stay.
+    private func leaveFieldForChoice() {
+        guard surfaces.field != nil else { return }
         field.forget()
         closeFieldAfterChoice()
+    }
+
+    /// A pin or a tab on a space's page: that space comes in front with it.
+    func chooseFromSpacePage(_ id: Tab.ID, in space: Space.ID) {
+        if sync.openSharedPin(id, in: space) { return }
+        leaveFieldForChoice()
         if browser.spaceID != space { browser.showSpace(space) }
         browser.select(id)
     }
@@ -1853,14 +1888,32 @@ extension AppModel {
     /// copy of it at the top of this iPhone's Today in that space. The
     /// Mac's tab stays where it is.
     func openFromMac(_ synced: SyncTab, in space: Space.ID) {
-        field.forget()
-        closeFieldAfterChoice()
+        leaveFieldForChoice()
         if browser.spaceID != space { browser.showSpace(space) }
         if let here = browser.space.today.first(where: { !$0.isPrivate && $0.navigationURL?.absoluteString == synced.url }) {
             browser.select(here.id)
             return
         }
         show(SyncMapping.tab(synced, id: PageFixtures.newID(), old: nil, fixturesEnabled: fixturesEnabled), newTab: true)
+    }
+
+    /// Duplicate Tab on a hold: the copy in front, the field (where the
+    /// hold was) out of its way, as a Mac row's copy. A shared pin's copy
+    /// goes into the space whose page shows it, as a tap on it opens there.
+    func duplicateFromHold(_ tab: Tab, page: Space.ID?) {
+        if let page, sync.duplicateSharedPin(tab.id, in: page) { return }
+        leaveFieldForChoice()
+        duplicate(tab)
+    }
+
+    /// Duplicate Tab on one of the Mac's rows: always a new copy in that
+    /// row's space. The Mac's tab has no tab here to open it from (openHeldLink).
+    func duplicateFromMac(_ synced: SyncTab, in space: Space.ID) {
+        guard browser.space(space)?.isPrivate == false else { return }
+        leaveFieldForChoice()
+        let copy = SyncMapping.tab(synced, id: PageFixtures.newID(), old: nil, fixturesEnabled: fixturesEnabled)
+        browser.open(copy, in: space, deduplicate: false)
+        profile?.capture(browser)
     }
 
     /// A chat's card on the Chats page zooms into the chat, a page in its

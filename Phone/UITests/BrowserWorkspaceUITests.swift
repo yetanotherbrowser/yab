@@ -96,7 +96,7 @@ final class BrowserWorkspaceUITests: XCTestCase {
         XCTAssertTrue(wait { draft.exists && (draft.value as? String) == "Second page draft" })
         try picture("pair-history-restored")
         app.buttons["workspace.menu"].tap()
-        app.buttons["Full Spread"].tap()
+        app.buttons["Separate Split View"].tap()
         XCTAssertTrue(wait { !self.app.buttons["workspace.companion"].exists })
         XCTAssertEqual(draft.value as? String, "Second page draft")
         try picture("full-spread")
@@ -264,7 +264,7 @@ final class BrowserWorkspaceUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["workspace.menu"].waitForExistence(timeout: 10))
         app.buttons["workspace.menu"].tap()
-        app.buttons["Open Beside"].tap()
+        app.buttons["Split View"].tap()
         let close = app.buttons["field.close"]
         XCTAssertTrue(close.waitForExistence(timeout: 10))
         try picture("beside-new-tab")
@@ -274,7 +274,7 @@ final class BrowserWorkspaceUITests: XCTestCase {
         XCTAssertTrue(wait { !close.exists && self.app.buttons["workspace.companion"].exists })
         try picture("beside-selected")
         app.buttons["workspace.menu"].tap()
-        app.buttons["Close Page"].tap()
+        app.buttons["Close Split"].tap()
         XCTAssertTrue(wait { !self.app.buttons["workspace.companion"].exists })
         XCTAssertTrue(app.buttons["chrome.plate"].exists)
     }

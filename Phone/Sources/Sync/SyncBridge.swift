@@ -172,12 +172,26 @@ final class SyncBridge {
     /// Opening an inherited pin stays in the chosen space. Its today's copy
     /// has its own identity; the shared pin keeps its original sync parent.
     func openSharedPin(_ id: Tab.ID, in space: Space.ID) -> Bool {
-        guard sharesPins, let app, let target = app.browser.space(space),
+        guard let pin = inheritedPin(id, shownIn: space) else { return false }
+        app?.openFromMac(pin, in: space)
+        return true
+    }
+
+    /// Duplicate Tab on an inherited pin: a new copy in the chosen space, as
+    /// opening it stays there. Personal may be gone here (detachedSharedPin).
+    func duplicateSharedPin(_ id: Tab.ID, in space: Space.ID) -> Bool {
+        guard let pin = inheritedPin(id, shownIn: space) else { return false }
+        app?.duplicateFromMac(pin, in: space)
+        return true
+    }
+
+    /// A shared pin `space`'s page shows that isn't one of that space's own tabs.
+    private func inheritedPin(_ id: Tab.ID, shownIn space: Space.ID) -> SyncTab? {
+        guard sharesPins, let target = app?.browser.space(space), target.tab(id) == nil,
               !target.isPrivate, !target.ownSignIns,
               let source = ids.known(id), let pin = mirror.tabs[source],
-              pin.space == SyncCollection.firstSpace, pin.list == .pinned else { return false }
-        app.openFromMac(pin, in: space)
-        return true
+              pin.space == SyncCollection.firstSpace, pin.list == .pinned else { return nil }
+        return pin
     }
 
     private func detachedSharedPin(_ id: Tab.ID) -> SyncTab? {

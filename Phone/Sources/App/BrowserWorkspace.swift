@@ -60,6 +60,8 @@ final class BrowserWorkspace {
     private(set) var secondFocused = false
     private(set) var expanded = false
     var paneFrame = CGRect.zero
+    /// Counts Show Downloads: the downloads button on screen opens its list.
+    var downloadsShown = 0
     var windowSize = CGSize.zero
     var tabletControls = false
     var regularWidth = false

@@ -5,6 +5,8 @@ struct TabletSidebar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
     let width: CGFloat
+    /// On screen: the sidebar stays in the tree, faded, while it is away.
+    var shown = true
     @State private var browseSpaces = false
     private var space: Space { app.browser.space }
     private var shownPins: [Tab] { app.sync.pins(in: space) }
@@ -23,7 +25,7 @@ struct TabletSidebar: View {
                                 }
                                 .buttonStyle(.plain).accessibilityLabel(tab.short)
                                 .accessibilityIdentifier("tablet.pin.\(tab.id)")
-                                .modifier(TabHold(tab: tab, list: .pins))
+                                .modifier(TabHold(tab: tab, list: .pins, page: space.id))
                             }
                         }.padding(.bottom, 12)
                     }
@@ -142,6 +144,7 @@ struct TabletSidebar: View {
                         .environment(app).presentationCompactAdaptation(.popover)
                 }
                 .accessibilityIdentifier("tablet.settings")
+            TabletDownloadsButton(active: shown, id: "tablet.downloads.sidebar")
             ScrollView(.horizontal) {
                 HStack(spacing: 2) {
                     ForEach(app.browser.spaces.filter { !$0.isPrivate }) { item in

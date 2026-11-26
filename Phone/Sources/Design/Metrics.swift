@@ -624,6 +624,33 @@ enum Metrics {
         static let sectionGap: CGFloat = 22
     }
 
+    // MARK: - iPad
+
+    enum Tablet {
+        static let sidebar: CGFloat = 264
+        static let sidebarMinimum: CGFloat = 220
+        static let sidebarMaximum: CGFloat = 360
+        static let toolbar: CGFloat = 44
+        static let paneBar: CGFloat = 44
+        static let row: CGFloat = 44
+        static let splitGap: CGFloat = 8
+        static let resizeTarget: CGFloat = 20
+        static let inset: CGFloat = 10
+        static let pin: CGFloat = 48
+        static let downloadsWidth: CGFloat = 340
+        static let downloadsHeight: CGFloat = 480
+        static let downloadsInset: CGFloat = 8
+        static let downloadDot: CGFloat = 7
+        static let downloadDotInset: CGFloat = 9
+        static let pairInset: CGFloat = 4
+        static let pairGap: CGFloat = 4
+        static let pairRadius: CGFloat = 5
+        static let pairIcon: CGFloat = 15
+        static let pairPadding: CGFloat = 6
+        static let focusStroke: CGFloat = 1.5
+        static let focusColor = Color(red: 86 / 255, green: 125 / 255, blue: 168 / 255)
+    }
+
     // MARK: - outside Yab
 
     enum Island {

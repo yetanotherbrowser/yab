@@ -125,6 +125,64 @@ final class TabletLayoutUITests: XCTestCase {
         try picture("09-hidden-bars-command-L")
     }
 
+    /// A site's first file asks from the sidebar's downloads button, and is answerable.
+    func testFirstDownloadAsksFromTheDownloadsButton() throws {
+        launch("downloads.ask")
+        XCTAssertEqual(app.buttons["tablet.downloads.sidebar"].value as? String, "Asking")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        XCTAssertTrue(download.isHittable)
+        try picture("12-download-ask")
+        download.tap()
+        XCTAssertTrue(wait { !download.exists })
+    }
+
+    func testDownloadsButtonListsFiles() throws {
+        launch("downloads.now")
+        app.buttons["tablet.downloads.sidebar"].tap()
+        XCTAssertTrue(element("downloads.page").waitForExistence(timeout: 10))
+        try picture("13-downloads-list")
+    }
+
+    /// A popover goes with a tap on the dimmed ground beside it.
+    private func closePopover() {
+        let ground = app.otherElements["PopoverDismissRegion"]
+        XCTAssertTrue(ground.waitForExistence(timeout: 10)); ground.tap()
+        XCTAssertTrue(wait { !self.app.popovers.firstMatch.exists && !ground.exists }, "the popover stayed")
+    }
+
+    /// The question dismissed, the sidebar hidden, the toolbar's question
+    /// dismissed and the sidebar shown again: its button brings the waiting
+    /// question back, and that popover goes with the answer too.
+    func testAQuestionTheSidebarBringsBackGoesWithItsAnswer() throws {
+        launch("downloads.ask")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        closePopover()
+        app.buttons["tablet.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15), "the toolbar's button asks in turn")
+        closePopover()
+        app.buttons["tablet.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15), "the sidebar's button asks again")
+        download.tap()
+        let ground = app.otherElements["PopoverDismissRegion"]
+        XCTAssertTrue(wait { !self.app.popovers.firstMatch.exists && !ground.exists }, "the list stayed open after the answer")
+    }
+
+    /// A question the person opened the popover for leaves the list open
+    /// once answered.
+    func testAQuestionThePersonOpenedLeavesTheList() throws {
+        launch("downloads.ask")
+        let download = app.buttons["download.ask.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        closePopover()
+        app.buttons["tablet.downloads.sidebar"].tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 15))
+        download.tap()
+        XCTAssertTrue(wait { !download.exists })
+        XCTAssertTrue(app.popovers.firstMatch.exists, "the person's list stays")
+    }
+
     /// All Tabs: a tap on any card takes that tab, the gallery goes, the workspace returns.
     func testAllTabsCardsOpenTheirTab() throws {
         launch("page.1")
