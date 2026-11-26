@@ -65,6 +65,19 @@ struct CalcTests {
         }
     }
 
+    /// The line under an answer says the number the card shows, not every
+    /// digit a Double keeps of it.
+    @Test func theLineUnderAnAnswerSpellsTheNumberShown() {
+        #expect(answer("100 + 10%")?.result == "110")
+        #expect(answer("100 + 10%")?.resultNote == "One hundred ten")
+        #expect(answer("0.1+0.2")?.result == "0.3")
+        #expect(answer("0.1+0.2")?.resultNote == "Zero point three")
+        #expect(answer("1.005*1000")?.result == "1,005")
+        #expect(answer("1.005*1000")?.resultNote == "One thousand five")
+        #expect(answer("5 - 7")?.resultNote == "Minus two")
+        #expect(answer("1/4")?.resultNote == "Zero point two five")
+    }
+
     @Test func sumsAndPercentages() {
         #expect(answer("2400*12")?.result == "28,800")
         #expect(answer("2400*12")?.copy == "28800")
@@ -76,6 +89,41 @@ struct CalcTests {
         #expect(answer("15% off 80")?.result == "68")
         #expect(answer("255 in hex")?.result == "0xFF")
         #expect(answer("0xff")?.result == "255")
+    }
+
+    /// A hex number written with only the digits 0 to 9 is still a hex
+    /// number: "0x10" was read as 0 × 10, so the field answered 0.
+    @Test func aHexNumberInDecimalDigitsIsNotASum() {
+        #expect(answer("0x10")?.result == "16")
+        #expect(answer("0x10")?.kind == .numberBase)
+        #expect(answer("0x400")?.result == "1,024")
+        #expect(answer("0x400")?.copy == "1024")
+        #expect(answer("0x10+1") == nil)
+        // A sum with an x for times is still one.
+        #expect(answer("10x10")?.result == "100")
+        #expect(answer("1.0x10")?.result == "10")
+        #expect(answer("0 x 10")?.result == "0")
+    }
+
+    /// A comma groups thousands, or lakhs, only where it can. One that
+    /// can't is the decimal point it is in much of the world: "1,5" and
+    /// "3,14" were fifteen and 314, so 1,5 kg was 33 pounds. Digits that
+    /// read no way at all have no answer rather than a wrong one.
+    @Test func aCommaThatCantGroupIsADecimalPoint() {
+        #expect(answer("1,5+1")?.result == "2.5")
+        #expect(answer("3,14*2")?.result == "6.28")
+        #expect(answer("1,5 kg in lb")?.result == "3.3069 lb")
+        #expect(answer("0,5 l in ml")?.result == "500 ml")
+        #expect(answer("12,5% of 200")?.result == "25")
+        #expect(answer("1.234,56*2")?.result == "2,469.12")
+        #expect(answer("1.234,56 + 10%")?.result == "1,358.02")
+        #expect(answer("1,000,000/2")?.result == "500,000")
+        #expect(answer("1,234.5*2")?.result == "2,469")
+        #expect(answer("1,23,456+1")?.result == "123,457")
+        #expect(answer("1,500 kg in g")?.result == "1,500,000 g")
+        #expect(answer("1,2,3+1") == nil)
+        #expect(answer(",5+1") == nil)
+        #expect(answer("1,234.5,6+1") == nil)
     }
 
     @Test func units() {
@@ -208,6 +256,20 @@ struct CalcTests {
         #expect(answer("in 3 weeks")?.result == "Oct 16, 2026")
         #expect(answer("10 days ago")?.result == "Sep 15, 2026")
         #expect(answer("days until new year")?.result == "98 days")
+    }
+
+    /// A day some way off is answered when it can be written right, past
+    /// the year 9999 too. Before year 1 the year came out without its era,
+    /// from ten million years on as nothing, and a count that made the
+    /// product reach Int.max answered today, or crashed the field past it.
+    @Test func aDayTooFarOffHasNoAnswer() {
+        #expect(answer("2025 years ago")?.result == "Sep 25, 0001")
+        #expect(answer("in 7974 years")?.result == "Sep 25, 10000")
+        #expect(answer("2026 years ago") == nil)
+        #expect(answer("3000 years ago") == nil)
+        #expect(answer("in 10000000 years") == nil)
+        #expect(answer("in 1317624576693539401 weeks") == nil)
+        #expect(answer("in 1317624576693539402 weeks") == nil)
     }
 
     /// Words that can't be a question aren't read as one at all, and every

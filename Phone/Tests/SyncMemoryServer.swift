@@ -41,6 +41,9 @@ final class SyncMemoryServer: Transport, @unchecked Sendable {
     private var held: [() -> Void] = []
     /// Off: every request and socket fails, as with no network.
     var down = false
+    /// Set: a catch-up sends only this many of its pages, as a line lost
+    /// halfway through one.
+    var catchUpPages: Int?
     private let serial = DispatchQueue(label: "phone.memory.server")
 
     func request(_ request: URLRequest, _ done: @escaping (Int?, Data?) -> Void) {
@@ -132,7 +135,10 @@ final class SyncMemoryServer: Transport, @unchecked Sendable {
                 .map { ["name": $0.key, "version": $0.value.version, "seq": $0.value.seq, "blob": $0.value.blob] as [String: Any] }
             // In batches of 500, as the Worker sends a catch-up.
             var start = 0
+            var pages = 0
             repeat {
+                if let catchUpPages, pages == catchUpPages { return }
+                pages += 1
                 let batch = Array(items[start..<min(items.count, start + 500)])
                 start += 500
                 let more = start < items.count

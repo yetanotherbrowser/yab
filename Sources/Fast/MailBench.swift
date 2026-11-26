@@ -457,7 +457,7 @@ extension Bench {
             var state: [String: Any] = ["view": screen, "subjects": desk.rows.map(\.subject), "sel": desk.sel, "open": desk.open?.thread ?? "",
                                         "openSubject": desk.open?.subject ?? "", "fresh": desk.fresh, "messages": desk.messages.count]
             if let card = MailEvents.shared.card {
-                state["event"] = ["title": card.event.title, "when": card.event.when(), "with": card.event.with ?? "", "editing": card.editing,
+                state["event"] = ["title": card.event.title, "when": card.event.when(locale: AppDates.locale), "with": card.event.with ?? "", "editing": card.editing,
                                   "anchored": card.anchor != nil, "message": card.message]
             }
             state["dates"] = desk.messages.map { MailEvents.shared.dated($0, html: MailEvents.showsHTML($0)).found.count }

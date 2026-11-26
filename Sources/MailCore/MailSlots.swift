@@ -123,7 +123,8 @@ public enum MailSlots {
             if offset.isEmpty { offset = name }
             if !name.hasPrefix("GMT+"), !name.hasPrefix("GMT-"), !name.hasPrefix("UTC") || name == "UTC" { return name }
         }
-        return offset
+        // macOS 27's ICU says London's winter "GMT+0" in every English locale.
+        return zone.secondsFromGMT(for: date) == 0 ? "GMT" : offset
     }
 
     /// Slots that touch said as one.

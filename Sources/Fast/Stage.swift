@@ -1515,13 +1515,17 @@ final class StageView: NSView {
         // stepping aside lays the stage out again that same moment, and
         // taking the page back then left the screen black with the sound
         // still playing. WebKit brings it back itself on the way out.
-        if let web = wanted as? WKWebView, web.fullscreenState != .notInFullscreen {
-            stopFollowing()
-            return
-        }
         // A Chromium page's own full screen lends it to a window of Yab's
         // own the same way (ChromiumPage+Media.swift).
-        if let page = wanted as? ChromiumPage, page.media.fullscreen {
+        let lent: Bool = if let web = wanted as? WKWebView { web.fullscreenState != .notInFullscreen }
+            else { (wanted as? ChromiumPage)?.media.fullscreen == true }
+        if lent {
+            // Another tab's page still here would show under this tab's
+            // name (#937). WebKit's placeholder, the docked inspector and
+            // the page stepping off stay.
+            for view in subviews where view !== wanted && view !== leaving && (view is WKWebView && !Self.isInspector(view) || view is ChromiumPage) {
+                view.removeFromSuperview()
+            }
             stopFollowing()
             return
         }
@@ -2381,7 +2385,7 @@ struct WindowSetup: NSViewRepresentable {
 /// bar's is, so the screen's edges tile it, the Option key shows the tiles,
 /// and a tiled window pulled away comes back to its own size. It used to
 /// set the window's origin by hand, which no edge ever saw.
-struct DragStrip: NSViewRepresentable {
+struct DragStrip: View {
     /// How much of the leading edge belongs to the tabs. A representable is a
     /// real view sitting under everything SwiftUI draws on top of it, and a
     /// real view takes the click first, so the run the tabs occupy is refused
@@ -2412,19 +2416,29 @@ struct DragStrip: NSViewRepresentable {
     /// An empty sidebar opens New Tab; title-bar strips keep the system action.
     var doubled: (@MainActor () -> Void)? = nil
 
-    func makeNSView(context: Context) -> NSView { Strip() }
+    // Nothing to read or press: under the lights and the tabs, SwiftUI's
+    // accessibility hit test stopped here and found neither. In the
+    // column's header hidden was not enough: its band stops short of the
+    // lights (SideBar.lightsEnd).
+    var body: some View { Host(strip: self).accessibilityHidden(true) }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        (view as? Strip)?.reserved = reserved
-        (view as? Strip)?.tabAir = tabAir
-        (view as? Strip)?.exclusions = exclusions
-        (view as? Strip)?.below = below
-        (view as? Strip)?.trailing = trailing
-        (view as? Strip)?.notch = notch
-        (view as? Strip)?.leadNotch = leadNotch
-        (view as? Strip)?.made = menu
-        (view as? Strip)?.contextTail = contextTail
-        (view as? Strip)?.doubled = doubled
+    private struct Host: NSViewRepresentable {
+        let strip: DragStrip
+
+        func makeNSView(context: Context) -> Strip { Strip() }
+
+        func updateNSView(_ view: Strip, context: Context) {
+            view.reserved = strip.reserved
+            view.tabAir = strip.tabAir
+            view.exclusions = strip.exclusions
+            view.below = strip.below
+            view.trailing = strip.trailing
+            view.notch = strip.notch
+            view.leadNotch = strip.leadNotch
+            view.made = strip.menu
+            view.contextTail = strip.contextTail
+            view.doubled = strip.doubled
+        }
     }
 
     final class Strip: NSView, WindowHandle {

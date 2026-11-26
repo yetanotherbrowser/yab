@@ -692,17 +692,20 @@ struct QuestionStand: View {
     let keyed: (Question) -> Bool
     /// The card come up in this window, or gone from it.
     var shown: (Bool) -> Void = { _ in }
-    /// The window this stand is in, once it is in one.
-    @State private var host: NSWindow?
+    /// The window this stand is in, once it is in one. Held weakly: the
+    /// window holds this view, and a strong hold kept every closed window
+    /// and its browser for as long as Yab ran (#1046).
+    @State private var host = Host()
+    private struct Host { weak var window: NSWindow? }
 
     var body: some View {
         GeometryReader { proxy in
             let window = proxy.size
             ZStack {
                 Color.clear.allowsHitTesting(false)
-                    .background(QuestionHost(window: $host))
+                    .background(QuestionHost(window: $host.window).accessibilityHidden(true))
                 if let question = questions.current, question.place != .settings, question.anchor == nil,
-                   host.map(questions.stands(in:)) ?? (question.window == nil) {
+                   host.window.map(questions.stands(in:)) ?? (question.window == nil) {
                     if question.place == .page {
                         // The window clips it to its own corners.
                         Color.black.opacity(Question.dim(scheme))
@@ -713,11 +716,11 @@ struct QuestionStand: View {
                         .transition(Question.appear)
                         .id(question.id)
                         .onAppear {
-                            if let host { questions.shownIn.insert(host.windowNumber) }
+                            if let host = host.window { questions.shownIn.insert(host.windowNumber) }
                             shown(true)
                         }
                         .onDisappear {
-                            if let host { questions.shownIn.remove(host.windowNumber) }
+                            if let host = host.window { questions.shownIn.remove(host.windowNumber) }
                             shown(false)
                         }
                 }

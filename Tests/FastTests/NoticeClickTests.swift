@@ -52,15 +52,17 @@ struct NoticeClickTests {
         #expect(Agents.shared.askTab(for: w.session.id, in: w.browser) == nil)
     }
 
-    @Test func aChatsQuestionStandsInTheCornerWithNoPageBesideTheColumn() {
-        let w = World(); defer { w.dispose() }
+    @Test func aChatsQuestionIsInTheColumnOfAnEmptyWindow() {
+        let w = World(cli: "claude"); defer { w.dispose() }
         w.session.permit = AgentPermit(kind: .mailRead, session: w.session.id, detail: "Looks for: boarding pass")
-        // The column out with that chat, but no page for it to stand by:
-        // it isn't drawn, so the corner holds the question.
+        // The column out with that chat and no page beside it: the column
+        // is the window's, drawn beside the empty state too, so the
+        // question is in its field and not held in the corner (#1008).
         w.browser.chatShown = w.session.id
         w.browser.chatOpen = true
-        #expect(Agents.shared.corneredAll(in: w.browser).contains(.chat(w.session.id)))
+        #expect(!Agents.shared.corneredAll(in: w.browser).contains(.chat(w.session.id)))
         w.browser.chatOpen = false
+        #expect(Agents.shared.corneredAll(in: w.browser).contains(.chat(w.session.id)))
     }
 
     // A private window holds none of your agents' questions and calls you

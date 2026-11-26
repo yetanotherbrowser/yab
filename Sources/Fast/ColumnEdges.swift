@@ -20,24 +20,24 @@ final class ColumnEnds: ObservableObject {
     @Published var depth = Depth()
 
     /// How far past what stands over an end a row comes clear.
-    static let fall: CGFloat = 24
+    nonisolated static let fall: CGFloat = 24
     /// How much of a row shows under what stands over an end.
-    static let shown: Double = 0.45
+    nonisolated static let shown: Double = 0.45
     /// How much it is blurred there: soft, a row still made out under the
     /// search.
-    static let blur: CGFloat = 4
+    nonisolated static let blur: CGFloat = 4
     /// The tabs' column's own, under the pins and the space's name: enough
     /// that a row's words melt there (#303), the row still seen going by
     /// as a smear of its color, as a line of words melts under the address
     /// plate (PlateBlurView).
-    static let pinsBlur: CGFloat = 12
+    nonisolated static let pinsBlur: CGFloat = 12
 
     /// The foot's end: none of a row under the foot's room (the foot, and a
     /// newer Yab's note or the agents' row over it), the row eased back over
     /// `footFall` above it.
-    static let footFall: CGFloat = 24
-    static let footShown: Double = 0
-    static let footBlur: CGFloat = 5
+    nonisolated static let footFall: CGFloat = 24
+    nonisolated static let footShown: Double = 0
+    nonisolated static let footBlur: CGFloat = 5
 }
 
 /// Tells ColumnEnds how far the rows have gone under each end, a fall's

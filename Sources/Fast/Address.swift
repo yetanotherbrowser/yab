@@ -66,6 +66,22 @@ enum Address {
         return ascii(URL(string: (isLocal(host) ? "http://" : "https://") + text))
     }
 
+    /// What the field finished, read back as an address. History names a
+    /// place without its scheme, and without a port that is the scheme's own
+    /// (`History.key`), so the words alone lose them: `place`, the one they
+    /// finished, gives a bare name its address and a server its scheme and
+    /// port back.
+    static func finished(_ words: String, place: URL?) -> URL? {
+        guard let url = url(from: words) else { return place }
+        func bare(_ host: String?) -> String? { host.map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 } }
+        guard let place, let port = place.port, url.port == nil || url.port == port, bare(url.host()) == bare(place.host()),
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.scheme = place.scheme
+        parts.host = place.host()
+        parts.port = port
+        return parts.url ?? url
+    }
+
     /// A host typed as it reads, münchen.de, is kept as it is sent,
     /// xn--mnchen-3ya.de: Foundation encodes it in the address but hands
     /// host() back percent-encoded until the URL is made again from it.
@@ -162,8 +178,8 @@ enum Address {
     }
 
     /// What the tab says before the page has told us its title: the address,
-    /// with the parts nobody reads taken off. History is kept under it too,
-    /// so the port stays off unless asked for.
+    /// with the parts nobody reads taken off, the port too unless asked for.
+    /// History keeps a port that isn't the scheme's own (History.key).
     static func pretty(_ url: URL) -> String { pretty(url, port: false) }
 
     static func pretty(_ url: URL, port: Bool, keepingWWW: Bool = false) -> String {

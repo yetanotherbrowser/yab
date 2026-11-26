@@ -293,7 +293,8 @@ enum AssistantBoundary {
     }
 
     /// The session a call speaks for, and its assistant.
-    static func caller(_ request: [String: Any], agents: Agents = .shared) -> (session: String, grant: AssistantGrant)? {
+    static func caller(_ request: [String: Any], agents: Agents? = nil) -> (session: String, grant: AssistantGrant)? {
+        let agents = agents ?? .shared
         for key in ["callerSession", "session"] {
             if let id = request[key] as? String, let grant = agents.assistant(of: id) { return (id, grant) }
         }
@@ -314,7 +315,8 @@ enum AssistantBoundary {
     }
 
     /// The call as it may go, or why it may not.
-    static func check(_ request: [String: Any], bench: Bench, browser: Browser, agents: Agents = .shared) -> Verdict {
+    static func check(_ request: [String: Any], bench: Bench, browser: Browser, agents: Agents? = nil) -> Verdict {
+        let agents = agents ?? .shared
         guard let found = caller(request, agents: agents) else {
             // A session of an assistant that was removed has no grant left
             // to hold it: it does nothing, rather than all the user may.

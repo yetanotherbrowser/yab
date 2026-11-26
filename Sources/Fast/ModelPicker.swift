@@ -21,6 +21,31 @@ struct ModelPickerRequest: Identifiable {
     var pick: (ModelChoice) -> Void
 }
 
+/// The effort the picker offers as you move through its list: one effort
+/// that follows you from model to model, by keys or by pointer, as the
+/// Settings field keeps it when its model changes (ModelField). A model
+/// that doesn't take it says Auto, and ↩ takes Auto there, so the row
+/// always says what a pick would get.
+struct PickerEffort: Equatable {
+    /// Picked with ← →, or the one in use as the picker opened; nil is Auto.
+    var picked: String?
+
+    /// What the row under the pointer says, and what ↩ takes on it.
+    func on(_ model: AgentModel) -> String? {
+        guard let picked, model.efforts.contains(picked) else { return nil }
+        return picked
+    }
+
+    /// ← → : the next effort the model takes, from the one it says now,
+    /// Auto first.
+    mutating func turn(_ model: AgentModel, by: Int) {
+        guard !model.efforts.isEmpty else { return }
+        let steps: [String?] = [nil] + model.efforts.map(Optional.some)
+        let at = steps.firstIndex(of: on(model)) ?? 0
+        picked = steps[max(0, min(steps.count - 1, at + by))]
+    }
+}
+
 struct ModelPickerLayer: View {
     let browser: Browser
     let request: ModelPickerRequest
@@ -48,7 +73,7 @@ private struct ModelPicker: View {
     @ObservedObject private var accounts = PlanAccounts.shared
     @State private var query = ""
     @State private var spot = 0
-    @State private var effort: String?
+    @State private var effort = PickerEffort()
     @State private var info = ModelPicker.infoShown
     /// Where the list scrolls to: the row the keys moved to, or the one in
     /// use as it opens; never the one under the pointer.
@@ -166,7 +191,7 @@ private struct ModelPicker: View {
                 spot = ids.firstIndex(of: "m:" + chosen.id) ?? ids.firstIndex(of: "r:" + chosen.id) ?? 0
             }
             scrollTo = spotLineID.map { "open:" + $0 }
-            effort = request.choice.effort
+            effort = PickerEffort(picked: request.choice.effort)
             if !request.query.isEmpty { query = request.query }
         }
         .onChange(of: query) { _, _ in spot = 0 }
@@ -216,7 +241,7 @@ private struct ModelPicker: View {
                                 let hot = spotLineID == line.id
                                 ModelPickerRow(model: model, chosen: isChosen(model), hot: hot,
                                                dim: model.cli != "mac" && !accounts.hasRoom(model.cli),
-                                               effort: hot ? effort : nil) {
+                                               effort: hot ? effort.on(model) : nil) {
                                     spot = modelIndex(of: line)
                                     take()
                                 }
@@ -273,21 +298,18 @@ private struct ModelPicker: View {
         let count = modelLineIDs.count
         guard count > 0 else { return }
         spot = (spot + by + count) % count
-        effort = nil
         scrollTo = spotLineID
     }
 
     /// ← → : the effort of the model under the pointer, Auto first.
     private func turn(_ by: Int) {
-        guard let model = current, !model.efforts.isEmpty else { return }
-        let steps: [String?] = [nil] + model.efforts.map(Optional.some)
-        let at = steps.firstIndex(of: effort) ?? 0
-        effort = steps[max(0, min(steps.count - 1, at + by))]
+        guard let model = current else { return }
+        effort.turn(model, by: by)
     }
 
     private func take() {
         guard let model = current else { return }
-        let choice = ModelChoice(cli: model.cli, model: model.model.isEmpty ? nil : model.model, effort: model.efforts.contains(effort ?? "") ? effort : nil)
+        let choice = ModelChoice(cli: model.cli, model: model.model.isEmpty ? nil : model.model, effort: effort.on(model))
         ModelPicker.used(model)
         browser.modelPicker = nil
         request.pick(choice)

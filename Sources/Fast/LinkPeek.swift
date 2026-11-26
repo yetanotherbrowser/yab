@@ -70,8 +70,22 @@ extension Browser {
     /// itself (feedback #79). Measured by evals/middle-click/webkit_probe.swift.
     nonisolated static func middleClick(_ buttonNumber: Int) -> Bool { buttonNumber & 4 != 0 }
 
+    /// Whether `url` is an OAuth, SSO, or sign-in flow whose `sessionStorage`
+    /// state lives in the tab that started it. Opening it in a fresh Peek tab
+    /// strands that state across the redirect back to the site.
+    static func isOAuthOrSignIn(_ url: URL) -> Bool {
+        if Diary.isSignIn(url) { return true }
+        let path = url.path().lowercased()
+        if path.hasPrefix("/__/auth/") { return true }
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return false }
+        let names = Set(items.map { $0.name.lowercased() })
+        if names.contains("samlrequest") { return true }
+        return names.contains("client_id") && (names.contains("redirect_uri") || names.contains("response_type"))
+    }
+
     /// A plain link from a pin or a kept tab previews another site; links within its site
-    /// keep navigating there. Shift-click previews from any tab. A middle
+    /// keep navigating there. OAuth and sign-in flows stay in the tab so `sessionStorage`
+    /// survives the redirect back. Shift-click previews from any tab. A middle
     /// click never previews: it opens a tab, as a ⌘-click does.
     static func shouldPeek(_ destination: URL, from address: URL?, pinned: Bool,
                            flags: NSEvent.ModifierFlags, button: Int, peekClick: PeekClick = .shift) -> Bool {
@@ -80,7 +94,8 @@ extension Browser {
         guard flags.isEmpty, pinned, let address,
               ["http", "https"].contains(address.scheme?.lowercased() ?? ""),
               let from = address.host(), let to = destination.host() else { return false }
-        return Vault.registrable(from) != Vault.registrable(to)
+        guard Vault.registrable(from) != Vault.registrable(to) else { return false }
+        return !isOAuthOrSignIn(destination)
     }
 
     /// Shift-click on a link in a tab of yours.

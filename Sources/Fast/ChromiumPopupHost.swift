@@ -440,7 +440,7 @@ struct ChromiumPopupAnchor: NSViewRepresentable {
 }
 
 @MainActor
-private final class ChromiumPopupInput: NSView, NSTextInputClient {
+class ChromiumPopupInput: NSView, NSTextInputClient {
     weak var popup: ChromiumExtensionPopup? {
         didSet {
             popup?.onTextInput = { [weak self] in
@@ -577,14 +577,12 @@ private final class ChromiumPopupInput: NSView, NSTextInputClient {
         key("keyDown", event)
     }
 
-    /// Chinese, Japanese and Korean input methods, dead keys and ⌥ accents:
-    /// the same rule as a page's (ChromiumPage.usesInputContext), with the
-    /// popup's field state from YabCore in place of the page's.
+    /// Plain typing and composition follow the same rule as a page's, using
+    /// the popup's field state from YabCore.
     private func composeKey(_ event: NSEvent) -> Bool {
         let editable = popup?.textInput?.editable == true
-        guard editable || hasMarkedText(), let context = inputContext,
-              ChromiumPage.usesInputContext(event, source: context.selectedKeyboardInputSource ?? "",
-                                            marked: hasMarkedText(), editable: editable) else { return false }
+        guard ChromiumPage.usesInputContext(event, marked: hasMarkedText(), editable: editable),
+              let context = inputContext else { return false }
         // AppKit makes the key window's first responder's context current
         // when the window becomes key; ours may have been nil then.
         if NSTextInputContext.current !== context { context.activate(); inputContextActive = true }

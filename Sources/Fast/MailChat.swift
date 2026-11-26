@@ -152,7 +152,7 @@ enum MailChat {
 
     nonisolated static func when(_ date: Date, now: Date = Date()) -> String {
         let calendar = Calendar.current
-        if calendar.isDate(date, inSameDayAs: now) { return date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)) }
+        if calendar.isDate(date, inSameDayAs: now) { return date.formatted(AppDates.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)) }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
         return days == 1 ? "yesterday" : "\(days)d ago"
     }

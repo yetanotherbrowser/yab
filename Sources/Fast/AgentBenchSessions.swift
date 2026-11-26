@@ -121,6 +121,7 @@ extension Bench {
         let answer = c.answer
         let agents = c.agents
         let made = agents.attach(name: request["name"] as? String ?? "agent", client: request["client"] as? String)
+        if request["mail"] as? Bool == true { made.mail = true }
         // Working for an assistant in the cloud (a --test run's grant):
         // its tabs stay in the grant's space instead of going with you.
         if Store.testing, let assistant = request["assistant"] as? String { made.assistant = assistant }
@@ -481,7 +482,11 @@ extension Bench {
         let answer = c.answer
         let agents = c.agents
         let session = c.session
-        agents.detach(session ?? "")
+        if let after = c.request["after"] as? Double, let session {
+            agents.leave(session, for: min(max(after, 1), Mcp.keptFor))
+        } else {
+            agents.detach(session ?? "")
+        }
         answer(["ok": true])
     }
 

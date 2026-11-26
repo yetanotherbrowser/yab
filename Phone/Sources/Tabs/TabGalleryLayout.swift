@@ -283,8 +283,10 @@ enum TabGalleryMotion {
         /// Nothing lay on the chosen card: the circle rises with its cards.
         var rises: Bool
 
-        init(count: Int, chosen: Int) {
-            let after = (0..<count).reversed().filter { $0 != chosen }
+        /// `stack`: a circle to fly into (the phone's). Without one (iPad)
+        /// the others only fade where they are.
+        init(count: Int, chosen: Int, stack: Bool = true) {
+            let after = stack ? (0..<count).reversed().filter { $0 != chosen } : []
             let front = after.first, back = after.dropFirst().first
             roles = (0..<count).map { i in
                 if i == chosen { return .chosen }
@@ -294,7 +296,7 @@ enum TabGalleryMotion {
             }
             self.front = front
             self.back = back
-            rises = chosen == count - 1
+            rises = stack && chosen == count - 1
         }
 
         /// The stack's cards that don't fly (they lay under the chosen one),

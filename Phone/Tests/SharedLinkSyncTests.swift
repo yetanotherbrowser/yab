@@ -294,6 +294,56 @@ final class SharedLinkSyncTests: XCTestCase {
         XCTAssertNil(SyncTab(result)?.device)
     }
 
+    func testQueuedSharesKeepSaveOrderForNewAndExistingTodayTabs() throws {
+        let seal = Seal.make()
+        for firstExists in [false, true] {
+            for secondExists in [false, true] {
+                let journal = try Journal(path: nil, device: "mac")
+                let first = SyncTab(id: "FFFFFFFF-0000-4000-8000-000000000001", space: space,
+                                    url: "https://example.test/first", title: "First", device: "phone")
+                let second = SyncTab(id: "AAAAAAAA-0000-4000-8000-000000000001", space: space,
+                                     url: "https://example.test/second", title: "Second", device: "phone")
+                let tabs = try [(first, firstExists), (second, secondExists)].compactMap { tab, exists in
+                    exists ? try journal.change(.init(collection: SyncCollection.tab, id: tab.id), tab.fields) : nil
+                }
+                let snapshot = context(seal, tabs: tabs)
+                let a = try snapshot.prepare(.init(action: .keep, address: first.url), pending: [])
+                let b = try snapshot.prepare(.init(action: .keep, address: second.url), pending: [a])
+                let records = try [a, b].map { try XCTUnwrap(SharedLinkSyncRecord.read($0)?.record) }
+                let row = SyncRow(space: space, tabs: records, folders: [], pairs: [])
+                XCTAssertEqual(row.kept.map(\.url), [first.url, second.url], "existing tabs: \(firstExists), \(secondExists)")
+                XCTAssertLessThan(try XCTUnwrap(records[0]["order"]?.string), try XCTUnwrap(records[1]["order"]?.string))
+                if firstExists { XCTAssertEqual(records[0].id, first.id) }
+                if secondExists { XCTAssertEqual(records[1].id, second.id) }
+            }
+        }
+    }
+
+    func testQueuedOrdersDoNotMovePinsOrKeptTabsOrCrossAccountsAndSpaces() throws {
+        let seal = Seal.make(), journal = try Journal(path: nil, device: "mac")
+        let tabs = [SyncTab(space: space, order: "A", url: "https://example.test/pin", title: "Pin", pin: "P"),
+                    SyncTab(space: space, order: "B", url: "https://example.test/kept", title: "Kept", kept: true),
+                    SyncTab(space: space, url: "https://example.test/today", title: "Today", device: "phone")]
+        let records = try tabs.map { try journal.change(.init(collection: SyncCollection.tab, id: $0.id), $0.fields) }
+        let snapshot = context(seal, tabs: records)
+        let earlier = try prepared(seal)
+        for record in records.prefix(2) {
+            let link = try snapshot.prepare(.init(action: .keep, address: record["url"]!.string!), pending: [earlier])
+            XCTAssertEqual(SharedLinkSyncRecord.read(link)?.record, record)
+        }
+        var otherSpace = snapshot
+        otherSpace.space = UUID().uuidString
+        otherSpace.lastOrder = "z"
+        var otherAccount = snapshot
+        otherAccount.account = Seal.make().account
+        otherAccount.lastOrder = "z"
+        let unrelated = try [otherSpace, otherAccount].map {
+            try $0.prepare(.init(action: .keep, address: "https://example.test/unrelated"), pending: [])
+        }
+        let link = try snapshot.prepare(.init(action: .keep, address: tabs[2].url), pending: unrelated)
+        XCTAssertEqual(SharedLinkSyncRecord.read(link)?.record["order"]?.string, Order.between(snapshot.lastOrder, nil))
+    }
+
     func testImportNeverRestoresATabDeletedOnMacOrChangesNewerFields() throws {
         let seal = Seal.make()
         let record = try XCTUnwrap(SharedLinkSyncRecord.read(prepared(seal))?.record)

@@ -162,11 +162,11 @@ enum AgentMessages {
         Date(timeIntervalSinceReferenceDate: raw > 1e12 ? raw / 1_000_000_000 : raw)
     }
 
-    private static func ago(_ when: Date) -> String {
+    static func ago(_ when: Date) -> String {
         let minutes = Int(Date().timeIntervalSince(when) / 60)
         if minutes < 1 { return "just now" }
         if minutes < 60 { return "\(minutes) min ago" }
         if minutes < 48 * 60 { return "\(minutes / 60) h ago" }
-        return DateFormatter.localizedString(from: when, dateStyle: .medium, timeStyle: .none)
+        return AppDates.string(from: when, dateStyle: .medium, timeStyle: .none)
     }
 }

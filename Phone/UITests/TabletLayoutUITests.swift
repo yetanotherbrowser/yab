@@ -125,6 +125,26 @@ final class TabletLayoutUITests: XCTestCase {
         try picture("09-hidden-bars-command-L")
     }
 
+    /// All Tabs: a tap on any card takes that tab, the gallery goes, the workspace returns.
+    func testAllTabsCardsOpenTheirTab() throws {
+        launch("page.1")
+        app.buttons["tablet.tabs"].tap()
+        XCTAssertTrue(element("tabs.gallery").waitForExistence(timeout: 10))
+        try picture("14-all-tabs")
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'tabs.card.'"))
+        XCTAssertTrue(cards.firstMatch.waitForExistence(timeout: 10))
+        let card = (0..<cards.count).map { cards.element(boundBy: $0) }.first { $0.isHittable }
+        let chosen = try XCTUnwrap(card, "no card can be tapped")
+        let id = String(chosen.identifier.dropFirst("tabs.card.".count))
+        chosen.tap()
+        let gone = wait { !self.element("tabs.gallery").exists }
+        if !gone { try picture("15-all-tabs-stuck") }
+        XCTAssertTrue(gone, "the gallery stayed after a tap on \(id)")
+        // The cards overlap, so the tab taken is whichever lies on top there: the workspace is back.
+        XCTAssertTrue(app.buttons["tablet.address"].waitForExistence(timeout: 10))
+        try picture("15-all-tabs-chosen")
+    }
+
     func testNewTabStaysInTheSpaceChosenInTheFooterAfterBrowsingSpaces() throws {
         launch("page.1")
         element("tablet.settings").press(forDuration: 1)

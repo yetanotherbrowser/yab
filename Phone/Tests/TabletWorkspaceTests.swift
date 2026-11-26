@@ -44,6 +44,65 @@ final class TabletWorkspaceTests: XCTestCase {
         XCTAssertNil(app.field.mode)
     }
 
+    /// The iPad's tree draws its own chrome: the phone's plate, back button
+    /// and stack circle (ChromeLayer) are never mounted under it, with All
+    /// Tabs shut, opening, open or closing into a card. The same window cut
+    /// to an iPhone's width mounts it, so the probe sees it when it is there.
+    func testTheTabletTreeNeverMountsThePhoneChrome() async throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "the tablet tree is an iPad's")
+        let disabled = Motion.disabled
+        let forced = SettingsUI.shared.welcomeForced
+        Motion.disabled = true
+        SettingsUI.shared.welcomeForced = false
+        defer { Motion.disabled = disabled; SettingsUI.shared.welcomeForced = forced }
+        let app = AppModel(world: try World.load(named: "mira"), privateLockEnabled: { false })
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let root = RootController(app: app)
+        root.traitOverrides.horizontalSizeClass = .regular
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        func resize(_ size: CGSize) {
+            window.frame = CGRect(origin: .zero, size: size)
+            root.view.frame = window.bounds
+            root.view.setNeedsLayout(); root.view.layoutIfNeeded()
+        }
+        func chromeMounted() -> Bool {
+            func all(_ controller: UIViewController) -> [UIViewController] { [controller] + controller.children.flatMap(all) }
+            return all(root).contains { $0 is ChromeHostController }
+        }
+        func settle() async throws {
+            for _ in 0..<6 { root.view.layoutIfNeeded(); try await Task.sleep(for: .milliseconds(17)) }
+        }
+        resize(CGSize(width: 1376, height: 1032))
+        try await until { app.workspace.tabletControls }
+        try await settle()
+        XCTAssertFalse(chromeMounted(), "a page in front")
+
+        let stack = TabStack.of(app)
+        stack.openGallery()
+        try await until { stack.gallery != nil }
+        stack.holdOpening(at: TabGalleryTiming.openDuration / 2)
+        try await settle()
+        XCTAssertFalse(chromeMounted(), "All Tabs opening")
+        let gallery = try XCTUnwrap(stack.gallery)
+        let chosen = try XCTUnwrap(stack.cards(of: gallery).first?.id)
+        stack.choose(chosen, heldAt: TabGalleryTiming.closeDuration / 2)
+        try await settle()
+        XCTAssertEqual(stack.gallery?.phase, .closing)
+        XCTAssertFalse(chromeMounted(), "All Tabs closing into its card")
+        stack.dismissGallery()
+        try await settle()
+        XCTAssertFalse(chromeMounted(), "All Tabs gone")
+
+        resize(CGSize(width: 402, height: 874))
+        try await until { !app.workspace.tabletControls }
+        try await settle()
+        XCTAssertTrue(chromeMounted(), "an iPhone's width draws the phone's chrome")
+    }
+
     /// Real pooled web views, resized through the same RootController as the app.
     /// These are representative Duo bounds on iOS, not an actual Duo runtime.
     func testDuoKeepsDraftsAndHistoryAndRecordsBothOrientations() async throws {

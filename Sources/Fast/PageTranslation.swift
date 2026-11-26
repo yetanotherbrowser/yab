@@ -76,7 +76,7 @@ final class PageTranslation: ObservableObject {
 
     var targetName: String {
         let code = Self.targetCode
-        return Locale.current.localizedString(forLanguageCode: code) ?? code
+        return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
     }
 
     /// The language this page is in now, or would go to.
@@ -246,7 +246,7 @@ final class PageTranslation: ObservableObject {
     /// language: English as in India or Spanish as in Mexico go with
     /// English and Spanish, while Chinese, written two ways, is two rows.
     /// With nothing heard from macOS yet, the Mac's own languages alone.
-    static func choices(supported: [Locale.Language], preferred: [String], in locale: Locale = .current) -> (mine: [Choice], others: [Choice]) {
+    static func choices(supported: [Locale.Language], preferred: [String], in locale: Locale = Locale(identifier: "en")) -> (mine: [Choice], others: [Choice]) {
         var heads: [String: Locale.Language] = [:]
         var order: [String] = []
         for language in supported {
@@ -297,7 +297,7 @@ final class PageTranslation: ObservableObject {
 
     private static func name(_ language: Locale.Language) -> String {
         let code = language.languageCode?.identifier ?? language.minimalIdentifier
-        return Locale.current.localizedString(forLanguageCode: code) ?? code
+        return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
     }
 
     /// What macOS translates into, asked once, when a page's menu first

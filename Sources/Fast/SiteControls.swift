@@ -74,6 +74,8 @@ struct SiteControlsView: View {
     static let tile: CGFloat = 34
 
     private var facts: SiteFacts { SiteFacts(tab: tab) }
+    /// Page tools that work on the row's tab in front, not on a page outside the row (a small window's).
+    private var inRow: Bool { !browser.outside.contains { $0 === tab } }
 
     var body: some View {
         Group {
@@ -97,7 +99,7 @@ struct SiteControlsView: View {
     private var main: some View {
         VStack(alignment: .leading, spacing: 0) {
             actions
-            BoostSiteBlock(browser: browser, tab: tab)
+            if inRow { BoostSiteBlock(browser: browser, tab: tab) }
             extensionsBlock
             let rows = siteRows
             if !rows.isEmpty {
@@ -147,16 +149,16 @@ struct SiteControlsView: View {
             } else {
                 TileFace(symbol: "square.and.arrow.up", dim: true)
             }
-            Tile(symbol: "camera", tip: "Capture", shortcut: "Capture…", enabled: page) {
+            Tile(symbol: "camera", tip: "Capture", shortcut: "Capture…", enabled: page && inRow) {
                 ExtensionPanel.shared.close()
                 browser.capture.start()
             }
-            Tile(symbol: "eye.slash", tip: "Hide Elements", shortcut: "Hide Elements…", enabled: page) {
+            Tile(symbol: "eye.slash", tip: "Hide Elements", shortcut: "Hide Elements…", enabled: page && inRow) {
                 ExtensionPanel.shared.close()
                 browser.toggleHiding()
             }
             if tab.readable {
-                Tile(symbol: "book.open", tip: "Reading Mode", shortcut: "Reading Mode", enabled: page) {
+                Tile(symbol: "book.open", tip: "Reading Mode", shortcut: "Reading Mode", enabled: page && inRow) {
                     ExtensionPanel.shared.close()
                     browser.toggleReader(tab)
                 }
@@ -166,7 +168,7 @@ struct SiteControlsView: View {
                     translation.toggle(tab)
                 }
             }
-            if Players.knows(url) || browser.floating == tab.id {
+            if inRow, Players.knows(url) || browser.floating == tab.id {
                 Tile(symbol: "pip", tip: "Float Video", shortcut: "Float Video", enabled: page) {
                     ExtensionPanel.shared.close()
                     browser.toggleFloat()
@@ -289,7 +291,7 @@ struct SiteControlsView: View {
             })
         }
         // What Hide Elements took off this site, listed under the row.
-        let veils = hidden
+        let veils = inRow ? hidden : []
         if !veils.isEmpty {
             let open = state.hiddenOpen
             rows.append(Setting(symbol: "eye.slash", title: "Hidden here", said: veils.count == 1 ? "1 part" : "\(veils.count) parts",
@@ -454,7 +456,11 @@ struct SiteControlsView: View {
             if facts.isSite {
                 Button("Clear Cookies and Data for \(IDN.shown(facts.site))…", mark: "yab.cookie") { clearData() }
                 Button(translationTitle, mark: "yab.translate") { translation.toggle(tab) }
-                Button("Copy Markdown Link", mark: "markdown") { browser.copyMarkdownLink() }
+                Button("Copy Markdown Link", mark: "markdown") {
+                    // A small window says it in its own corner.
+                    if let link = LinkWindow.all.first(where: { $0.tab === tab }) { link.copyPage(markdown: true) }
+                    else { browser.copyMarkdownLink([tab]) }
+                }
                 // Send to <iPhone>, for each iPhone that takes pages (SyncPhone).
                 PhoneSend(browser: browser, tab: tab)
                 if tab.offersSiteEngine { OpensInMenu(tab: tab) { forgets += 1 } }
@@ -886,7 +892,7 @@ struct SiteFacts {
         if let seconds = values[kSecOIDX509V1ValidityNotAfter as String]?[kSecPropertyKeyValue as String] as? NSNumber {
             until = Date(timeIntervalSinceReferenceDate: seconds.doubleValue)
         }
-        let date = until.map { $0.formatted(date: .abbreviated, time: .omitted) }
+        let date = until.map { $0.englishFormatted(date: .abbreviated, time: .omitted) }
         switch (issuer, date) {
         case let (issuer?, date?): return "Certificate from \(issuer), valid until \(date)."
         case let (issuer?, nil): return "Certificate from \(issuer)."
@@ -970,7 +976,7 @@ struct SiteControlsDoor: View {
     /// The window's sign-in's extensions (ExtensionSignIns).
     @ObservedObject private var here = ExtensionsHere.shared
     @ObservedObject private var nativePopup = ChromiumPopupHost.shared
-    private var extensions: Extensions { Extensions.of(browser) }
+    private var extensions: Extensions { Extensions.of(browser, page: tab) }
     @Environment(\.tone) private var tone
     @State private var hovering = false
     @State private var box = ViewBox()
@@ -986,7 +992,7 @@ struct SiteControlsDoor: View {
         let open = (state.openFor != nil && state.openFor == tab?.id && extensions.menuOpen) || hung
         Button {
             if let tab, browser.active?.id != tab.id { browser.focus(tab) }
-            ExtensionPanel.shared.toggle(tab: tab, page: .main, from: box.view)
+            ExtensionPanel.shared.toggle(tab: tab, browser: browser, page: .main, from: box.view)
         } label: {
             Symbol(live ?? "slider.horizontal.2.square", size: live == nil ? glyph : glyph - 1, weight: .medium,
                    stroke: live == nil ? stroke : nil)

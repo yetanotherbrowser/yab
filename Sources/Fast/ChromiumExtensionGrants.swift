@@ -97,9 +97,8 @@ extension ChromiumExtensionGrants {
             case "ON_SPECIFIC_SITES":
                 list.setAccess(row.id, .sites)
                 if case .array(let hosts) = held["hosts"] {
-                    for host in hosts where host["granted"] == .bool(true) {
-                        if let name = host["host"].string.flatMap(Self.host(of:)) { list.allow(name, for: row.id) }
-                    }
+                    let names = hosts.filter { $0["granted"] == .bool(true) }.compactMap { $0["host"].string.flatMap(Self.host(of:)) }
+                    list.adopt(sites: names, for: row.id)
                 }
             default: break
             }
@@ -167,15 +166,25 @@ extension ChromiumExtensionGrants {
             _ = try await page.run("return await chrome.permissions.remove(asked);", request(crossing.removeFromChromium))
             together.subtract(crossing.removeFromChromium)
         }
-        if !crossing.toWebKit.isEmpty {
-            Extensions.choose(Dictionary(crossing.toWebKit.compactMap { optional[$0] }.map { ($0, true) }, uniquingKeysWith: { first, _ in first }), for: id)
+        var toWebKit = crossing.toWebKit
+        let isSite = { (key: String) in optional[key].map { $0.contains("://") || $0 == "<all_urls>" } ?? false }
+        let sitePicks = Dictionary(toWebKit.filter(isSite).compactMap { optional[$0] }.map { ($0, true) }, uniquingKeysWith: { first, _ in first })
+        if !sitePicks.isEmpty, !list.admits(choices: sitePicks, for: id) {
+            NSLog("Chromium extensions: %@ was not given its Chromium sites under WebKit's script budget", id)
+            let refused = toWebKit.filter(isSite)
+            toWebKit.removeAll(where: isSite)
+            // Out of the shadow, so the next pass offers them again instead of reading a removal.
+            together.subtract(refused)
+        }
+        if !toWebKit.isEmpty {
+            Extensions.choose(Dictionary(toWebKit.compactMap { optional[$0] }.map { ($0, true) }, uniquingKeysWith: { first, _ in first }), for: id)
         }
         if !crossing.removeFromWebKit.isEmpty {
             let gone = Set(crossing.removeFromWebKit)
             Extensions.setChoices(Extensions.choices(id).filter { !gone.contains(spelled($0.key)) }, for: id)
             Store.settings.set(given.filter { !gone.contains(spelled($0)) }, forKey: "extensions.granted.\(id)")
         }
-        if !crossing.toWebKit.isEmpty || !crossing.removeFromWebKit.isEmpty { list.choicesChanged(id) }
+        if !toWebKit.isEmpty || !crossing.removeFromWebKit.isEmpty { list.choicesChanged(id) }
         shadow.grants = together.sorted()
     }
 }

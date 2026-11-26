@@ -807,12 +807,23 @@ struct DevPort: View {
     /// The speaker is at the tab's end too, in the row of tabs; the
     /// column's stands beside the mark (SideSpeaker).
     var speaker = true
+    /// The row's cross takes a kept tab put down out of the kept
+    /// (TabEnd.crossable): it is there under the pointer on that tab too.
+    var unkeeps = false
     @Environment(\.tone) private var tone
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Wide enough for the longest valid port, :65535.
     /// ":3000" whole, at a tab title's size: 42 at 12.5.
     static var lane: CGFloat { (42 * SidebarTypography.current / 12.5).rounded(.up) }
+
+    /// The port gives its place to the cross under the pointer, wherever
+    /// the row has one: a kept tab put down has none, but in the column,
+    /// where the cross takes it out of the kept. Left out, that cross was
+    /// drawn over the port.
+    static func yields(hovering: Bool, working: Bool, putDown: Bool, unkeeps: Bool) -> Bool {
+        hovering && (working || !putDown || unkeeps)
+    }
 
     /// A face, ring or speaker keeps the tab's final 15-point slot.
     private var endTaken: Bool { tab.worker != nil || tab.spinning || (speaker && (tab.noisy || tab.muted)) }
@@ -826,7 +837,7 @@ struct DevPort: View {
                 .lineLimit(1)
                 .fixedSize()
                 .frame(width: Self.lane, alignment: .trailing)
-                .opacity(hovering && (tab.worker != nil || !tab.putDown) ? 0 : 1)
+                .opacity(Self.yields(hovering: hovering, working: tab.worker != nil, putDown: tab.putDown, unkeeps: unkeeps) ? 0 : 1)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
                 .accessibilityLabel("Local port \(port)")
                 .padding(.trailing, clear)

@@ -119,6 +119,55 @@ struct SyncClientTests {
         #expect(b.journal.record(key)?["url"] == "https://b.test")
     }
 
+    /// A server behind this device's journal (sync set up again over an
+    /// old sync.sqlite, #1088) once answered the merge with the same
+    /// conflict twice a second for good: it goes again on the version given.
+    @Test func aConflictWithAServerBehindIsSentOnTheVersionGiven() async throws {
+        let server = MemoryServer(), seal = Seal.make()
+        let key = Record.Key(collection: "c.mark", id: "1")
+        let b = try client(server, seal, "b")
+        b.start()
+        #expect(await until(b) { b.state == .live })
+        try b.journal.change(key, ["url": "https://b.test"])
+        b.kick()
+        #expect(await until(b) { b.journal.pending().isEmpty })
+        let a = try client(server, seal, "a")
+        try a.journal.change(key, ["title": "Mac"])
+        try a.journal.rebase(key, version: 5)
+        a.start()
+        #expect(await until(a) { a.journal.pending().isEmpty })
+        server.lock.lock(); let pushes = server.pushes["a"] ?? 0; server.lock.unlock()
+        #expect(pushes == 2)
+        #expect(a.journal.record(key)?["url"] == "https://b.test")
+        #expect(await until(b) { b.journal.record(key)?["title"] == "Mac" })
+    }
+
+    /// A conflict whose merge didn't happen (a failed write, or the app's
+    /// deliver turning it away) is not sent on the server's version: that
+    /// would replace the fields only the server has.
+    @Test func aConflictLeftUnmergedKeepsTheServersFields() async throws {
+        let server = MemoryServer(), seal = Seal.make()
+        let key = Record.Key(collection: "c.mark", id: "1")
+        let b = try client(server, seal, "b")
+        b.start()
+        #expect(await until(b) { b.state == .live })
+        try b.journal.change(key, ["url": "https://b.test"])
+        b.kick()
+        #expect(await until(b) { b.journal.pending().isEmpty })
+        let a = try client(server, seal, "a")
+        a.deliver = { _ in }
+        try a.journal.change(key, ["title": "Mac"])
+        a.start()
+        #expect(await until(a) {
+            server.lock.lock(); defer { server.lock.unlock() }
+            return a.journal.pending().isEmpty || (server.pushes["a"] ?? 0) >= 3
+        })
+        a.stop()
+        server.lock.lock(); let blob = server.records.values.first?[seal.name(key)]?.blob; server.lock.unlock()
+        let kept = try blob.flatMap { Data(base64Encoded: $0) }.map { try seal.open($0, name: seal.name(key)) }
+        #expect(kept?["url"] == "https://b.test")
+    }
+
     /// A full account once stopped a device's every change for good, the
     /// iPhone's words to the Mac among them: now what fits still goes, and
     /// a removal that frees room lets what was turned away go after it.
@@ -357,6 +406,8 @@ final class MemoryServer: Transport, @unchecked Sendable {
     var alerts: [String] = []
     var alertIDs: [String] = []
     var withdrawals: [String] = []
+    /// Pushes taken in, by device.
+    var pushes: [String: Int] = [:]
     final class Socket: Line {
         let server: MemoryServer, account: String, device: String
         let received: (String) -> Void, closed: (Int?) -> Void
@@ -475,6 +526,7 @@ final class MemoryServer: Transport, @unchecked Sendable {
                 .map { ["name": $0.key, "version": $0.value.version, "seq": $0.value.seq, "blob": $0.value.blob] as [String: Any] }
             reply(socket, ["t": "changes", "items": items, "cursor": seq[account] ?? 0, "more": false])
         case "push":
+            pushes[socket.device, default: 0] += 1
             if let alert = json["alert"] as? String { alerts.append(alert) }
             if let id = json["alertID"] as? String {
                 if json["withdraw"] as? Bool == true { withdrawals.append(id) } else { alertIDs.append(id) }

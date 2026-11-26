@@ -48,6 +48,11 @@ struct Profile: Codable, Equatable {
 
     init() {}
 
+    enum CodingKeys: String, CodingKey {
+        case name, headline, company, role, location, linkedin, x, github, website, telegram, instagram
+        case bio, about, working, languages, timezone, pronouns, updated, source, sources, edited
+    }
+
     /// A file from before a key was added reads with that key empty.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -60,6 +65,21 @@ struct Profile: Codable, Equatable {
         updated = (try? c.decodeIfPresent(Date.self, forKey: .updated)) ?? nil
         sources = ((try? c.decodeIfPresent([String: String].self, forKey: .sources)) ?? nil) ?? [:]
         edited = ((try? c.decodeIfPresent(Set<String>.self, forKey: .edited)) ?? nil) ?? []
+    }
+
+    /// `edited` sorted: a set lists its members in another order in each
+    /// run, and the file must read the same on every Mac (sync compares it).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name); try c.encode(headline, forKey: .headline); try c.encode(company, forKey: .company)
+        try c.encode(role, forKey: .role); try c.encode(location, forKey: .location); try c.encode(linkedin, forKey: .linkedin)
+        try c.encode(x, forKey: .x); try c.encode(github, forKey: .github); try c.encode(website, forKey: .website)
+        try c.encode(telegram, forKey: .telegram); try c.encode(instagram, forKey: .instagram); try c.encode(bio, forKey: .bio)
+        try c.encode(about, forKey: .about); try c.encode(working, forKey: .working); try c.encode(languages, forKey: .languages)
+        try c.encode(timezone, forKey: .timezone); try c.encode(pronouns, forKey: .pronouns)
+        try c.encodeIfPresent(updated, forKey: .updated)
+        try c.encode(source, forKey: .source); try c.encode(sources, forKey: .sources)
+        try c.encode(edited.sorted(), forKey: .edited)
     }
 
     /// Writes what is given, key by key, and says what changed and what was
@@ -152,24 +172,25 @@ struct Profile: Codable, Equatable {
 
     /// Read on the main thread and on the notes page's queue (KnowRelay):
     /// never touched but under `guard`.
-    nonisolated(unsafe) private static var cached: (Profile, Date?)?
+    nonisolated(unsafe) private static var cached: (file: URL, profile: Profile, stamp: Date?)?
     private static let guard_ = NSLock()
 
     /// Read once, and again only when the file changed underneath.
-    static func load() -> Profile {
+    static func load(from file: URL = Profile.file) -> Profile {
         let stamp = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
-        if let known = guard_.withLock({ cached }), known.1 == stamp { return known.0 }
+        if let known = guard_.withLock({ cached }), known.file == file, known.stamp == stamp { return known.profile }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let profile = (try? Data(contentsOf: file)).flatMap { try? decoder.decode(Profile.self, from: $0) } ?? Profile()
-        guard_.withLock { cached = (profile, stamp) }
+        guard_.withLock { cached = (file, profile, stamp) }
         return profile
     }
 
+    /// `stamp`: whether `updated` becomes now.
     @discardableResult
-    static func save(_ profile: Profile, origin: ContextOrigin = .unknown) -> Bool {
+    static func save(_ profile: Profile, origin: ContextOrigin = .unknown, stamp: Bool = true, to file: URL = Profile.file) -> Bool {
         ContextPrivacy.shared.transaction {
-            let current = load()
+            let current = load(from: file)
             var next = profile
             if case .manual(let fields) = origin {
                 next = current
@@ -178,17 +199,25 @@ struct Profile: Codable, Equatable {
                     if profile.edited.contains(key) { next.edited.insert(key) } else { next.edited.remove(key) }
                 }
             }
-            return ContextPrivacy.shared.mutate(resource: "profile", before: cells(current), after: cells(next), origin: origin) { write(next) }
+            return ContextPrivacy.shared.mutate(resource: "profile", before: cells(current), after: cells(next), origin: origin) { write(next, to: file, stamp: stamp) }
         }
+    }
+
+    /// A profile as it came from another device, written as it is: its
+    /// `updated` is when it changed there. Dated now, the file no longer
+    /// said what its record does, and went back up as a change made here.
+    @discardableResult
+    static func saveSynced(_ profile: Profile, to file: URL = Profile.file) -> Bool {
+        save(profile, origin: .usage, stamp: false, to: file)
     }
 
     static func cells(_ profile: Profile) -> [String: ContextPrivacy.Cell] {
         Dictionary(uniqueKeysWithValues: keys.map { ($0, ContextPrivacy.Cell(value: profile[$0], source: profile.sources[$0], edited: profile.edited.contains($0))) })
     }
 
-    private static func write(_ profile: Profile) -> Bool {
+    private static func write(_ profile: Profile, to file: URL, stamp: Bool) -> Bool {
         var profile = profile
-        profile.updated = Date()
+        if stamp { profile.updated = Date() }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

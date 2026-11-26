@@ -132,6 +132,19 @@ struct StepWordsTests {
         #expect(StepWords.server("github", "list_issues", object: "").done == "Listed issues in GitHub")
     }
 
+    /// "a" or "an" by how the noun is said, and a tool named with two verbs
+    /// says both: Linear's get_user was "Got an user", and GitHub's
+    /// create_or_update_file "Created an or update file".
+    @Test func anotherServersToolIsSaidInEnglish() {
+        #expect(StepWords.server("linear", "get_user", object: "").done == "Got a user in Linear")
+        #expect(StepWords.server("acme", "get_hour", object: "").done == "Got an hour in Acme")
+        #expect(StepWords.server("figma", "get_image", object: "").done == "Got an image in Figma")
+        let both = StepWords.server("github", "create_or_update_file", object: "")
+        #expect(both.running == "Creating or updating a file in GitHub")
+        #expect(both.done == "Created or updated a file in GitHub")
+        #expect(both.failed == "Couldn\u{2019}t create or update a file in GitHub")
+    }
+
     @Test func commandsAndTitlesReadAsWords() {
         #expect(StepWords.command("/bin/zsh -lc 'git status'") == "git status")
         #expect(StepWords.command("bash -lc \"npm test\"") == "npm test")

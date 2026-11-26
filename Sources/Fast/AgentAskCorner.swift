@@ -253,8 +253,8 @@ extension Agents {
         var held: [Cornered] = []
         for session in sessions where session.permit != nil && root(of: session.id) == session.id {
             // Its home in sight: the column out with this chat, which is
-            // only drawn beside a page.
-            if browser.chatOpen && browser.chatShown == session.id && browser.active != nil { continue }
+            // the window's, drawn beside a page or the empty state alike.
+            if browser.chatOpen && browser.chatShown == session.id { continue }
             held.append(.chat(session.id))
         }
         let folded = Set(AskStand.shared.toasts.map(\.id))

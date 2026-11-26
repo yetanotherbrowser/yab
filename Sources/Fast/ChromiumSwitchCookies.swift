@@ -162,19 +162,54 @@ struct ChromiumCookieBook {
                                           chromium: ledger.chromium.filter { keys.contains($0.key) })
     }
 
-    /// What both jars hold now, in place of what the book held for this scope.
-    mutating func record(_ scope: ChromiumCookieScope, webKit: [String: ChromiumDRMCookie], chromium: [String: ChromiumDRMCookie]) {
-        for key in keys(for: scope.host).filter(scope.covers) {
-            ledger.webKit[key] = nil; ledger.chromium[key] = nil
+    /// The print each cookie last had, in memory only: a cookie unchanged
+    /// since its host was last read isn't encoded and hashed again. A host
+    /// open on both engines is read every few seconds, nearly always as it was.
+    private var prints: [String: [(cookie: ChromiumDRMCookie, print: String)]] = [:]
+    /// How many prints were made rather than found, for tests.
+    private(set) var printsMade = 0
+
+    private let encoder: JSONEncoder = {
+        let made = JSONEncoder()
+        made.outputFormatting = [.sortedKeys]
+        return made
+    }()
+
+    /// A cookie's print, made only if this cookie hasn't been printed as it is.
+    mutating func fingerprint(_ cookie: ChromiumDRMCookie) -> String {
+        if let known = prints[cookie.key]?.first(where: { $0.cookie == cookie }) { return known.print }
+        let made = ChromiumSwitchCookieLedger.fingerprint(cookie, encoder: encoder)
+        prints[cookie.key, default: []].append((cookie, made))
+        printsMade += 1
+        return made
+    }
+
+    /// What both jars hold now, in place of what the book held for this
+    /// scope. True when that changed anything, so the ledger is saved only then.
+    @discardableResult
+    mutating func record(_ scope: ChromiumCookieScope, webKit: [String: ChromiumDRMCookie], chromium: [String: ChromiumDRMCookie]) -> Bool {
+        let covered = keys(for: scope.host).filter(scope.covers)
+        let webKitPrints = webKit.mapValues { fingerprint($0) }
+        let chromiumPrints = chromium.mapValues { fingerprint($0) }
+        var changed = false
+        for key in covered.union(webKitPrints.keys) where ledger.webKit[key] != webKitPrints[key] {
+            ledger.webKit[key] = webKitPrints[key]; changed = true
         }
-        ledger.webKit.merge(ChromiumSwitchCookieLedger.fingerprint(webKit)) { $1 }
-        ledger.chromium.merge(ChromiumSwitchCookieLedger.fingerprint(chromium)) { $1 }
+        for key in covered.union(chromiumPrints.keys) where ledger.chromium[key] != chromiumPrints[key] {
+            ledger.chromium[key] = chromiumPrints[key]; changed = true
+        }
         var session = Set(ledger.session ?? [])
-        session.subtract(keys(for: scope.host).filter(scope.covers))
+        session.subtract(covered)
         session.formUnion(chromium.filter { $0.value.expires == nil }.keys)
-        ledger.session = session.isEmpty ? nil : session.sorted()
+        let sessions = session.isEmpty ? nil : session.sorted()
+        if sessions != ledger.session { ledger.session = sessions; changed = true }
+        for key in covered.union(webKit.keys).union(chromium.keys) {
+            let held = prints[key]?.filter { $0.cookie == webKit[key] || $0.cookie == chromium[key] } ?? []
+            prints[key] = held.isEmpty ? nil : held
+        }
         for key in webKit.keys { index(key) }
         for key in chromium.keys { index(key) }
+        return changed
     }
 
     /// One import row: refused, it is on the WebKit side alone.
@@ -211,7 +246,7 @@ struct ChromiumCookieBook {
 
     /// Both sides of these keys, as if never seen: the bootstrap rule decides them.
     mutating func forget(_ keys: [String]) {
-        for key in keys { ledger.webKit[key] = nil; ledger.chromium[key] = nil }
+        for key in keys { ledger.webKit[key] = nil; ledger.chromium[key] = nil; prints[key] = nil }
         if let session = ledger.session { ledger.session = session.filter { !keys.contains($0) } }
     }
 
@@ -253,5 +288,63 @@ extension WKHTTPCookieStore {
             }
         }
         return nil
+    }
+}
+
+/// Which edits of the ledger reached the disk. One a save failed to write
+/// (a full disk) stays owed, and the next read of any host saves again;
+/// a ledger already written is not written again.
+struct ChromiumLedgerSaves {
+    private(set) var edits = 0
+    private var written = 0
+    var owed: Bool { written < edits }
+    mutating func edited() { edits += 1 }
+    /// The ledger as it was at `at` edits is on disk.
+    mutating func wrote(_ at: Int) { written = max(written, at) }
+}
+
+/// The ledger's saves, one after another, each of the ledger as it is when
+/// its turn comes: two at once could land older last, the disk then behind
+/// with nothing owed.
+@MainActor
+final class ChromiumLedgerWriter {
+    /// After a failed save, how long before a read that changed nothing tries
+    /// again: a full disk isn't rewritten with the whole ledger every few
+    /// seconds. A read that changed the ledger saves at once.
+    static let rest: TimeInterval = 60
+
+    private var saves = ChromiumLedgerSaves()
+    private var writing: Task<Void, Error>?
+    private var failedAt: Date?
+    private let ledger: @MainActor () -> ChromiumSwitchCookieLedger?
+    private let clock: () -> Date
+    private let write: @Sendable (ChromiumSwitchCookieLedger) async throws -> Void
+
+    /// `ledger` nil: its bridge is gone, and nothing is written, never an empty ledger.
+    init(ledger: @escaping @MainActor () -> ChromiumSwitchCookieLedger?, clock: @escaping () -> Date = Date.init,
+         write: @escaping @Sendable (ChromiumSwitchCookieLedger) async throws -> Void) {
+        self.ledger = ledger; self.clock = clock; self.write = write
+    }
+
+    var owed: Bool { saves.owed }
+    /// Owed, and not resting after a failure.
+    var due: Bool { owed && (failedAt.map { clock().timeIntervalSince($0) >= Self.rest } ?? true) }
+    func edited() { saves.edited() }
+
+    func save() async throws {
+        let previous = writing
+        let turn = Task { @MainActor in
+            _ = await previous?.result
+            guard saves.owed, let snapshot = ledger() else { return }
+            let at = saves.edits
+            do { try await write(snapshot) } catch {
+                failedAt = clock()
+                throw error
+            }
+            failedAt = nil
+            saves.wrote(at)
+        }
+        writing = turn
+        try await turn.value
     }
 }

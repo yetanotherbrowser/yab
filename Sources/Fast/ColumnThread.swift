@@ -31,14 +31,138 @@ struct ThreadTextEditor: View {
     }
 }
 
-/// Grouped settings forms create their own native scroll view.
+/// A grouped settings page laid out the way a grouped Form lays one out,
+/// a row at a time in a lazy stack, so only the rows in view are built.
 struct ThreadForm<Content: View>: View {
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) { self.content = content() }
 
     var body: some View {
-        Form { content }.background(ColumnThread())
+        ThreadScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                Group(sections: content) { sections in
+                    ForEach(FormPiece.all(Array(sections))) { $0 }
+                }
+            }
+            .padding(FormGroupRow<EmptyView>.margin)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// A header, row or footer as one lazy item; rows are keyed by search anchor so scrollTo finds them unbuilt.
+private struct FormPiece: View, Identifiable {
+    enum Kind {
+        case header(SectionConfiguration)
+        case row(Subview, first: Bool, last: Bool)
+        case footer(SectionConfiguration)
+        /// A section with nothing to show still keeps its room.
+        case gap
+    }
+    enum Part: Hashable {
+        case header(SectionConfiguration.ID), footer(SectionConfiguration.ID), gap(SectionConfiguration.ID)
+    }
+
+    let id: AnyHashable
+    let kind: Kind
+    var top: CGFloat = 0
+    /// The room after a section, on its last piece.
+    var bottom: CGFloat = 0
+
+    static func all(_ sections: [SectionConfiguration]) -> [FormPiece] {
+        var pieces: [FormPiece] = []
+        for (at, section) in sections.enumerated() {
+            let start = pieces.count
+            if !section.header.isEmpty {
+                // The Form's: 19 more after rows, 17 less right under a page's head.
+                let top: CGFloat = at == 0 ? 0 : sections[at - 1].content.isEmpty ? -17 : 19
+                pieces.append(FormPiece(id: Part.header(section.id), kind: .header(section), top: top))
+            }
+            for row in section.content {
+                let key = row.containerValues.settingsAnchor.map(AnyHashable.init) ?? AnyHashable(row.id)
+                pieces.append(FormPiece(id: key, kind: .row(row, first: row.id == section.content.first?.id,
+                                                            last: row.id == section.content.last?.id)))
+            }
+            if !section.footer.isEmpty {
+                pieces.append(FormPiece(id: Part.footer(section.id), kind: .footer(section)))
+            }
+            let room: CGFloat = section.footer.isEmpty ? 10 : 30
+            if pieces.count > start {
+                pieces[pieces.count - 1].bottom = room
+            } else {
+                pieces.append(FormPiece(id: Part.gap(section.id), kind: .gap, bottom: room))
+            }
+        }
+        return pieces
+    }
+
+    var body: some View {
+        piece.padding(.bottom, bottom)
+    }
+
+    @ViewBuilder private var piece: some View {
+        switch kind {
+        case .header(let section):
+            HStack(spacing: 0) { section.header }
+                .font(.system(size: 13, weight: FormGroupRow<EmptyView>.headWeight))
+                .padding(.horizontal, 10)
+                .padding(.top, top)
+                .padding(.bottom, 10)
+        case .row(let row, let first, let last):
+            FormGroupRow(first: first, last: last, form: true) { row }
+        case .footer(let section):
+            HStack(spacing: 0) { section.footer }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+        case .gap:
+            Color.clear.frame(height: 0)
+        }
+    }
+}
+
+extension ContainerValues {
+    /// A Settings row's search anchor, which ThreadForm keys the row by.
+    @Entry var settingsAnchor: String? = nil
+}
+
+/// A row of a group, the way a grouped Form draws one: the group is its
+/// rows' backgrounds laid edge to edge, so it can be built a row at a time.
+struct FormGroupRow<Content: View>: View {
+    /// The Form's own measures on each design.
+    static var radius: CGFloat { if #available(macOS 26.0, *) { 12 } else { 10 } }
+    static var pad: CGFloat { if #available(macOS 26.0, *) { 10.5 } else { 8 } }
+    static var headWeight: Font.Weight { if #available(macOS 26.0, *) { .regular } else { .semibold } }
+    static var margin: CGFloat { 20 }
+
+    let first: Bool
+    let last: Bool
+    /// Laid out as ThreadForm's rows: the Form's row height, separator and last-row inset.
+    var form = false
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        let top = first ? Self.radius : 0
+        let foot = last ? Self.radius : 0
+        content
+            .frame(maxWidth: .infinity, minHeight: form ? 0 : 22, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.top, Self.pad)
+            // The Form's last row is a point shorter, a lone row half a point taller.
+            .padding(.bottom, Self.pad + (form && last ? (first ? 0.5 : -1) : 0))
+            .background {
+                UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: foot, bottomTrailingRadius: foot,
+                                       topTrailingRadius: top, style: .continuous)
+                    .fill(Color(nsColor: .quaternarySystemFill))
+            }
+            .overlay(alignment: .bottom) {
+                if !last {
+                    Rectangle().fill(form ? AnyShapeStyle(.primary.opacity(0.045)) : AnyShapeStyle(Color(nsColor: .separatorColor)))
+                        .frame(height: 1).padding(.horizontal, 10)
+                }
+            }
     }
 }
 

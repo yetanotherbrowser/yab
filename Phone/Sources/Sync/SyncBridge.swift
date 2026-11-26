@@ -121,10 +121,10 @@ final class SyncBridge {
     private(set) var assistantNotificationsUndecided = false
     @ObservationIgnored private var assistantApprovalExpiry: Task<Void, Never>?
 
-    @ObservationIgnored private weak var app: AppModel?
+    @ObservationIgnored private(set) weak var app: AppModel?
     @ObservationIgnored private(set) var engine: PhoneSync?
     @ObservationIgnored private(set) var setup: Setup?
-    @ObservationIgnored private var mirror = SyncMirror() {
+    @ObservationIgnored private(set) var mirror = SyncMirror() {
         // The Macs' tabs of today changed: the spaces' pages read them again.
         didSet {
             if oldValue.elsewhere != mirror.elsewhere { macTodayStamp &+= 1 }
@@ -211,7 +211,7 @@ final class SyncBridge {
 
     /// The Mac's tabs closed from here while it is down: shown dimmed until it wakes.
     private(set) var closingOnMac: [String: SyncTab] = [:]
-    @ObservationIgnored private var ids = IDs()
+    @ObservationIgnored private(set) var ids = IDs()
     @ObservationIgnored private var chatMirror = ChatMirror()
     @ObservationIgnored private var adopted: [Chat.ID: Chat] = [:]
     /// The iPhone's changes go up once the journal or live account is in.
@@ -250,7 +250,7 @@ final class SyncBridge {
     /// Named states: which of the pretend devices is this iPhone.
     @ObservationIgnored var pretendOwnDevice: String?
     @ObservationIgnored let probe: SyncProbe?
-    @ObservationIgnored private let log = Logger(subsystem: "dev.serafim.fast.iphone", category: "sync")
+    @ObservationIgnored let log = Logger(subsystem: "dev.serafim.fast.iphone", category: "sync")
 
     @ObservationIgnored private let settings: SettingsStore
 
@@ -927,7 +927,12 @@ final class SyncBridge {
             UserDefaults.standard.set(person, forKey: DailyActivity.personKey)
         }
         ready = true
-        if !mirror.spaces.isEmpty || setup?.seed == true {
+        // A journal left by a first catch-up cut short holds a page of the
+        // account (Work before the first space), not the account: taking it
+        // then sent the starting Personal up as a second one. Fixture worlds
+        // keep no association to hold the mark, and take theirs as before.
+        let caughtUp = ids.caughtUp || app?.isFixture != false
+        if (!mirror.spaces.isEmpty && caughtUp) || setup?.seed == true {
             // The seed: the world is this iPhone's own, it all goes up as changes.
             takeAccount()
             publishShareContext()
@@ -1007,8 +1012,14 @@ final class SyncBridge {
         case .live:
             offline = false
             // Caught up: a joining iPhone takes the account's spaces now,
-            // and from here on writes its own.
+            // and from here on writes its own. Kept, so a launch takes the
+            // account from the journal before the line is back.
+            ids.markCaughtUp()
             takeAccount()
+            do { try ids.persist() } catch {
+                log.error("sync keep caught up: \(String(describing: error), privacy: .public)")
+            }
+            repairJoinDuplicate()
             publishShareContext()
             Entrances.resumeShared()
             pruneEmptyPersonals()
@@ -1428,9 +1439,11 @@ final class SyncBridge {
         let flushed = CACurrentMediaTime()
         let touched = mirror.apply(batch.changes)
         if !writing {
-            // The account's first spaces, on a launch that waited for them
-            // (a batch of chats alone, early in a catch-up, isn't them).
-            if !mirror.spaces.isEmpty { takeAccount() }
+            // The account's first spaces, on a launch that waited for them.
+            // A catch-up page isn't them: it can bring Work before the first
+            // space, and the starting Personal then went up as a second one.
+            // The catch-up's end takes the account (changed(.live)).
+            if line == .live, !mirror.spaces.isEmpty { takeAccount() }
         } else if !touched.isEmpty {
             let arrived = batch.changes.contains { if case .tab = $0 { return true }; return false }
             let left = batch.changes.contains { if case .tabGone = $0 { return true }; return false }
@@ -1499,7 +1512,7 @@ final class SyncBridge {
                 // go into the first space, which every device shares, and
                 // nothing makes a second Personal.
                 if let firstAt, ids.known(space.id) == nil, Self.mergesIntoFirst(space) {
-                    out[firstAt] = Self.merged(space, into: out[firstAt])
+                    out[firstAt] = Self.merged(space, into: out[firstAt], home: pinHome)
                     if app.browser.spaceID == space.id { follow = out[firstAt].id }
                     return false
                 }
@@ -1597,21 +1610,35 @@ final class SyncBridge {
     /// called Personal: no folders of its own, so its tabs fit in another
     /// space as they are. Renamed, it is a space of the person's own.
     static func mergesIntoFirst(_ space: Space) -> Bool {
-        space.id == BrowserProfile.startSpace && !space.isPrivate && space.folders.isEmpty && space.name == "Personal"
+        space.id == BrowserProfile.startSpace && !space.isPrivate && space.folders.isEmpty
+            && isStartingPersonal(name: space.name, icon: space.emoji)
     }
 
     /// `first` with the starting space's tabs at the end of their lists:
-    /// preserving pins and kept tabs. Blank
-    /// new tabs stay behind; the one in front stays in front.
-    static func merged(_ start: Space, into first: Space) -> Space {
+    /// preserving pins and kept tabs. Blank new tabs and a pin `first`
+    /// already has stay behind; the one in front stays in front. A pin is
+    /// the same pin by `home`, the address it was saved at (pinHome): two
+    /// pins saved at different pages can be on the same page now, a
+    /// sign-in page, and are still two.
+    static func merged(_ start: Space, into first: Space, home: (Tab) -> String?) -> Space {
         var out = first
         let have = Set(first.allTabs.map(\.id))
+        // Only real addresses: two blank pins are not the same page.
+        let pinned = Set(first.pins.filter { !isBlank($0) }.compactMap { home($0).map(address) })
         for tab in start.keptTabs where !isBlank(tab) && !have.contains(tab.id) { out.kept.append(.tab(tab)) }
-        for tab in start.pins where !tab.isPrivate && !isBlank(tab) && !have.contains(tab.id) { out.pins.append(tab) }
+        for tab in start.pins where !tab.isPrivate && !isBlank(tab) && !have.contains(tab.id) && !pinned.contains(home(tab).map(address) ?? "") {
+            out.pins.append(tab)
+        }
         for tab in start.today where !isBlank(tab) && !have.contains(tab.id) { out.today.append(tab) }
         out.placeTabs()
         if let current = start.current, out.tab(current) != nil { out.current = current }
         return out
+    }
+
+    /// The address a pin was saved at: its record's home, which the Mac
+    /// writes and the iPhone only carries, else the page it is on.
+    func pinHome(_ tab: Tab) -> String? {
+        ids.known(tab.id).flatMap { mirror.tabs[$0]?.home } ?? tab.url
     }
 
     /// Joining an account again (row 385): `rebuilt`, the space as the
@@ -1659,9 +1686,7 @@ final class SyncBridge {
     /// mirror and the app's spaces in, the synced ids to delete out.
     static func emptyPersonals(_ mirror: SyncMirror, local: (String) -> String, app spaces: [Space],
                                gone: Set<String> = []) -> [String] {
-        func isPersonal(_ space: SyncSpace) -> Bool {
-            space.name.trimmingCharacters(in: .whitespaces) == "Personal" && SpaceSymbols.emoji(space.icon) == "🏠"
-        }
+        func isPersonal(_ space: SyncSpace) -> Bool { isStartingPersonal(name: space.name, icon: space.icon) }
         guard let first = mirror.spaces.values.first(where: \.isFirst) else { return [] }
         let personals = mirror.orderedSpaces.filter { !$0.isFirst && isPersonal($0) }
         var empty = personals.filter { synced in
@@ -2572,10 +2597,28 @@ final class SyncBridge {
         guard payload.account == engine.seal.account else { return nil }
         guard ready, writing else { return false }
         do {
-            let record = try engine.journal.importLocal(payload.record)
+            var record = try engine.journal.importLocal(payload.record)
+            if record.alive() {
+                guard let tab = SyncTab(record) else { return false }
+                let spaces = engine.spaces()
+                if !spaces.contains(where: { $0.id == tab.space }) {
+                    guard line == .live else { return false }
+                    // Keep the same record and newer remote edits. Only its
+                    // missing destination changes; a deleted tab stays deleted.
+                    let selected = app.flatMap { ids.known($0.browser.ordinarySpaceID) }
+                    guard let destination = spaces.first(where: { $0.id == selected }) ?? spaces.first else { return false }
+                    record = try engine.journal.change(record.key, [
+                        "parent": .string(destination.id), "folder": .null, "pin": .null,
+                        "kept": true, "device": .null,
+                        "order": .string(Order.between(engine.row(destination.id).kept.last?.order, nil))
+                    ])
+                }
+            }
             engine.client.kick()
             receive(SyncBatch(origin: .remote, changes: engine.changes(for: record)))
-            return true
+            // Show the link offline, but keep its queue entry until catch-up:
+            // the restored journal may still show a remotely deleted space.
+            return line == .live
         } catch {
             log.error("shared tab import: \(String(describing: error), privacy: .public)")
             return false
@@ -2643,9 +2686,11 @@ final class SyncBridge {
 
     // MARK: - history
 
-    /// A place in sync as History takes it.
+    /// A place in sync as History takes it, keyed by its address rather than
+    /// the record's id: a Mac on an older Yab names a server's page without
+    /// its port, and the same page from it and from a newer Mac is one place.
     nonisolated static func place(_ item: (visit: SyncVisit, device: String?)) -> SyncedPlace {
-        SyncedPlace(key: item.visit.id, url: item.visit.url, title: item.visit.title, last: item.visit.last,
+        SyncedPlace(key: item.visit.place, url: item.visit.url, title: item.visit.title, last: item.visit.last,
                     typed: item.visit.typed, device: item.device)
     }
 
@@ -3061,6 +3106,9 @@ nonisolated struct IDs: Sendable {
     /// Which sweep of the account's duplicate spaces this iPhone has run
     /// (SyncBridge.duplicateSpaces): each runs once an account.
     private(set) var swept = 0
+    /// This iPhone has caught up with the account once: its journal holds the
+    /// account, not a page of a first catch-up cut short.
+    private(set) var caughtUp = false
 
     private struct Saved: Codable {
         var account: String
@@ -3068,6 +3116,7 @@ nonisolated struct IDs: Sendable {
         var device: String?
         var former: [String]?
         var swept: Int?
+        var caughtUp: Bool?
     }
 
     init() {}
@@ -3088,6 +3137,9 @@ nonisolated struct IDs: Sendable {
         toLocal = Dictionary(uniqueKeysWithValues: toSync.map { ($0.value, $0.key) })
         former = Set(saved.former ?? [])
         swept = saved.swept ?? 0
+        // Saved before the mark was kept: written only once the iPhone wrote
+        // into the account, which it did after catching up.
+        caughtUp = saved.caughtUp ?? true
         if let before = saved.device, let device, before != device {
             former.insert(before)
             rejoined = true
@@ -3106,7 +3158,7 @@ nonisolated struct IDs: Sendable {
         guard dirty, let file else { return }
         let data = try JSONEncoder().encode(Saved(account: account, mapping: toSync, device: device,
                                                   former: former.isEmpty ? nil : former.sorted(),
-                                                  swept: swept == 0 ? nil : swept))
+                                                  swept: swept == 0 ? nil : swept, caughtUp: caughtUp))
         try data.write(to: file, options: .atomic)
         dirty = false
         rejoined = false
@@ -3123,6 +3175,13 @@ nonisolated struct IDs: Sendable {
     }
 
     func local(_ synced: String) -> String { toLocal[synced] ?? synced }
+
+    /// The line reached live once: a launch takes the account from the journal.
+    mutating func markCaughtUp() {
+        guard !caughtUp else { return }
+        caughtUp = true
+        dirty = true
+    }
 
     /// The sweep `version` ran for this account; written with the association.
     mutating func markSwept(_ version: Int) {

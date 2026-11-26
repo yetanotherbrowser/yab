@@ -24,7 +24,7 @@ final class SearchSuggestions {
                 let words = words.lowercased()
                 return words.hasPrefix(typed) && words != typed
             case .site(let url, _):
-                let key = Address.pretty(url).lowercased()
+                let key = History.key(for: url)
                 return key.hasPrefix(typed) && key != typed
             }
         }

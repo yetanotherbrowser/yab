@@ -120,10 +120,14 @@ enum Calc {
         return format
     }
 
-    /// A number in words, the line under a sum's answer.
-    static func spelled(_ value: Double) -> String {
-        guard abs(value) < 1e15 else { return "" }
-        let words = spelling.string(from: NSNumber(value: value)) ?? ""
+    /// A number in words, the line under a sum's answer: the number as the
+    /// card shows it. Spelled from the Double, 100 + 10% was one hundred
+    /// ten point thirteen zeros and a one, every digit the Double keeps: a
+    /// spelling formatter takes no limit on places.
+    static func spelled(_ shown: String) -> String {
+        let number = NSDecimalNumber(string: shown.replacingOccurrences(of: ",", with: ""), locale: Locale(identifier: "en_US"))
+        guard number != .notANumber, abs(number.doubleValue) < 1e15 else { return "" }
+        let words = spelling.string(from: number) ?? ""
         return words.prefix(1).uppercased() + words.dropFirst()
     }
 
@@ -131,20 +135,44 @@ enum Calc {
         let format = NumberFormatter()
         format.locale = Locale(identifier: "en_US")
         format.numberStyle = .spellOut
-        format.maximumFractionDigits = 4
         return format
     }()
 
     /// "12", "1,200.5", "1.5k", "2m": a number as it is typed.
     static func number(_ text: String) -> Double? {
-        var words = text.lowercased().replacingOccurrences(of: ",", with: "").replacingOccurrences(of: " ", with: "")
+        var words = text.lowercased().replacingOccurrences(of: " ", with: "")
         var scale = 1.0
         if let last = words.last, "km".contains(last), words.count > 1, words.dropLast().last?.isNumber == true {
             scale = last == "k" ? 1_000 : 1_000_000
             words.removeLast()
         }
-        guard !words.isEmpty, words.allSatisfy({ $0.isNumber || $0 == "." }), let value = Double(words) else { return nil }
+        guard let digits = digits(words), let value = Double(digits) else { return nil }
         return value * scale
+    }
+
+    /// A number's digits as typed, read the one way they can be: commas
+    /// that group thousands ("1,200.5") or lakhs ("1,23,456") taken out,
+    /// and a comma that can't group, "1,5" or "3,14", read as the decimal
+    /// point it is in much of the world, as is the comma after points
+    /// that group ("1.234,56"). Taking every comma out read those as 15
+    /// and 314. Nil for digits read no way at all ("1,2,3", ",5").
+    static func digits(_ text: String) -> String? {
+        guard !text.isEmpty, text.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == "." || $0 == ",") }) else { return nil }
+        guard text.contains(",") else { return text }
+        func reads(_ part: Substring, _ pattern: String) -> Bool { part.range(of: pattern, options: .regularExpression) != nil }
+        let thousands = #"^[0-9]{1,3}(,[0-9]{3})+$"#, lakhs = #"^[0-9]{1,2}(,[0-9]{2})*,[0-9]{3}$"#
+        // "1,200.5", "1,23,456": commas that group, then a point or none.
+        let points = text.split(separator: ".", omittingEmptySubsequences: false)
+        if points.count <= 2, points.count == 1 || !points[1].contains(","),
+           reads(points[0], thousands) || reads(points[0], lakhs) {
+            return text.replacingOccurrences(of: ",", with: "")
+        }
+        // "1,5", "1.234,56": one comma, the decimal point, after any points
+        // that group.
+        let halves = text.split(separator: ",", omittingEmptySubsequences: false)
+        guard halves.count == 2, !halves[0].isEmpty, !halves[1].isEmpty, !halves[1].contains("."),
+              !halves[0].contains(".") || reads(halves[0], #"^[0-9]{1,3}(\.[0-9]{3})+$"#) else { return nil }
+        return halves[0].replacingOccurrences(of: ".", with: "") + "." + halves[1]
     }
 
     /// The words split at a joining word, "to", "in", "as", tried from the
@@ -175,7 +203,7 @@ enum Calc {
         let question = words.replacingOccurrences(of: "*", with: " × ").replacingOccurrences(of: "/", with: " ÷ ")
             .replacingOccurrences(of: "  ", with: " ")
         return Answer(question: question.trimmingCharacters(in: .whitespaces), questionNote: "Sum",
-                      result: sum.shown, resultNote: spelled(sum.value),
+                      result: sum.shown, resultNote: spelled(sum.shown),
                       copy: sum.shown.replacingOccurrences(of: ",", with: ""))
     }
 
@@ -189,7 +217,7 @@ enum Calc {
             return (1 ..< found.numberOfRanges).compactMap { Range(found.range(at: $0), in: lower).flatMap { Calc.number(String(lower[$0])) } }
         }
         func answer(_ question: String, _ value: Double) -> Answer {
-            Answer(question: question, questionNote: "Percentage", result: shown(value), resultNote: spelled(value),
+            Answer(question: question, questionNote: "Percentage", result: shown(value), resultNote: spelled(shown(value)),
                    copy: shown(value).replacingOccurrences(of: ",", with: ""))
         }
         if let n = match(percents[0]), n.count == 2 {
@@ -207,7 +235,8 @@ enum Calc {
 
     /// The three readings of a percentage, made once.
     private static let percents: [NSRegularExpression] = {
-        let number = #"([0-9][0-9,]*\.?[0-9]*)"#
+        // Any digits, points and commas: Calc.number reads them, or not.
+        let number = #"([0-9][0-9.,]*)"#
         return [number + #"\s*%\s*of\s*"# + number, number + #"\s*%\s*off\s*"# + number,
                 number + #"\s*([+-])\s*"# + number + #"\s*%"#]
             .map { try! NSRegularExpression(pattern: "^" + $0 + "$") }
@@ -667,14 +696,28 @@ enum Calc {
             guard let found = regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
                   let countRange = Range(found.range(at: 1), in: lower), let count = Int(lower[countRange]),
                   let unitRange = Range(found.range(at: 2), in: lower),
-                  let span = spans.first(where: { lower[unitRange].hasPrefix($0.0) }),
-                  let target = calendar.date(byAdding: span.1, value: sign * count * span.2, to: today) else { continue }
+                  let span = spans.first(where: { lower[unitRange].hasPrefix($0.0) }) else { continue }
+            // A count of weeks past Int.max / 7 overflowed (a crash), and one
+            // that came to Int.max exactly is NSDateComponentUndefined to
+            // Calendar, which added nothing: the answer was today.
+            let (units, overflow) = count.multipliedReportingOverflow(by: span.2)
+            guard !overflow, units != NSDateComponentUndefined,
+                  let target = calendar.date(byAdding: span.1, value: sign * units, to: today),
+                  writable(target, in: calendar) else { continue }
             let format = datedWeekday
             let label = "\(count) " + (count == 1 ? String(span.3.dropLast()).lowercased() : span.3.lowercased())
             return Answer(question: sign > 0 ? "Today + " + label : "Today − " + label, questionNote: dated(today),
                           result: dated(target, year: true), resultNote: format.string(from: target), copy: dated(target, year: true), kind: .date)
         }
         return nil
+    }
+
+    /// Whether a day some way off can be the answer: one "MMM d, yyyy"
+    /// writes right. It writes no era, so before year 1 the year was wrong
+    /// (975 BC came out as 0975, and 1 BC as 0001, the same as AD 1), and
+    /// from about ten million years on it wrote nothing at all.
+    static func writable(_ day: Date, in calendar: Calendar) -> Bool {
+        calendar.component(.era, from: day) == 1 && !dated(day, year: true).isEmpty
     }
 
     /// The ways a day some way off is said, and which way from today.
@@ -850,6 +893,10 @@ enum Sum {
                 || words.range(of: #"^√\s*[(0-9π]"#, options: .regularExpression) != nil
                 || words.range(of: #"^[0-9.]+\s*π$"#, options: .regularExpression) != nil
         else { return nil }
+        // "0x10" is sixteen in hex (Calc.base reads it), not nought times
+        // ten: an x right after a 0 that starts a number begins a hex
+        // number. Spaced, "0 x 10" stays a sum.
+        guard words.range(of: #"(^|[^0-9.,])0x[0-9]"#, options: .regularExpression) == nil else { return nil }
         var parser = Parser(Array(words.replacingOccurrences(of: " ", with: "")))
         guard let value = parser.expression(), parser.done, value.isFinite else { return nil }
         return (value, shown(value))
@@ -915,12 +962,12 @@ enum Sum {
                 guard let inside = expression(), eat(")") != nil else { return nil }
                 return inside
             }
-            var digits = ""
+            var typed = ""
             while let next = peek(), next.isNumber || next == "." || next == "," {
-                if next != "," { digits.append(next) }
+                typed.append(next)
                 at += 1
             }
-            return Double(digits)
+            return Calc.digits(typed).flatMap { Double($0) }
         }
     }
 }

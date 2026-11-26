@@ -313,7 +313,7 @@ struct SlideHost<Content: View>: NSViewRepresentable {
     func makeNSView(context: Context) -> CarriedView { CarriedView() }
 
     func updateNSView(_ view: CarriedView, context: Context) {
-        view.host.rootView = AnyView(content.environment(\.self, context.environment).ignoresSafeArea())
+        view.host.rootView = AnyView(content.hosted(in: context.environment).ignoresSafeArea())
     }
 
     /// As big as it is placed: the content has its own frame.

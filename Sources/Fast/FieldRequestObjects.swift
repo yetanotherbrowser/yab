@@ -85,7 +85,7 @@ struct RequestObjectView: View {
             if let passage = hit.passage {
                 Text("\u{201C}\(passage.prefix(160))\u{201D}").font(.system(size: 12.5)).foregroundStyle(Palette.ink).lineLimit(3)
             }
-            small("You were here " + hit.at.formatted(date: .abbreviated, time: .shortened))
+            small("You were here " + hit.at.englishFormatted(date: .abbreviated, time: .shortened))
         }
     }
 
@@ -98,7 +98,7 @@ struct RequestObjectView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 6) {
                                 Text(row.who).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink)
-                                Text(row.at.formatted(date: .abbreviated, time: .shortened)).font(.system(size: 11.5)).foregroundStyle(Palette.muted)
+                                Text(row.at.englishFormatted(date: .abbreviated, time: .shortened)).font(.system(size: 11.5)).foregroundStyle(Palette.muted)
                             }
                             Text(row.subject.isEmpty ? "(no subject)" : row.subject).font(.system(size: 13)).foregroundStyle(Palette.ink).lineLimit(1)
                         }
@@ -123,7 +123,7 @@ struct RequestObjectView: View {
     private func tabs(_ closing: [Tab], _ kept: [Tab]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(closing.prefix(8).enumerated()), id: \.offset) { _, tab in
-                tabRow(tab, struck: true, end: tab.touched.formatted(.relative(presentation: .named)))
+                tabRow(tab, struck: true, end: tab.touched.formatted(.relative(presentation: .named).locale(AppDates.locale)))
             }
             if closing.count > 8 { small("and \(closing.count - 8) more") }
             ForEach(Array(kept.enumerated()), id: \.offset) { _, tab in tabRow(tab, struck: false, end: "playing, kept") }
@@ -143,7 +143,7 @@ struct RequestObjectView: View {
                 .clipShape(RoundedRectangle(cornerRadius: Radius.small, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 title(keep.name)
-                small("Downloaded " + keep.date.formatted(date: .abbreviated, time: .shortened))
+                small("Downloaded " + keep.date.englishFormatted(date: .abbreviated, time: .shortened))
                 if let from = keep.page?.host() ?? keep.source?.host() { small("from " + from) }
                 small((keep.path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
             }
@@ -280,7 +280,7 @@ struct DayStrip: View {
                 }
             }
             }
-            Text(start.formatted(.dateTime.weekday(.wide).month().day()))
+            Text(start.formatted(AppDates.dateTime.weekday(.wide).month().day()))
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.ink)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {

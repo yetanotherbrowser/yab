@@ -968,7 +968,7 @@ struct PlacePreview: View {
             if chat.archived == true {
                 out.append(Fact("Archived", "Yes"))
             } else if !chat.pinned, let wait = Chat.archiveAfter.seconds {
-                out.append(Fact("Archived on", chat.updated.addingTimeInterval(wait).formatted(date: .abbreviated, time: .omitted)))
+                out.append(Fact("Archived on", chat.updated.addingTimeInterval(wait).englishFormatted(date: .abbreviated, time: .omitted)))
             }
             return out
         case .routine(let id):
@@ -1012,7 +1012,7 @@ struct PlacePreview: View {
     @MainActor static func purchaseFacts(_ item: Purchases.Item) -> [Fact] {
         let p = item.purchase
         var out: [Fact] = []
-        let day = { (date: Date) in date.formatted(date: .abbreviated, time: .omitted) }
+        let day = { (date: Date) in date.englishFormatted(date: .abbreviated, time: .omitted) }
         switch p.kind {
         case .order:
             if let status = Purchases.status(p) { out.append(Fact("Status", status)) }
@@ -1036,7 +1036,7 @@ struct PlacePreview: View {
             if let card = item.card { out.append(Fact("Card", card)) }
             if let order = p.order { out.append(Fact("Order", order, copy: .text(order))) }
         }
-        out.append(Fact(p.kind == .order ? "Mail" : "Receipt", p.date.formatted(date: .abbreviated, time: .omitted), copy: .run("page"), link: true))
+        out.append(Fact(p.kind == .order ? "Mail" : "Receipt", p.date.englishFormatted(date: .abbreviated, time: .omitted), copy: .run("page"), link: true))
         if let host = p.host { out.append(Fact("Site", Browser.siteName(host), copy: .text("https://" + host), link: true)) }
         return out
     }
@@ -1051,10 +1051,10 @@ struct PlacePreview: View {
 
     static func when(_ date: Date) -> String {
         let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
+        let time = date.englishFormatted(date: .omitted, time: .shortened)
         if calendar.isDateInToday(date) { return "Today at \(time)" }
         if calendar.isDateInYesterday(date) { return "Yesterday at \(time)" }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return date.englishFormatted(date: .abbreviated, time: .shortened)
     }
 }
 

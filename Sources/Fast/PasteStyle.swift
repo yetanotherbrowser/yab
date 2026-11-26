@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import WebKit
 
 /// A weak editing destination, never clipboard text. The command field keeps
 /// the editor it was raised over, rather than pasting into its own query.
@@ -128,6 +129,26 @@ final class PasteStyleTarget {
     }
 
     static func current() -> PasteStyleTarget { current(in: NSApp.keyWindow) }
+
+    /// ⇧⌘V that reached Paste and Go's menu row: in a text field it is paste
+    /// without formatting, as in Chrome. The browser's key monitor decides
+    /// this in its own windows; a link's window, Settings and the others
+    /// leave the key to the menu, which navigated the browser's tab (#838).
+    /// True when the caret is in editable text, so the key was the text's
+    /// even with nothing plain to paste.
+    @discardableResult
+    static func takesPasteAndGoKey(in window: NSWindow?, pasteboard: NSPasteboard = .general) -> Bool {
+        let target = PasteStyleTarget(pasteboard: pasteboard)
+        target.capture(in: window)
+        guard target.editable() else { return false }
+        // WebKit says yes to a menu row before its page has answered
+        // (WebViewImpl validates later), caret or not. A web view has an
+        // input context only while the caret is in something editable, in
+        // any frame, as the key monitor asks it (ContentView.perform).
+        if let web = target.receiver() as? WKWebView, web.inputContext == nil { return false }
+        target.perform()
+        return true
+    }
 }
 
 /// Refresh menu enablement when AppKit opens a menu. The keyboard action

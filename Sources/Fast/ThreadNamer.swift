@@ -25,7 +25,7 @@ final class ThreadNamer {
 
     private lazy var claude = WarmClaude(room: "agent/thread-names", idle: 300, turns: 40, env: ["MAX_THINKING_TOKENS": "0"]) {
         ["--model", "haiku", "--settings", #"{"alwaysThinkingEnabled":false}"#, "--append-system-prompt", DayThreads.instructions
-            + "\nEach message is a new stretch of browsing, unrelated to the ones before."]
+            + "\n" + DayThreads.lines + "\nEach message is a new stretch of browsing, unrelated to the ones before."]
     }
 
     /// The thread's four lines from the first that answers, or nil.
@@ -85,7 +85,7 @@ final class ThreadNamer {
         let env = launch.env
         let out = room.appendingPathComponent("name-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: out) }
-        let args = PlanText.codexArgs(DayThreads.instructions + "\n\n" + prompt, out: out.path, model: LinkFolders.codexModel, effort: "low")
+        let args = PlanText.codexArgs(DayThreads.instructions + "\n" + DayThreads.lines + "\n\n" + prompt, out: out.path, model: LinkFolders.codexModel, effort: "low")
         _ = await Shell.timed("/bin/bash", ["-c", "exec \"$0\" \"$@\" </dev/null", codex] + args, env: env, limit: 60, in: room, permit: permit)
         return try? String(contentsOf: out, encoding: .utf8)
     }

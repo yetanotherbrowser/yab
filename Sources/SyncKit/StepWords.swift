@@ -516,15 +516,35 @@ public extension StepWords {
             return StepWords("Using \(place)", "Used \(place)", "Couldn\u{2019}t use \(place)", words.isEmpty ? object : object.isEmpty ? words : object,
                              site == nil ? .mcp : .open, site: site)
         }
-        let noun = tokens.dropFirst().joined(separator: " ")
+        // Two verbs and their noun, GitHub's create_or_update_file: "Created
+        // or updated a file", not "Created an or update file".
+        var said = (verb: verb, base: first, noun: tokens.dropFirst())
+        if tokens.count > 2, tokens[1] == "or" || tokens[1] == "and", let second = verbs[tokens[2]] {
+            let join = " " + tokens[1] + " "
+            said = ((verb.0 + join + second.0.lowercased(), verb.1 + join + second.1.lowercased()),
+                    first + join + tokens[2], tokens.dropFirst(3))
+        }
+        let noun = said.noun.joined(separator: " ")
         let thing = noun.isEmpty ? "" : article(noun) + " "
         let tail = "\(thing)in \(place)"
-        return StepWords("\(verb.0) \(tail)", "\(verb.1) \(tail)", "Couldn\u{2019}t \(first) \(tail)", object, site == nil ? .mcp : .open, site: site)
+        return StepWords("\(said.verb.0) \(tail)", "\(said.verb.1) \(tail)", "Couldn\u{2019}t \(said.base) \(tail)", object,
+                         site == nil ? .mcp : .open, site: site)
     }
 
     private static func article(_ noun: String) -> String {
         if noun.hasSuffix("s") && !noun.hasSuffix("ss") { return noun }
-        return ("aeiou".contains(noun.first ?? "x") ? "an " : "a ") + noun
+        return (vowelSound(noun) ? "an " : "a ") + noun
+    }
+
+    /// Whether a noun starts with a vowel's sound, which is what takes
+    /// "an": an issue, an hour, but a user, a URL, a one-time code. The
+    /// words tools are named with that are said otherwise than spelled.
+    static func vowelSound(_ noun: String) -> Bool {
+        let word = noun.prefix { $0 != " " }
+        if ["hour", "honest", "honor", "heir"].contains(where: { word.hasPrefix($0) }) { return true }
+        if ["user", "usage", "use", "url", "uri", "uuid", "unit", "union", "unique", "utility", "one", "once", "euro"]
+            .contains(where: { word.hasPrefix($0) }) { return false }
+        return "aeiou".contains(word.first ?? "x")
     }
 
     static func serverName(_ server: String) -> String {

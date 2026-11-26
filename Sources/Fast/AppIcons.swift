@@ -126,10 +126,8 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
         if self == .surprise { return PostReward.surprisePicture(dark: dark) }
         if self == .charm {
             guard let resources = Self.resources else { return nil }
-            let settings = Store.settings
-            return CharmDraw.image(resources: resources, left: settings.string(forKey: "invite.charm.left") ?? "mint",
-                                   right: settings.string(forKey: "invite.charm.right"),
-                                   apart: settings.bool(forKey: "invite.charm.apart"))
+            let charm = Self.charmNow
+            return CharmDraw.image(resources: resources, left: charm.left, right: charm.right, apart: charm.apart)
         }
         let relativePath: String
         if self == .original, !dark {
@@ -274,11 +272,11 @@ struct AppIconPage: View {
         Section {
             VStack(spacing: 0) {
                 flow
-                Text(middle.title)
+                FadingText(middle.title)
                     .font(.system(size: 17, weight: .semibold))
                     .padding(.top, 2)
                 // One line kept for the note, so the dots don't jump.
-                Text(note)
+                FadingText(note, wraps: true)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
@@ -286,7 +284,7 @@ struct AppIconPage: View {
                     .padding(.top, 16)
                 // Under the dots, so they stay put whatever is in the middle.
                 if middle.unlocked {
-                    Button(middle == selection ? "In the Dock" : "Choose") { wear() }
+                    Button { wear() } label: { FadingText(middle == selection ? "In the Dock" : "Choose") }
                         .buttonStyle(.yab(middle == selection ? .secondary : .primary, .regular))
                         .disabled(middle == selection)
                         .padding(.top, 16)
@@ -299,8 +297,10 @@ struct AppIconPage: View {
                                 .padding(.top, 16)
                         }
                     } else {
-                        Button(middle == .charm ? "Invite a Best Friend…" : middle == .surprise ? "Post on X…" : "Invite a Friend…") {
+                        Button {
                             model?.go(middle == .charm ? .bestFriend : .inviteFriends)
+                        } label: {
+                            FadingText(middle == .charm ? "Invite a Best Friend…" : middle == .surprise ? "Post on X…" : "Invite a Friend…")
                         }
                         .buttonStyle(.yab(.secondary, .regular))
                         .padding(.top, 16)
@@ -481,13 +481,19 @@ struct AppIconPage: View {
     private var dots: some View {
         HStack(spacing: 8) {
             ForEach(choices) { style in
-                Circle()
-                    .fill(style.halloween && Halloween.on
-                          ? AnyShapeStyle(Self.pumpkin.opacity(style == middle ? 1 : 0.45))
-                          : style == middle ? AnyShapeStyle(.primary) : style.unlocked ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-                    .overlay(Circle().strokeBorder(style.unlocked || style == middle ? Color.clear : Color.secondary.opacity(0.5), lineWidth: 1))
-                    .frame(width: 6, height: 6)
-                    .onTapGesture { look(style) }
+                let pumpkin = style.halloween && Halloween.on
+                // Each dot's two looks cross-fade: a changing fill is resolved again every frame.
+                ZStack {
+                    Circle()
+                        .fill(pumpkin ? AnyShapeStyle(Self.pumpkin.opacity(0.45)) : style.unlocked ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                        .overlay(Circle().strokeBorder(style.unlocked ? Color.clear : Color.secondary.opacity(0.5), lineWidth: 1))
+                        .opacity(style == middle ? 0 : 1)
+                    Circle()
+                        .fill(pumpkin ? AnyShapeStyle(Self.pumpkin) : AnyShapeStyle(.primary))
+                        .opacity(style == middle ? 1 : 0)
+                }
+                .frame(width: 6, height: 6)
+                .onTapGesture { look(style) }
             }
         }
     }
@@ -513,6 +519,55 @@ struct AppIconPage: View {
         guard middle.unlocked, middle != selection else { return }
         middle.choose()
         looking = nil
+    }
+}
+
+/// Changing words cross-faded between two fixed slots: Text's own content transition is redrawn
+/// on the CPU every frame, and a view per string would pile up while a key is held.
+private struct FadingText: View {
+    let words: String
+    let wraps: Bool
+    @State private var slots: [String]
+    @State private var front = 0
+    @State private var change = Change()
+
+    init(_ words: String, wraps: Bool = false) {
+        self.words = words
+        self.wraps = wraps
+        _slots = State(initialValue: [words, ""])
+    }
+
+    /// The transaction the words last changed in: onChange runs outside it.
+    private final class Change { var transaction = Transaction() }
+
+    var body: some View {
+        // The hidden copy sizes it, so a button still widens with its words.
+        // Wrapping words lay out at the full width, so the outgoing copy keeps its lines.
+        Text(words)
+            .hidden()
+            .frame(maxWidth: wraps ? .infinity : nil)
+            .transaction { [change] in change.transaction = $0 }
+            .overlay {
+                ZStack {
+                    ForEach(slots.indices, id: \.self) { slot in
+                        Text(slots[slot])
+                            .fixedSize(horizontal: !wraps, vertical: true)
+                            .contentTransition(.identity)
+                            // New words take their place at once: only the opacity animates.
+                            .animation(nil, value: slots[slot])
+                            .opacity(slot == front ? 1 : 0)
+                    }
+                }
+            }
+            .onChange(of: words) { _, new in
+                // The capture doesn't run for a change made without one, so an old one isn't replayed.
+                let transaction = change.transaction
+                change.transaction = Transaction()
+                withTransaction(transaction) {
+                    front = 1 - front
+                    slots[front] = new
+                }
+            }
     }
 }
 
@@ -569,15 +624,34 @@ extension AppIconStyle {
             .eraseToAnyPublisher()
     }
 
+    /// What the charm is drawn from, as the Dock's tile reads it: each
+    /// half's color and whether they are apart (Invites.charmChanged).
+    static var charmNow: (left: String, right: String?, apart: Bool) {
+        let settings = Store.settings
+        return (settings.string(forKey: "invite.charm.left") ?? "mint", settings.string(forKey: "invite.charm.right"),
+                settings.bool(forKey: "invite.charm.apart"))
+    }
+
     /// The whole picture the Dock draws, room for its shadow included, read
     /// once a look and drawn at whatever size it is asked for.
     @MainActor private static var kept: [String: NSImage] = [:]
+    /// The charm as last drawn, and what it was drawn from.
+    @MainActor private static var keptCharm: (from: String, image: NSImage)?
 
     @MainActor static func picture(_ style: AppIconStyle, dark: Bool) -> NSImage {
         let key = style.rawValue + (dark ? "-dark" : "")
         // The charm is drawn as it is right now: its colors and whether
-        // the halves are apart change while Yab runs.
-        if style == .charm { return style.image(dark: dark) ?? NSImage() }
+        // the halves are apart change while Yab runs. Kept until they do:
+        // a new image each time it was asked for was drawn again, at its
+        // full size on the main thread, in every pass of App Icon's row.
+        if style == .charm {
+            let charm = charmNow
+            let from = "\(charm.left)|\(charm.right ?? "")|\(charm.apart)"
+            if let keptCharm, keptCharm.from == from { return keptCharm.image }
+            let image = style.image(dark: dark) ?? NSImage()
+            keptCharm = (from, image)
+            return image
+        }
         if let image = kept[key] { return image }
         let image = style.image(dark: dark) ?? NSImage()
         kept[key] = image

@@ -52,7 +52,7 @@ struct HTTPNavigationTests {
         let history = History([])
         let page = URL(string: "http://internal.example:3000/first")!
         history.record(page, title: "First")
-        let root = try #require(history.suggestions(for: "internal.example", limit: 5).first { $0.key == "internal.example" })
+        let root = try #require(history.suggestions(for: "internal.example", limit: 5).first { $0.key == "internal.example:3000" })
         #expect(root.url?.absoluteString == "http://internal.example:3000/")
     }
 

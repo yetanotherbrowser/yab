@@ -82,4 +82,40 @@ struct FieldAnswerTests {
         let shaped = String(AgentAnswer.rich("| Step | Before |\n|---|:---:|\n| Plan | 2nd |").characters)
         #expect(shaped == "Step   Before\nPlan   2nd")
     }
+
+    @Test @MainActor func bulletedBoldMarkdownRendersWithoutRawSyntax() {
+        let input = """
+        Someone just spent **$665,000** buying stock options on **$ANT**.
+
+        * **$ANT:** The stock symbol.
+        - **$10 puts:** A **put option** at **$10 per share**, even lower.
+        """
+        let rich = AgentAnswer.rich(input)
+        let plain = String(rich.characters)
+        #expect(!plain.contains("**"))
+        #expect(plain.contains("• $ANT: The stock symbol."))
+        #expect(plain.contains("• $10 puts: A put option at $10 per share, even lower."))
+        let boldRuns = rich.runs.filter { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true }
+            .map { String(rich[$0.range].characters) }
+        #expect(boldRuns.contains("$665,000"))
+        #expect(boldRuns.contains("$ANT:"))
+        #expect(boldRuns.contains("put option"))
+    }
+
+    @Test @MainActor func selectionDockKeepsRewritePreviewsLiteralAndFormatsAnswers() throws {
+        let commands = SelectionCommands()
+        let markdown = "# Release notes\n- Ship **Friday**"
+        commands.output = markdown
+        commands.stage = .preview
+        commands.command = try #require(SelectionCommand.builtIn.first { $0.id == "improve" })
+        #expect(String(SelectionDockContent.displayText(commands).characters) == markdown)
+
+        commands.command = try #require(SelectionCommand.builtIn.first { $0.id == "explain" })
+        let rendered = String(SelectionDockContent.displayText(commands).characters)
+        #expect(rendered == "Release notes\n• Ship Friday")
+
+        commands.stage = .failed
+        commands.error = "**raw error**"
+        #expect(String(SelectionDockContent.displayText(commands).characters) == "**raw error**")
+    }
 }

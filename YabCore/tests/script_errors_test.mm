@@ -23,6 +23,13 @@ int main() {
     assert(ScriptSessionErrorMatters(@"child", true, @"Renderer crashed"));
     assert(ScriptSessionErrorMatters(@"child", true, @"{\"code\":-32000,\"message\":\"Session with given id not found.\"}"));
     assert(ScriptSessionErrorMatters(@"child", true, @"[]"));
+    // A gone target, and only that exact answer, removes its session (#883).
+    assert(ScriptSessionGone(gone));
+    assert(ScriptSessionGone(@"{ \"message\": \"Session with given id not found.\", \"code\": -32001 }"));
+    assert(!ScriptSessionGone(@"{\"code\":-32000,\"message\":\"Session with given id not found.\"}"));
+    assert(!ScriptSessionGone(@"{\"code\":-32001,\"message\":\"Other\"}"));
+    assert(!ScriptSessionGone(@"Renderer crashed"));
+    assert(!ScriptSessionGone(nil));
     // Bad order: child failure arrives after detachment, then main success.
     NSString* failure = nil;
     if (ScriptSessionErrorMatters(@"child", false, gone)) failure = gone;
@@ -34,6 +41,6 @@ int main() {
     assert([StackCaptureOff().second[@"size"] isEqual:@0]);
     assert(StackCaptureOptional(@"Runtime.setMaxCallStackSizeToCapture"));
     assert(!StackCaptureOptional(@"Runtime.enable"));
-    std::puts("script error classification: 22 checks passed");
+    std::puts("script error classification: 28 checks passed");
   }
 }

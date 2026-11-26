@@ -1623,7 +1623,7 @@ final class ColumnHand: NSObject {
         }
         carrying?.gap = nil
         let deep = SideBar.deep(from: nest.depth - 1, sideways: point.x - startAt.x)
-        var next = folders.nestLanding(nest, want: want, deep: deep, among: looseTabs, current: carrying?.landing,
+        var next = folders.nestLanding(nest, want: want, deep: deep, among: looseTabs, joined: !browser.pairs.isEmpty, current: carrying?.landing,
                                        drawn: carried.empty ? emptyDrawn?.then.folders : nil)
         let emptyBlock = emptyBlockLanding(carried, want: want, deep: deep, into: next.into)
         if let emptyBlock { next.slot = emptyBlock.slot; next.parent = nil }

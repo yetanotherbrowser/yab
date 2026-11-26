@@ -129,7 +129,7 @@ struct ChatThought: View {
                     .accessibilityValue(open ? "Expanded" : "Collapsed")
             }
             if open, !text.isEmpty {
-                Text(text)
+                Text(AgentAnswer.rich(text))
                     .font(.system(size: 12.5))
                     .foregroundStyle(Palette.muted)
                     .lineSpacing(2)
@@ -154,7 +154,7 @@ struct ChatReport: View {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let more = lines.count > Self.first
         VStack(alignment: .leading, spacing: 6) {
-            Text(all || !more ? text : lines.prefix(Self.first).joined(separator: "\n"))
+            Text(AgentAnswer.rich(all || !more ? text : lines.prefix(Self.first).joined(separator: "\n")))
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.ink.opacity(0.75))
                 .lineSpacing(1)

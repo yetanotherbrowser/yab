@@ -344,6 +344,16 @@ struct PageShot {
     /// Shown for a moment, never kept or handed on: Chromium needn't encode a
     /// whole window losslessly for it (ten times the bytes and the time).
     var brief = false
+    /// An agent's look at the whole view, drawn for it after any scroll: a
+    /// scroll the page reports while it is drawn is in the picture, not a
+    /// reason to refuse it. A part of the page (rect) still is.
+    var scrollMayMove = false
+
+    /// Whether a picture taken while the page's reported scroll went from
+    /// `before` to `after` still answers this shot.
+    func keeps(scroll before: Double?, _ after: Double?) -> Bool {
+        before == after || (scrollMayMove && rect == nil)
+    }
 }
 
 /// One key as both ways need it: the event's key code and characters

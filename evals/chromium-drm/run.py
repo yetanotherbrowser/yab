@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -33,6 +34,19 @@ class Pages(http.server.BaseHTTPRequestHandler):
         self.referrers[self.path] = self.headers.get('Referer')
         if self.path == '/blocked-by-extension.js':
             body, mime = b'globalThis.blockedScriptLoaded = true;', 'text/javascript'
+        elif self.path.startswith('/extension-embedder?'):
+            body = b'''<!doctype html><meta name="referrer" content="no-referrer">
+<script>
+const frame = document.createElement('iframe');
+frame.src = new URLSearchParams(location.search).get('resource');
+let loaded = false;
+addEventListener('message', event => {
+    if (event.source === frame.contentWindow && event.data === 'extension-resource') loaded = true;
+});
+setTimeout(() => parent.postMessage({extensionResourceLoaded: loaded}, '*'), 1500);
+document.documentElement.append(frame);
+</script>'''
+            mime = 'text/html; charset=utf-8'
         elif self.path == '/tone.wav':
             stream = io.BytesIO()
             with wave.open(stream, 'wb') as wav:
@@ -65,6 +79,56 @@ keySystemConfiguration:{keySystem:'com.widevine.alpha'}}),500)}
 
     def log_message(self, *_):
         pass
+
+
+def resource_probe(site, extension_id):
+    return f'''const resource = {json.dumps(f'chrome-extension://{extension_id}/resource.html')};
+    const allowed = {json.dumps(site)};
+    const probe = origin => new Promise(resolve => {{
+        const frame = document.createElement('iframe');
+        const timer = setTimeout(() => finish(null), 5000);
+        const finish = value => {{ clearTimeout(timer); removeEventListener('message', receive); frame.remove(); resolve(value); }};
+        const receive = event => {{
+            if (event.source === frame.contentWindow && event.origin === origin &&
+                typeof event.data?.extensionResourceLoaded === 'boolean') finish(event.data.extensionResourceLoaded);
+        }};
+        addEventListener('message', receive);
+        frame.src = origin + '/extension-embedder?resource=' + encodeURIComponent(resource);
+        document.body.append(frame);
+    }});
+    return Promise.all([probe(allowed), probe(allowed.replace('127.0.0.1', 'localhost'))]);'''
+
+
+def resource_bridge_probe(extension_id):
+    origin = f'chrome-extension://{extension_id}'
+    return f'''const origin = {json.dumps(origin)};
+    const frame = document.createElement('iframe');
+    return new Promise(resolve => {{
+        const timer = setTimeout(() => finish(null), 12000);
+        const finish = value => {{ clearTimeout(timer); removeEventListener('message', receive); frame.remove(); resolve(value); }};
+        const receive = event => {{
+            if (event.source === frame.contentWindow && event.origin === origin && event.data?.resourceBridge)
+                finish(event.data.resourceBridge);
+        }};
+        addEventListener('message', receive);
+        frame.src = origin + '/resource.html#bridge';
+        document.body.append(frame);
+    }});'''
+
+
+def sandbox_probe(extension_id):
+    return f'''const frame = document.createElement('iframe');
+    frame.src = {json.dumps(f'chrome-extension://{extension_id}/sandbox.html')};
+    return new Promise(resolve => {{
+        const timer = setTimeout(() => finish(null), 8000);
+        const finish = value => {{ clearTimeout(timer); removeEventListener('message', receive); frame.remove(); resolve(value); }};
+        const receive = event => {{
+            if (event.source === frame.contentWindow && event.data?.sandboxAssets)
+                finish({{origin: event.origin, ...event.data.sandboxAssets}});
+        }};
+        addEventListener('message', receive);
+        document.body.append(frame);
+    }});'''
 
 
 def run(app, out, site, cookies=True, extensions=True):
@@ -160,7 +224,10 @@ def run(app, out, site, cookies=True, extensions=True):
             cookie_checks = ask(do='chromium-drm', id=tab, op='cookies')['checks']
             checks.update(cookie_checks)
         if extensions:
-            folder = Path(__file__).resolve().parent / 'extension'
+            fixture = Path(__file__).resolve().parent
+            folder = out / 'extension'
+            shutil.copytree(fixture / 'extension', folder, dirs_exist_ok=True)
+            shutil.copyfile(fixture.parents[1] / 'Resources' / 'Caveat.ttf', folder / 'sandbox.ttf')
             installed = ask(do='chromium-drm', id=tab, op='extension-install', path=str(folder))['extensions']
             report['extension_catalog'] = installed
             if len(installed) != 1:
@@ -207,6 +274,22 @@ def run(app, out, site, cookies=True, extensions=True):
             checks['extension_child_ports'] = child['portReply']['echo']['nonce'] == child['nonce'] and child['portReply']['document'] == child_sender['documentId']
             checks['extension_child_scripting'] = child['background']['scripted'][0]['frameId'] == 1 and child['background']['scripted'][0]['result'] == 'executed-in-webkit'
             capture(tab, '03-webkit-chromium-extension')
+            allowed, excluded = script(tab, resource_probe(site, extension_id))
+            checks['extension_resource_with_no_referrer'] = allowed is True
+            checks['extension_resource_excluded_embedder'] = excluded is False
+            page_bridge = script(tab, resource_bridge_probe(extension_id))
+            report['states']['extension_page_bridge'] = page_bridge
+            page_sender = (page_bridge or {}).get('sender', {})
+            page_origin = f'chrome-extension://{extension_id}'
+            checks['extension_page_sender'] = (page_sender.get('url') == page_origin + '/resource.html#bridge'
+                                               and page_sender.get('origin') == page_origin
+                                               and page_sender.get('tab', {}).get('url') == site + '/eme')
+            checks['extension_template_fetch'] = (page_bridge or {}).get('template') == '<span>extension-template</span>\n'
+            checks['extension_page_reply'] = (page_bridge or {}).get('reverse') == 'extension-page-reply'
+            sandbox = script(tab, sandbox_probe(extension_id))
+            report['states']['extension_sandbox'] = sandbox
+            checks['extension_sandbox_displays_own_assets'] = bool(sandbox and sandbox['image'] and sandbox['font'])
+            checks['extension_sandbox_stays_opaque'] = bool(sandbox and sandbox['origin'] == 'null' and not sandbox['runtime'])
         # Per-site choices use the public model through the isolated bench.
         # Keep the original local acceptance above intact, including its media,
         # cookies and extension witness on the Recommended fallback path.

@@ -93,16 +93,18 @@ struct SharedLinkSyncContext: Codable {
             $0.alive() && $0["parent"]?.string == space && $0["url"]?.string == url.absoluteString
         }
         let journal = try Journal(path: nil, device: device)
+        // The snapshot stays unchanged between shares. Both new tabs and
+        // Today tabs go after links already saved by the extension.
+        let end = ([lastOrder].compactMap { $0 } + waiting.filter { $0["parent"]?.string == space }.compactMap { $0["order"]?.string }).max()
         var record: Record
         if let existing, let tab = SyncTab(existing) {
             _ = try journal.receive([(existing, 0)])
             // A pin or a kept tab stays where it already is.
             record = tab.list == .today
                 ? try journal.change(existing.key, ["kept": true, "device": .null, "folder": .null,
-                                                   "order": .string(Order.between(lastOrder, nil))])
+                                                   "order": .string(Order.between(end, nil))])
                 : existing
         } else {
-            let end = ([lastOrder].compactMap { $0 } + waiting.filter { $0["parent"]?.string == space }.compactMap { $0["order"]?.string }).max()
             let tab = SyncTab(space: space, order: Order.between(end, nil), url: url.absoluteString,
                               title: link.title ?? url.host ?? link.address,
                               seen: SyncTab.round(seen: link.date.timeIntervalSince1970), kept: true)

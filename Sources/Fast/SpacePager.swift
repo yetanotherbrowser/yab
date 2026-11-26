@@ -1724,7 +1724,7 @@ extension SpacePaging {
 final class SlidePointer: ObservableObject {
     static let shared = SlidePointer()
     /// The named space a page measures from: its top-left as it lands.
-    static let space = "pagedSpace"
+    nonisolated static let space = "pagedSpace"
 
     /// The pointer is in the column (SideBar's `near`).
     @Published private(set) var near = false

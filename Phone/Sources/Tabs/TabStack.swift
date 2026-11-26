@@ -644,7 +644,7 @@ final class TabStack {
         // Pages warming up go now; one for the card tapped comes in front.
         warmup.stop(keeping: id)
         let layout = layout(next)
-        let plan = TabGalleryMotion.Closing(count: cards.count, chosen: chosen)
+        let plan = TabGalleryMotion.Closing(count: cards.count, chosen: chosen, stack: !app.workspace.tabletControls)
         var from: [Tab.ID: TabCardPose] = [:]
         for (i, tab) in cards.enumerated() { from[tab.id] = pose(i, of: tab, in: next, layout: layout) }
         next.barFrom = next.bar

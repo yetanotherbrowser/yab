@@ -1907,7 +1907,7 @@ extension Browser {
         }
         if Noticing.Kind.of(hint) == .meeting {
             return """
-            Prepare the user for the meeting "\(hint.title)"\(hint.due.map { " at " + $0.formatted(date: .omitted, time: .shortened) } ?? ""): \
+            Prepare the user for the meeting "\(hint.title)"\(hint.due.map { " at " + $0.englishFormatted(date: .omitted, time: .shortened) } ?? ""): \
             from their mail with these people, notes of past calls and what is open between them, write a short brief they can \
             read in a minute. \(place.isEmpty ? "" : "The meeting: " + place + ".") Send nothing.
             """

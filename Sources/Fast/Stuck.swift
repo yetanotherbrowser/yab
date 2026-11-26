@@ -97,6 +97,11 @@ final class StuckWatch {
     var frontStrikes = 0
     var frontLook: FrontLook?
     var frontTimer: Timer?
+
+    func stop() {
+        for clock in [timer, agentTimer, frontTimer] { clock?.invalidate() }
+        timer = nil; agentTimer = nil; frontTimer = nil
+    }
     /// Why the page in front wasn't asked the last time round, nil if it was.
     var frontSkip: String?
     struct FrontLook {

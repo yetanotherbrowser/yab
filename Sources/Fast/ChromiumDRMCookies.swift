@@ -108,16 +108,17 @@ enum ChromiumDRMCookieMerge {
     }
 
     static func plan(webKit: [String: ChromiumDRMCookie], chromium: [String: ChromiumDRMCookie],
-                     previous: ChromiumSwitchCookieLedger, usedLast: PageEngineKind? = nil, now: Date = Date()) -> Plan {
+                     previous: ChromiumSwitchCookieLedger, usedLast: PageEngineKind? = nil, now: Date = Date(),
+                     fingerprint: (ChromiumDRMCookie) -> String = { ChromiumSwitchCookieLedger.fingerprint($0) }) -> Plan {
         typealias Ledger = ChromiumSwitchCookieLedger
         var result = Plan()
-        let wHashes = Ledger.fingerprint(webKit), cHashes = Ledger.fingerprint(chromium)
         let keys = Set(webKit.keys).union(chromium.keys).union(previous.webKit.keys).union(previous.chromium.keys)
         for key in keys.sorted() {
             let w = webKit[key], c = chromium[key]
+            // Only a key the jars disagree on is hashed: nearly every one agrees.
             guard !ChromiumDRMCookie.same(w, c, now: now) else { continue }
             let pw = previous.webKit[key], pc = previous.chromium[key]
-            let wChanged = Ledger.whole(wHashes[key]) != Ledger.whole(pw), cChanged = Ledger.whole(cHashes[key]) != Ledger.whole(pc)
+            let wChanged = Ledger.whole(w.map(fingerprint)) != Ledger.whole(pw), cChanged = Ledger.whole(c.map(fingerprint)) != Ledger.whole(pc)
             if cChanged, !wChanged { result.toWebKit.append(Change(key: key, cookie: c)); continue }
             if wChanged, !cChanged { result.toChromium.append(Change(key: key, cookie: w)); continue }
             guard wChanged, cChanged else { continue }
@@ -167,10 +168,20 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
     private static let crossingWait: TimeInterval = 5
     /// Chromium doesn't say when a cookie changes, a response to any request
     /// can rotate one, and WebKit says so late. A site open on both engines is
-    /// read this often, and every this many passes the hosts of Chromium's pages,
-    /// this many of them.
-    private static let stepEvery: UInt64 = 3_000_000_000
-    private static let stepRound = 5
+    /// read this often, always: when both jars change between two reads the
+    /// merge goes by which engine used the host last, not by which change came
+    /// last, so a longer wait is a longer window for an older value to win.
+    /// Every this many passes the hosts of Chromium's pages, this many of them.
+    nonisolated private static let stepEvery: TimeInterval = 3
+    /// With no site open on both engines, only those hosts in turn, which a
+    /// first request on either engine settles anyway (`prepare`,
+    /// `prepareFrame`, `beforeSending`, `current`): slower out of sight, and
+    /// slower still while saving power.
+    nonisolated private static let stepAway: TimeInterval = 30
+    /// Low Power Mode counts too, though it starts no page saving (Thrift):
+    /// this is Yab's own background work, which macOS asks to hold back.
+    nonisolated private static let stepSaving: TimeInterval = 60
+    nonisolated private static let stepRound = 5
     private static let stepHosts = 12
     private static let batch = 100
     private static let remembered = 64
@@ -213,6 +224,11 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
     private var importSkip = Set<String>()
     private var visited: [String] = []
     private var framed: [String] = []
+    /// Frame hosts by the page that loaded them, most recent first, while
+    /// that page is open, on that engine and on the site it last committed:
+    /// a site in a frame on one engine and a page on the other is open on both.
+    private var frames: [Tab.ID: Framed] = [:]
+    private struct Framed { var site: String?; var engine: PageEngineKind; var hosts: [String] = [] }
     private var dirty = Set<String>()
     private var webKitChanged = false
     private var paths: [String: Set<String>] = [:]
@@ -324,8 +340,9 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
     }
 
     /// A page is going through this address: a main frame's hop needs looking
-    /// at once it lands, a frame's when the engines next hand over.
-    func touched(_ url: URL, mainFrame: Bool = true, by engine: PageEngineKind? = nil) {
+    /// at once it lands, a frame's when the engines next hand over. `page`:
+    /// the tab it is in, none for Yab's own requests.
+    func touched(_ url: URL, mainFrame: Bool = true, by engine: PageEngineKind? = nil, in page: Tab.ID? = nil) {
         guard let host = Self.host(of: url) else { return }
         if !url.path.isEmpty { paths[host, default: []].insert(url.path) }
         if let engine { usedSince[engine, default: []].insert(host) }
@@ -337,6 +354,32 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             framed.removeAll { $0 == host }; framed.insert(host, at: 0)
             if framed.count > Self.remembered { framed.removeLast() }
         }
+        if let page, let engine, !mainFrame {
+            var held = frames[page].flatMap { $0.engine == engine ? $0 : nil } ?? Framed(site: nil, engine: engine)
+            held.hosts.removeAll { $0 == host }; held.hosts.insert(host, at: 0)
+            held.hosts = Array(held.hosts.prefix(Self.remembered))
+            frames[page] = held
+        }
+        // A frame, a redirect's hop or Yab's own request may open a host the
+        // other engine has open, with no page event to say so.
+        if let engine { quickenStep(adding: (host, engine)) }
+    }
+
+    /// One of this store's pages came on screen (a tab switched to, a
+    /// split, a small window, unhidden) or committed a new address, which a
+    /// first request counted at a wait already over no longer stands for.
+    func pageChanged() { quickenStep() }
+
+    /// A page committed `url`: on another site or engine, the frames went
+    /// with the document they were in. Not at the request, which may never
+    /// commit (a download, a 204, a stop).
+    func pageCommitted(_ url: URL?, by engine: PageEngineKind, in page: Tab.ID?) {
+        if let page {
+            let site = url.flatMap(Self.host)
+            if let held = frames[page], held.site != site || held.engine != engine { frames[page] = nil }
+            if frames[page] == nil { frames[page] = Framed(site: site, engine: engine) }
+        }
+        pageChanged()
     }
 
     /// A document finished: what its hops set is in the jar by now.
@@ -371,10 +414,10 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
     /// the last to use anything, settles every host that engine has used since
     /// the last one: a page reaches hosts by frames, redirects and requests
     /// nothing can hold back, and each must find the newest value here.
-    func prepare(for url: URL, in engine: PageEngineKind) async throws {
+    func prepare(for url: URL, in engine: PageEngineKind, page: Tab.ID? = nil) async throws {
         guard !retired else { throw CancellationError() }
         guard let host = Self.host(of: url) else { return }
-        touched(url, by: engine)
+        touched(url, by: engine, in: page)
         startImport()
         dirty.remove(host)
         await settle(host, for: engine)
@@ -395,7 +438,7 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             usedSince[other] = []
         }
         activeEngine = engine
-        keepInStep()
+        keepInStep(adding: (host, engine))
         guard !hosts.isEmpty else { return }
         var ending: Task<Void, Error>?
         for one in hosts { ending = serial { [weak self] in try await self?.reconcile(one) } }
@@ -405,9 +448,9 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
 
     /// A frame about to load on WebKit, whose navigation can wait: it sends
     /// what the jar holds for its host, whoever used that host last.
-    func prepareFrame(_ url: URL) async {
+    func prepareFrame(_ url: URL, in page: Tab.ID?) async {
         guard !retired, let host = Self.host(of: url) else { return }
-        touched(url, mainFrame: false, by: .webKit)
+        touched(url, mainFrame: false, by: .webKit, in: page)
         guard settled[host]?.engine != .webKit || webKitChanged else { return }
         settled[host]?.engine = .webKit
         await Self.wait(for: serial { [weak self] in try await self?.reconcile(host) }, seconds: Self.crossingWait)
@@ -423,22 +466,152 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
         await Self.wait(for: bridge.serial { [weak bridge] in try await bridge?.reconcile(host) }, seconds: Self.crossingWait)
     }
 
+    /// The wait before the step's next pass. `shared`: a host is open on both engines.
+    nonisolated static func stepEvery(shared: Bool, active: Bool, shown: Bool, saving: Bool) -> TimeInterval {
+        if shared || active && shown && !saving { return stepEvery }
+        return saving ? stepSaving : stepAway
+    }
+
+    /// Whether a host is open on both engines, `adding` a first request on
+    /// its way, whose page has no address yet.
+    nonisolated static func shares(chromium: [String], webKit: Set<String>, adding: [(host: String, engine: PageEngineKind)]) -> Bool {
+        if adding.contains(where: { $0.engine == .webKit ? chromium.contains($0.host) : webKit.contains($0.host) }) { return true }
+        // Both engines' first requests to one host, neither page there yet.
+        if adding.contains(where: { one in adding.contains { $0.host == one.host && $0.engine != one.engine } }) { return true }
+        return chromium.contains(where: webKit.contains)
+    }
+
+    /// Yab in front, and whether a window can be seen: tests' windows are neither.
+    static var appActive: @MainActor () -> Bool = { NSApp?.isActive == true }
+    static var windowInSight: @MainActor (NSWindow) -> Bool = { $0.occlusionState.contains(.visible) }
+
+    /// Whether someone can see one of these Chromium pages: the tab on a
+    /// stage, either half of a split, a peek, a small window or one of its
+    /// own, in a window in sight. A tab behind another, or in a parked
+    /// space, is in no window: the stage takes it out.
+    static func seen(in browsers: [Browser], holds: (WKWebsiteDataStore) -> Bool) -> Bool {
+        browsers.contains { browser in
+            browser.pagesHeld.contains { tab in
+                guard !tab.gone, holds(tab.pageStore), let page = tab.builtPage as? ChromiumPage, let window = page.window else { return false }
+                return !page.isHiddenOrHasHiddenAncestor && windowInSight(window)
+            }
+        }
+    }
+
+    private func stepWait(adding: [(host: String, engine: PageEngineKind)]) -> TimeInterval {
+        let open = openHosts()
+        let shown = Self.seen(in: BrowserWindows.shared.browsers, holds: holds)
+        return Self.stepEvery(shared: Self.shares(chromium: Array(open.chromium), webKit: open.webKit, adding: adding), active: Self.appActive(),
+                              shown: shown, saving: Thrift.on || ProcessInfo.processInfo.isLowPowerModeEnabled)
+    }
+
+    /// The wait the step would take now, nothing on its way, and the hosts a pass reads every time.
+    var paceForTesting: (wait: TimeInterval, shared: [String]) { (stepWait(adding: []), liveHosts.shared) }
+
+    /// Held for the run, as the bridges are: these only ever shorten a wait.
+    private static var stepWakes: [NSObjectProtocol] = []
+    private static let stepPower = NSObject()
+
+    /// Yab back in front: a pass at once, rather than at the end of a slow
+    /// wait. Power saving over: the quicker pace from now, if the step was
+    /// waiting out a slower one. A Chromium page coming on screen says so
+    /// itself (`pageChanged`), its window's occlusion too, whichever window
+    /// it is in: what is in sight is read from the pages, not the windows.
+    private static func wakeStepWhenSeen() {
+        guard stepWakes.isEmpty else { return }
+        Thrift.watch(stepPower) { _ in
+            for bridge in sessions.values { bridge.quickenStep() }
+        }
+        let center = NotificationCenter.default
+        func on(_ name: Notification.Name, now: Bool) {
+            stepWakes.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    for bridge in sessions.values where bridge.stepping != nil || bridge.activeEngine != nil {
+                        if now, bridge.stepDue.map({ $0.timeIntervalSinceNow > Self.stepEvery }) ?? true {
+                            bridge.restartStep(now: true)
+                        } else { bridge.quickenStep() }
+                    }
+                }
+            })
+        }
+        on(NSApplication.didBecomeActiveNotification, now: true)
+        on(Notification.Name.NSProcessInfoPowerStateDidChange, now: false)
+    }
+
+    /// When the step's next pass comes, nil while it isn't waiting.
+    private(set) var stepDue: Date?
+    /// Hosts just used on an engine, a first request's or a redirect's page
+    /// with no address yet: counted as shared at the next wait worked out.
+    private var stepShare: [(host: String, engine: PageEngineKind)] = []
+    /// Passes so far, kept across restarts: every fifth takes the next hosts in turn.
+    private var stepPass = 0
+    private var stepLastWait = stepEvery
+    private var stepRounds = 0
+
+    private func restartStep(now: Bool) {
+        stepping?.cancel()
+        stepping = nil
+        stepDue = nil
+        keepInStep(now: now)
+    }
+
+    /// Whether this pass takes Chromium's own hosts in turn: every fifth at
+    /// the quick pace, every one at a slower pace, so they wait no longer
+    /// than the step itself does.
+    nonisolated static func roundDue(pass: Int, wait: TimeInterval) -> Bool {
+        wait > stepEvery || pass % stepRound == 0
+    }
+
+    /// The wait about to start, the host counted as shared now spent on it.
+    private func nextStepWait() -> TimeInterval {
+        let every = stepWait(adding: stepShare)
+        stepShare = []
+        stepDue = Date().addingTimeInterval(every)
+        stepLastWait = every
+        return every
+    }
+
+    /// Restarted only when the quicker wait ends before the one under way;
+    /// a wait no longer than the quickest isn't looked at again.
+    /// A host already counted for the wait under way changes nothing.
+    private func quickenStep(adding: (host: String, engine: PageEngineKind)? = nil) {
+        if let adding, stepping != nil {
+            guard !stepShare.contains(where: { $0 == adding }) else { return }
+            stepShare.append(adding)
+        }
+        guard let due = stepDue, due.timeIntervalSinceNow > Self.stepEvery,
+              Date().addingTimeInterval(stepWait(adding: stepShare)) < due else { return }
+        restartStep(now: false)
+    }
+
     /// While Chromium has pages, WebKit's jar follows it: the jar is what Yab's
     /// own requests send, and the next WebKit page's frames and requests.
-    private func keepInStep() {
-        guard stepping == nil, automaticSynchronization else { return }
+    func keepInStep(now: Bool = false, adding: (host: String, engine: PageEngineKind)? = nil) {
+        guard automaticSynchronization, !retired else { return }
+        if let adding, !stepShare.contains(where: { $0 == adding }) { stepShare.append(adding) }
+        quickenStep()
+        guard stepping == nil else { return }
+        Self.wakeStepWhenSeen()
         stepping = Task { @MainActor [weak self] in
-            var pass = 0
+            var wait = !now
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.stepEvery)
-                guard let self, !self.retired else { return }
+                if wait {
+                    guard let every = self?.nextStepWait() else { return }
+                    try? await Task.sleep(nanoseconds: UInt64(every * 1e9))
+                }
+                wait = true
+                guard let self, !self.retired, !Task.isCancelled else { return }
+                self.stepDue = nil
                 let live = self.liveHosts
-                guard !live.chromium.isEmpty else { self.stepping = nil; return }
-                pass += 1
-                var hosts = live.chromium.filter(live.webKit.contains)
-                if pass % Self.stepRound == 0 {
+                guard !live.chromium.isEmpty else { self.stepping = nil; self.stepShare = []; return }
+                self.stepPass += 1
+                let pass = self.stepPass
+                // Every host the pace counts as shared, a frame's too.
+                var hosts = live.shared
+                if Self.roundDue(pass: pass, wait: self.stepLastWait) {
                     // In turn: a frame's host, where sign-ins live, gets its go too.
-                    let round = pass / Self.stepRound * Self.stepHosts
+                    self.stepRounds += 1
+                    let round = self.stepRounds * Self.stepHosts
                     hosts += (0..<min(Self.stepHosts, live.chromium.count)).map { live.chromium[(round + $0) % live.chromium.count] }
                         .filter { !hosts.contains($0) }
                 }
@@ -447,17 +620,33 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
         }
     }
 
-    /// The hosts of each engine's pages: Chromium's the most recently used
-    /// first, then the frames they have opened.
-    private var liveHosts: (chromium: [String], webKit: Set<String>) {
-        var chromium = Set<String>(), webKit = Set<String>()
+    /// The hosts open on each engine, its pages' and their frames', and
+    /// Chromium's pages' own. Frames of pages no longer open are let go.
+    private func openHosts() -> (chromium: Set<String>, webKit: Set<String>, chromiumPages: Set<String>) {
+        var chromium = Set<String>(), webKit = Set<String>(), pages = Set<String>(), open = Set<Tab.ID>()
         for tab in BrowserWindows.shared.browsers.flatMap(\.pagesHeld) {
-            guard !tab.gone, let page = tab.builtPage, holds(tab.pageStore), let host = page.url.flatMap(Self.host) else { continue }
-            if page.engine == .chromium { chromium.insert(host) } else { webKit.insert(host) }
+            guard !tab.gone, let page = tab.builtPage, holds(tab.pageStore) else { continue }
+            open.insert(tab.id)
+            let host = page.url.flatMap(Self.host)
+            let framed = frames[tab.id].flatMap { $0.engine == page.engine ? $0.hosts : nil } ?? []
+            let hosts = (host.map { [$0] } ?? []) + framed
+            if page.engine == .chromium {
+                chromium.formUnion(hosts)
+                if let host { pages.insert(host) }
+            } else { webKit.formUnion(hosts) }
         }
-        var hosts = visited.filter(chromium.contains) + chromium.subtracting(visited).sorted()
+        if frames.keys.contains(where: { !open.contains($0) }) { frames = frames.filter { open.contains($0.key) } }
+        return (chromium, webKit, pages)
+    }
+
+    /// Chromium's pages' hosts, the most recently used first, then the frames
+    /// they have opened; and those open on both engines, Chromium's order first.
+    private var liveHosts: (chromium: [String], shared: [String]) {
+        let open = openHosts()
+        var hosts = visited.filter(open.chromiumPages.contains) + open.chromiumPages.subtracting(visited).sorted()
         if !hosts.isEmpty { hosts += framed.filter { !hosts.contains($0) } }
-        return (hosts, webKit)
+        let shared = open.chromium.intersection(open.webKit)
+        return (hosts, hosts.filter(shared.contains) + shared.subtracting(hosts).sorted())
     }
 
     /// A native request is about to read the jar for `url`, for a boost's tool
@@ -596,12 +785,13 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             // Not put back: unknown again, so WebKit's copies go over host by
             // host as before, rather than their absence reading as sign-outs.
             self.book.forget(book.ledger.session ?? [])
+            ledgerEdited()
             NSLog("Cookie bridge: session cookies not put back in a new helper: %@", String(describing: type(of: error)))
             return
         }
         NSLog("Cookie bridge: %d session cookies put back in a new helper in %.2f s, %d refused, %d forgotten",
               back.count - refused, Date().timeIntervalSince(began), refused, forget.count)
-        saveSoon()
+        ledgerEdited()
     }
 
     private var ledgerFile: URL? {
@@ -648,7 +838,7 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
         var webKit = await readWebKit(scope)
         guard !retired, !Task.isCancelled else { throw CancellationError() }
         var plan = ChromiumDRMCookieMerge.plan(webKit: webKit, chromium: chromium, previous: book.slice(scope),
-                                               usedLast: settledBy[host] ?? activeEngine)
+                                               usedLast: settledBy[host] ?? activeEngine, fingerprint: { self.book.fingerprint($0) })
         if Self.owesClearing(host, profile) { plan = plan.owingClearing() }
         let wrote = Set((plan.toWebKit + plan.toChromium).map(\.key))
         if !wrote.isEmpty { Self.log(host, plan) }
@@ -689,10 +879,11 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
         // A session cookie WebKit no longer holds must not come back from the
         // keychain after a crash: the kept copy follows now, not half a minute on.
         if endedSession { KeptCookies.keepSoon() }
-        book.record(scope, webKit: webKit, chromium: chromium)
+        let changed = book.record(scope, webKit: webKit, chromium: chromium)
         settled[host] = (Date(), settledBy[host])
         reconciles += 1
-        saveSoon()
+        // Also what an earlier save failed to write.
+        if changed { ledgerEdited() } else if writer?.due == true { saveSoon() }
     }
 
     /// What a pass carried, by count: never a value. Test and dev runs name the cookies too.
@@ -765,12 +956,14 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             while at < rows.count {
                 let part = Array(rows[at..<min(at + Self.batch, rows.count)])
                 at += part.count
-                try await serial { [weak self] in try await self?.send(part) }.value
-                if at % (Self.batch * 10) == 0 { saveSoon() }
+                var noted = false
+                try await serial { [weak self] in noted = try await self?.send(part) ?? false }.value
+                if noted { ledgerEdited() }
                 // Room for the pages: this is the helper's busy thread too.
                 try await Task.sleep(nanoseconds: 20_000_000)
             }
             book.finishImport()
+            writer?.edited()
             imported.seconds = (Date().timeIntervalSince(began) * 100).rounded() / 100
             importSkip = []
             try await saveNow()
@@ -784,11 +977,12 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
         }
     }
 
-    private func send(_ part: [ChromiumCookieImportRow]) async throws {
+    /// Whether any row was noted in the ledger.
+    private func send(_ part: [ChromiumCookieImportRow]) async throws -> Bool {
         let unsettled = part.filter { row in
             book.ledger.webKit[row.cookie.key] == nil && !importSkip.contains { ChromiumCookieScope.matches(host: $0, key: row.cookie.key) }
         }
-        guard !unsettled.isEmpty else { return }
+        guard !unsettled.isEmpty else { return false }
         let (core, id) = try await endpoint()
         let answer = try await core.request("drm.cookies.setBatch", params: ["tab": .string(id), "cookies": .array(unsettled.map(\.payload))], timeout: 30)
         guard case .array(let results) = answer["results"], results.count == unsettled.count else {
@@ -800,9 +994,22 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             imported.cookies += accepted ? 1 : 0
             imported.refused += accepted ? 0 : 1
         }
+        return true
     }
 
     // MARK: - the ledger on disk
+
+    /// One save at a time, each of the ledger as it is when it starts.
+    private lazy var writer: ChromiumLedgerWriter? = ledgerFile.map { file in
+        ChromiumLedgerWriter(ledger: { [weak self] in self?.book.ledger }) { ledger in
+            try await Task.detached(priority: .utility) { try ledger.save(to: file) }.value
+        }
+    }
+
+    private func ledgerEdited() {
+        writer?.edited()
+        saveSoon()
+    }
 
     private func saveSoon() {
         guard ledgerFile != nil, saving == nil, !retired else { return }
@@ -810,14 +1017,14 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard let self, !Task.isCancelled else { return }
             self.saving = nil
-            try? await self.saveNow()
+            do { try await self.saveNow() }
+            catch { NSLog("Cookie bridge: ledger not saved, kept for the next read: %@", String(describing: type(of: error))) }
         }
     }
 
     private func saveNow() async throws {
-        guard let file = ledgerFile, loaded else { return }
-        let ledger = book.ledger
-        try await Task.detached(priority: .utility) { try ledger.save(to: file) }.value
+        guard loaded else { return }
+        try await writer?.save()
     }
 
     /// A loopback fixture's host as each jar holds it now, settling nothing:

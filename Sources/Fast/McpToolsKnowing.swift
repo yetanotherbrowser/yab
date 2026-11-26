@@ -428,16 +428,13 @@ extension Mcp {
 
     /// "2026-10-15T09:00" on the user's clock, or with its zone.
     static func localDate(_ said: String, zone: TimeZone = .current) -> Date? {
-        let said = said.trimmingCharacters(in: .whitespaces)
-        if let zoned = ISO8601DateFormatter().date(from: said) { return zoned }
+        // As calendar_add reads it, so the card shows the event it opened.
+        if let at = AgentCalendar.moment(said, zone: zone) { return at }
         let format = DateFormatter()
         format.locale = Locale(identifier: "en_US_POSIX")
         format.timeZone = zone
-        for pattern in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"] {
-            format.dateFormat = pattern
-            if let date = format.date(from: said) { return date }
-        }
-        return nil
+        format.dateFormat = "yyyy-MM-dd"
+        return format.date(from: said.trimmingCharacters(in: .whitespaces))
     }
 
     static func boostsCall(_ name: String, _ input: [String: Any], _ id: String?) -> [String: Any] {

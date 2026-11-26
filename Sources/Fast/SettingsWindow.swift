@@ -2597,6 +2597,7 @@ private struct SettingsAnchor: ViewModifier {
                     .animation(.easeOut(duration: spot == id ? 0.12 : 0.5), value: spot == id)
             }
             .id(id)
+            .containerValue(\.settingsAnchor, id)
             // Which rows are drawn now, for probes: a search result whose
             // row no page draws scrolls nowhere (feedback #1894).
             .onAppear { if Store.testing { SettingsAnchorsShown.ids[id, default: 0] += 1 } }

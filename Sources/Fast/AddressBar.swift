@@ -64,7 +64,8 @@ struct AddressBar: View {
     /// The update's door: in one half only, the right one, so there is
     /// one. The camera and the downloads are each half's, as Arc's are.
     var doors = true
-    /// One window door, at the first band's start, even with two halves.
+    /// One window door even with two halves, in the band on the column's
+    /// side.
     var columnDoor = true
     /// The page's leading inset, so the lights keep their window position.
     var leadingInset: CGFloat = 0
@@ -96,6 +97,14 @@ struct AddressBar: View {
         columnDoor && browser.prefs.sidebarButton && !strip && browser.prefs.sideShut && !peek.out
     }
 
+    /// That door stands at the band's end on the column's side, where the
+    /// column's own header has it (ColumnDoor.swift): the start for a
+    /// column on the left, the far end for one on the right. At the start
+    /// for both, a column on the right was brought out from the window's
+    /// other side.
+    private var doorLeads: Bool { hiddenColumn && browser.flank == .left }
+    private var doorTrails: Bool { hiddenColumn && browser.flank == .right }
+
     var body: some View {
         // The doors at each end and the site in the middle, laid out by
         // BandLayout in one pass from their sizes: measured into state, as
@@ -109,9 +118,9 @@ struct AddressBar: View {
                 // band alone leaves them where the layout keeps them. With
                 // the sidebar, here only when asked for (Settings ›
                 // Appearance › Back and forward), as Arc's toolbar has them.
-                if helmed || hiddenColumn {
+                if helmed || doorLeads {
                     HStack(spacing: Door.Size.band.gap) {
-                        if hiddenColumn {
+                        if doorLeads {
                             ColumnDoor(browser: browser, prefs: browser.prefs)
                                 .environment(\.doorSize, .header)
                                 .bandControl()
@@ -208,6 +217,11 @@ struct AddressBar: View {
                             browser.splitHint.leave(tab.id, on)
                             if on { SplitDeck.shared.ready(tab.id, in: browser) }
                         }
+                }
+                if doorTrails {
+                    ColumnDoor(browser: browser, prefs: browser.prefs)
+                        .environment(\.doorSize, .header)
+                        .bandControl()
                 }
             }
             if !tab.isBlank {

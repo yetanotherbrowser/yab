@@ -261,7 +261,7 @@ enum FieldActions {
     }
 
     private static func ago(_ date: Date) -> String {
-        date.formatted(.relative(presentation: .named))
+        date.formatted(.relative(presentation: .named).locale(AppDates.locale))
     }
 
     // MARK: finding
@@ -277,7 +277,7 @@ enum FieldActions {
 
     private static func page(_ browser: Browser, _ hit: Diary.Hit) -> FieldRequest {
         let open = browser.tabs.first { $0.address?.absoluteString == hit.url }
-        var fields = [Field(label: "Was", value: hit.at.formatted(date: .abbreviated, time: .shortened), source: "history")]
+        var fields = [Field(label: "Was", value: hit.at.englishFormatted(date: .abbreviated, time: .shortened), source: "history")]
         if let passage = hit.passage { fields.append(Field(label: "Found", value: "\u{201C}\(passage.prefix(140))\u{201D}", source: "page text")) }
         fields.append(Field(label: "Site", value: hit.host, source: open == nil ? "history" : "open now"))
         let url = URL(string: hit.url)
@@ -294,7 +294,7 @@ enum FieldActions {
         FieldRequest(title: row.subject.isEmpty ? "(no subject)" : row.subject, site: "Mail · " + row.who, symbol: "envelope",
                      tint: .systemRed, route: .yab,
                      fields: [Field(label: "From", value: row.whoFull.isEmpty ? row.who : row.whoFull, source: "mail"),
-                              Field(label: "When", value: row.at.formatted(date: .abbreviated, time: .shortened), source: "mail"),
+                              Field(label: "When", value: row.at.englishFormatted(date: .abbreviated, time: .shortened), source: "mail"),
                               Field(label: "Says", value: String(row.line.prefix(140)), source: "mail")],
                      button: "Open in Mail", act: .perform { browser in
                          browser.showMail()
@@ -317,7 +317,7 @@ enum FieldActions {
     }
 
     private static func file(_ browser: Browser, _ keep: Keep) -> FieldRequest {
-        var fields = [Field(label: "When", value: keep.date.formatted(date: .abbreviated, time: .shortened), source: "downloads")]
+        var fields = [Field(label: "When", value: keep.date.englishFormatted(date: .abbreviated, time: .shortened), source: "downloads")]
         if let from = keep.page?.host() ?? keep.source?.host() { fields.append(Field(label: "From", value: from, source: "downloads")) }
         fields.append(Field(label: "Where", value: (keep.path as NSString).deletingLastPathComponent, source: "downloads"))
         return FieldRequest(title: keep.name, site: "Downloads", symbol: "arrow.down.circle", tint: .systemBlue, route: .yab,
@@ -490,12 +490,12 @@ enum FieldActions {
             }
         case "remind":
             let at = when ?? Date().addingTimeInterval(3 * 86400)
-            fields.append(Field(label: "Until", value: at.formatted(date: .abbreviated, time: .shortened), source: when == nil ? "in 3 days" : "your words"))
+            fields.append(Field(label: "Until", value: at.englishFormatted(date: .abbreviated, time: .shortened), source: when == nil ? "in 3 days" : "your words"))
             title = "Remind if \(row.who) is quiet"; button = "Set Reminder"; symbol = "bell"
             act = { browser in open(browser); MailDesk.shared.remindNoReply(at: at) }
         case "snooze":
             let at = when ?? Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date().addingTimeInterval(86400))!
-            fields.append(Field(label: "Until", value: at.formatted(date: .abbreviated, time: .shortened), source: when == nil ? "tomorrow" : "your words"))
+            fields.append(Field(label: "Until", value: at.englishFormatted(date: .abbreviated, time: .shortened), source: when == nil ? "tomorrow" : "your words"))
             title = "Snooze \u{201C}\(row.subject)\u{201D}"; button = "Snooze"; symbol = "moon"
             act = { _ in MailDesk.shared.snooze(account: row.account, thread: row.thread, at: at, why: "Snoozed from the field") }
         case "unsubscribe":
@@ -515,8 +515,8 @@ enum FieldActions {
         }
         let note: String? = switch kind {
         case "snooze": "Back in your inbox " + (when ?? Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date().addingTimeInterval(86400))!)
-            .formatted(.dateTime.weekday(.wide).month().day().hour().minute())
-        case "remind": "Reminds you " + (when ?? Date().addingTimeInterval(3 * 86400)).formatted(.dateTime.weekday(.wide).month().day()) + " if no reply comes"
+            .formatted(AppDates.dateTime.weekday(.wide).month().day().hour().minute())
+        case "remind": "Reminds you " + (when ?? Date().addingTimeInterval(3 * 86400)).formatted(AppDates.dateTime.weekday(.wide).month().day()) + " if no reply comes"
         case "reply": after.map { "Your reply: \u{201C}\($0)\u{201D}" }
         case "unsubscribe": "Stops mail from \(row.who). It can't be undone."
         case "invite_answer": "Accepts, and \(row.who) gets the reply"
@@ -552,9 +552,9 @@ enum FieldActions {
         let start = RequestReader.when(lower) ?? Calendar.current.date(bySettingHour: lower.contains("afternoon") ? 14 : 9,
                                                                       minute: 0, second: 0, of: day)!
         let end = start.addingTimeInterval(hours * 3600)
-        return [FieldRequest(title: "Focus, \(start.formatted(.dateTime.weekday(.abbreviated).hour().minute()))–\(end.formatted(date: .omitted, time: .shortened))",
+        return [FieldRequest(title: "Focus, \(start.formatted(AppDates.dateTime.weekday(.abbreviated).hour().minute()))–\(end.englishFormatted(date: .omitted, time: .shortened))",
                              site: "Calendar on this Mac", symbol: "calendar.badge.plus", tint: .systemBlue, route: .api,
-                             fields: [Field(label: "When", value: start.formatted(date: .abbreviated, time: .shortened) + ", \(Int(hours)) h", source: "your words"),
+                             fields: [Field(label: "When", value: start.englishFormatted(date: .abbreviated, time: .shortened) + ", \(Int(hours)) h", source: "your words"),
                                       Field(label: "Guests", value: "none", source: "")],
                              button: "Add Event", act: .perform { browser in
                                  Task { @MainActor in

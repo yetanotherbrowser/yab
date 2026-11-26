@@ -247,7 +247,7 @@ enum RequestReader {
         }
         let start = when(lower)
         if let start {
-            fields.append(.init(label: "When", value: start.formatted(.dateTime.weekday(.abbreviated).month().day().hour().minute()) + ", 30 min",
+            fields.append(.init(label: "When", value: start.formatted(AppDates.dateTime.weekday(.abbreviated).month().day().hour().minute()) + ", 30 min",
                                 source: FreeTimes.free(start, browser: browser)))
         } else {
             fields.append(.init(label: "When", value: "pick a time", source: "", state: .choose))
@@ -256,7 +256,7 @@ enum RequestReader {
         if let topic { fields.append(.init(label: "About", value: topic, source: "your words")) }
         var items = [URLQueryItem(name: "text", value: topic.map { "Meeting: \($0)" } ?? "Meeting with \(who)")]
         if let start {
-            let form = DateFormatter()
+            let form = AppDates.formatter()
             form.dateFormat = "yyyyMMdd'T'HHmmss"
             items.append(URLQueryItem(name: "dates", value: form.string(from: start) + "/" + form.string(from: start.addingTimeInterval(1800))))
             items.append(URLQueryItem(name: "ctz", value: TimeZone.current.identifier))

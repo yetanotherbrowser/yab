@@ -132,8 +132,6 @@ struct WebKitIPCBoundaryTests {
         try WebKitIPCBoundary.validateExtensions(at: [folder])
         try manifest(Array(repeating: group, count: 257))
         #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions(at: [folder]) }
-        try manifest([["matches": Array(repeating: "https://example.test/*", count: 257), "js": ["content.js"]]])
-        #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions(at: [folder]) }
         try manifest([group])
         try FileManager.default.removeItem(at: file)
         #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions(at: [folder]) }
@@ -142,6 +140,90 @@ struct WebKitIPCBoundaryTests {
                                  "version": "1", "content_scripts": [group]] as [String: Any]
         try JSONSerialization.data(withJSONObject: oversizedMetadata).write(to: folder.appendingPathComponent("manifest.json"))
         #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions(at: [folder]) }
+    }
+
+    @Test func scriptBudgetCountsWhatWebKitInjectsForTheGrants() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in ["a.js", "b.js", "c.css"] { try Data("void 0".utf8).write(to: folder.appendingPathComponent(name)) }
+        func pattern(_ string: String) throws -> WKWebExtension.MatchPattern { try WKWebExtension.MatchPattern(string: string) }
+        let hosts = (0..<300).map { "https://*.site\($0).test/*" }
+        // Grammarly 14.1348.0's shape: hundreds of named sites, few files.
+        let groups: [[String: Any]] = [
+            ["matches": hosts, "js": ["a.js"]],
+            ["matches": hosts, "js": ["b.js"], "css": ["c.css"]],
+            ["matches": ["https://other.test/*"], "js": ["a.js"]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: ["manifest_version": 3, "name": "Sites", "version": "1", "content_scripts": groups])
+        try data.write(to: folder.appendingPathComponent("manifest.json"))
+
+        // All hosts is one pass, and a file:// one more only with file access.
+        let everywhere = WebKitIPCBoundary.Grants(patterns: [try pattern("https://*/*")], allHosts: true)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: everywhere) == 4)
+        try WebKitIPCBoundary.validateExtensions([(folder, everywhere)])
+        let withFiles = WebKitIPCBoundary.Grants(patterns: [try pattern("https://*/*")], allHosts: true, fileAccess: true)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: withFiles) == 8)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: nil) == 4)
+        try WebKitIPCBoundary.validateExtensions(at: [folder])
+
+        // Each granted site copies only the groups that name it: 2 × 3.
+        let two = WebKitIPCBoundary.Grants(patterns: [try pattern("*://site7.test/*"), try pattern("https://site8.test/*")], allHosts: false)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: two) == 6)
+        // Fewer than each file once still counts each file once: grants can come later.
+        let other = WebKitIPCBoundary.Grants(patterns: [try pattern("https://other.test/*")], allHosts: false)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: other) == 4)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: .init(patterns: [], allHosts: false)) == 4)
+
+        // Each site granted on its own: 300 × 3 copies, past the budget.
+        let each = WebKitIPCBoundary.Grants(patterns: try hosts.map(pattern), allHosts: false)
+        #expect(WebKitIPCBoundary.injectedScripts(groups, grants: each) == 900)
+        #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions([(folder, each)]) }
+
+        // The budget is shared by every loaded extension.
+        let many = Array(repeating: (folder: folder, grants: Optional(withFiles)), count: WebKitIPCBoundary.scriptLimit / 8 + 1)
+        #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions(many) }
+    }
+
+    @Test func allHostsBudgetDoublesOnlyWithFileAccess() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data("void 0".utf8).write(to: folder.appendingPathComponent("a.js"))
+        func catalog(files: Int) throws {
+            let group: [String: Any] = ["matches": ["<all_urls>"], "js": Array(repeating: "a.js", count: files)]
+            let data = try JSONSerialization.data(withJSONObject: ["manifest_version": 3, "name": "All", "version": "1", "content_scripts": [group]])
+            try data.write(to: folder.appendingPathComponent("manifest.json"))
+        }
+        let all = try WKWebExtension.MatchPattern(string: "<all_urls>")
+        let off = WebKitIPCBoundary.Grants(patterns: [all], allHosts: true, fileAccess: false)
+        let on = WebKitIPCBoundary.Grants(patterns: [all], allHosts: true, fileAccess: true)
+
+        try catalog(files: 128)
+        try WebKitIPCBoundary.validateExtensions([(folder, on)])
+        try catalog(files: 129)
+        #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions([(folder, on)]) }
+        try WebKitIPCBoundary.validateExtensions([(folder, off)])
+        try catalog(files: 256)
+        try WebKitIPCBoundary.validateExtensions([(folder, off)])
+        try catalog(files: 257)
+        #expect(throws: NSError.self) { try WebKitIPCBoundary.validateExtensions([(folder, off)]) }
+    }
+
+    @MainActor @Test func fileAccessIsReadFromTheContext() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try #"{"manifest_version": 3, "name": "Files", "version": "1"}"#
+            .write(to: folder.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        let context = WKWebExtensionContext(for: try await WKWebExtension(resourceBaseURL: folder))
+        #expect(!WebKitIPCBoundary.Grants(context).fileAccess)
+        let set = NSSelectorFromString("_setHasAccessToFileURLs:")
+        // The SPI is what the probe reads; without it there is nothing to turn on.
+        guard context.responds(to: set) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(context.method(for: set), to: Setter.self)(context, set, true)
+        #expect(WebKitIPCBoundary.Grants(context).fileAccess)
     }
 
     @Test func nativeExtensionSourceBytesAreNotAnInlineCatalogPayload() throws {

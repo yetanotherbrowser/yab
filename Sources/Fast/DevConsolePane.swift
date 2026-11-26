@@ -886,7 +886,7 @@ struct ConsoleRow: View, Equatable {
     static func time(_ seconds: Double) -> String {
         guard seconds > 0 else { return "" }
         let date = Date(timeIntervalSince1970: seconds > 1e11 ? seconds / 1000 : seconds)
-        let format = DateFormatter()
+        let format = AppDates.formatter()
         format.dateFormat = "HH:mm:ss.SSS"
         return format.string(from: date)
     }

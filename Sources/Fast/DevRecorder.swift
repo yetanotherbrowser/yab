@@ -637,7 +637,7 @@ struct DevRecorder: View {
         }
     }
     private var title: String {
-        "Recording on \(DevCopy.where_(tab.address)), " + Date().formatted(date: .abbreviated, time: .shortened)
+        "Recording on \(DevCopy.where_(tab.address)), " + Date().englishFormatted(date: .abbreviated, time: .shortened)
     }
 
     private func row(_ step: Recorder.Step, index: Int) -> some View {

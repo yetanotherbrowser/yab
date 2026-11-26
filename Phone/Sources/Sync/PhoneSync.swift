@@ -855,13 +855,31 @@ public nonisolated final class PhoneSync: @unchecked Sendable {
             tab.device = list == .today ? options.device.id : nil
             fields["device"] = Value(tab.device)
         }
+        let from = tab.space
         tab.space = target
         tab.order = order(in: row(target), list: list, place: place, moving: id)
         fields["parent"] = .string(target)
         fields["order"] = Value(tab.order)
         try write(SyncCollection.tab, id, fields)
-        emit(.local, [.tab(tab)])
+        let pairs = target == from ? [] : try carryPairs(of: id, to: target)
+        emit(.local, [.tab(tab)] + pairs)
         return tab
+    }
+
+    /// A Mac's split view is a pair under its tabs' space. Once both of its
+    /// tabs are in the new space it goes there too, whichever spaces they
+    /// came through: left under another, no row shows it and that space's
+    /// delete takes it with it.
+    private func carryPairs(of id: String, to target: String) throws -> [SyncChange] {
+        var changes: [SyncChange] = []
+        for record in journal.living(SyncCollection.pair) {
+            guard var pair = SyncPair(record), pair.space != target, pair.first == id || pair.second == id,
+                  tab(pair.first == id ? pair.second : pair.first)?.space == target else { continue }
+            try write(SyncCollection.pair, record.id, ["parent": .string(target)])
+            pair.space = target
+            changes.append(.pair(pair))
+        }
+        return changes
     }
 
     /// A kept tab goes into a Mac folder at any depth, or out at the root.

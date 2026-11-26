@@ -338,7 +338,9 @@ final class Socket: @unchecked Sendable {
                 // queued bytes can never count as this request's forwarding.
                 for index in trackedWrites.indices { trackedWrites[index].consumed(n) }
                 trackedWrites.removeAll { $0.ticket.snapshot().phase == .allWritten }
-                output.removeFirst(n)
+                // Not removeFirst(n): on Data it only slices, so the storage kept every
+                // byte ever written, about 0.5 GB a minute while sharing a screen.
+                output.removeSubrange(output.startIndex ..< output.startIndex + n)
                 admitParked()
             }
             else if n < 0 && errno == EINTR { continue }

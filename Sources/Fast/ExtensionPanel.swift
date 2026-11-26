@@ -31,6 +31,8 @@ final class ExtensionPanel: NSObject, NSPopoverDelegate {
     /// The tab the panel is about, and the view it hangs from when a door
     /// opened it, not ⌘E.
     private weak var tab: Tab?
+    /// The browser the tab belongs to, when it was named: a small window's.
+    private weak var browser: Browser?
     /// The sign-in's extensions it lists: the window's (ExtensionSignIns).
     private var owner: Extensions = .shared
     private weak var from: NSView?
@@ -41,9 +43,13 @@ final class ExtensionPanel: NSObject, NSPopoverDelegate {
 
     /// ⌘E and the sliders. `from`, the door pressed; `spot`, a place in a
     /// view to hang from, the band's lock.
-    func toggle(tab: Tab? = nil, page: SitePage = .main, from: NSView? = nil, spot: (rect: NSRect, view: NSView)? = nil) {
+    func toggle(tab: Tab? = nil, browser: Browser? = nil, page: SitePage = .main, from: NSView? = nil,
+                spot: (rect: NSRect, view: NSView)? = nil) {
         let state = SiteControlsState.shared
-        let tab = tab ?? (BrowserWindows.shared.activeBrowser ?? Extensions.shared.browser)?.active
+        // ⌘E over a small window, or over its popover, is about its page.
+        let link = tab == nil && browser == nil ? LinkWindow.inFront.flatMap { $0.tab.isBlank ? nil : $0 } : nil
+        let browser = browser ?? link?.browser
+        let tab = tab ?? link?.tab ?? (browser ?? BrowserWindows.shared.activeBrowser ?? Extensions.shared.browser)?.active
         if isShown {
             // The same door again: put away. Another tab's, or the other
             // page asked for: the panel turns to it where it is.
@@ -52,6 +58,7 @@ final class ExtensionPanel: NSObject, NSPopoverDelegate {
             if same { return }
         }
         self.tab = tab
+        self.browser = browser
         self.from = from
         self.spot = spot
         state.page = page
@@ -70,10 +77,10 @@ final class ExtensionPanel: NSObject, NSPopoverDelegate {
     private func show(in taken: NSPopover?) {
         // One list out at a time: ⌘E puts the downloads' away, as pressing
         // the downloads button puts this one away.
-        let window = BrowserWindows.shared.activeBrowser ?? Extensions.shared.browser
+        let window = browser ?? BrowserWindows.shared.activeBrowser ?? Extensions.shared.browser
         window?.hoard.openAt = nil
         owner.menuOpen = false
-        owner = Extensions.of(window)
+        owner = Extensions.of(window, page: tab)
         let root: AnyView
         if let browser = window, let tab = tab ?? browser.active {
             root = AnyView(SiteControlsView(browser: browser, tab: tab, prefs: browser.prefs,

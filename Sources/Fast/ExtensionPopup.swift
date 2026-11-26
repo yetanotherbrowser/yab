@@ -86,7 +86,7 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
         // It has to be in the window meanwhile: WebKit suspends a page
         // that is in none.
         AppleWritingTools.configure(configuration)
-        let web = WKWebView(frame: NSRect(origin: .zero, size: initialSize), configuration: configuration)
+        let web = QuietWebView(frame: NSRect(origin: .zero, size: initialSize), configuration: configuration)
         web.uiDelegate = self
         web.navigationDelegate = self
         // WebKit lets script close a page it didn't open only while the

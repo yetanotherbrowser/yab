@@ -214,16 +214,23 @@ enum DayThreads {
         return Naming(topic: topic, doing: doing, done: done, line: line)
     }
 
-    /// What the model is told, for every thread.
+    /// What every model is told, for every thread. It names no example:
+    /// the Mac's model, whose answer takes its shape from `ThreadNaming`,
+    /// copied the example names into threads about anything else (#1058).
     static let instructions = """
     You name what someone was doing in their web browser, from the pages of one stretch of their day and what they did on them. \
+    Write in the pages' own language. No quotes, no dashes, no site names unless the site is the subject. \
+    Never repeat passwords, codes, card numbers, addresses or anything private.
+    """
+
+    /// The four lines a model that answers in text writes, read by
+    /// `naming(_:)`, with an example of each.
+    static let lines = """
     Reply with exactly four lines and nothing else:
     Topic: two to four words, a noun phrase for a list (Arc and Dia pricing)
     Doing: what they were doing, starting with a verb ending in -ing, three to seven words (Comparing Arc and Dia pricing)
     Done: the same in the past tense (Compared Arc and Dia pricing)
     Line: one plain sentence of what happened or what they found, under 120 characters, only facts the pages show
-    Write in the pages' own language. No quotes, no dashes, no site names unless the site is the subject. \
-    Never repeat passwords, codes, card numbers, addresses or anything private.
     """
 
     /// The pages and acts of a thread, as the model is asked about them.

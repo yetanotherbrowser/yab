@@ -317,6 +317,37 @@ struct StripShutTests {
         }
     }
 
+    /// A rest at the top edge cut short by another window taking the
+    /// pointer counts for nothing once the pointer is back: the strip waits
+    /// a whole rest from there (#786, review of #932).
+    @MainActor @Test func aRestCutShortByAnotherWindowStartsOverAtTheEdge() async throws {
+        try await keeping {
+            try await withBrowser { browser in
+                browser.prefs.sidebar = false
+                browser.putStrip(away: true)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                                      styleMask: [.borderless], backing: .buffered, defer: true)
+                Brim.keep(window, for: browser)
+                defer { Brim.benchPointer = nil; Brim.benchFront = false }
+                let rest = Int(TopReach.edgeRest * 1000)
+                Brim.benchPointer = NSPoint(x: window.frame.midX, y: window.frame.maxY - 1)
+                Brim.benchFront = true
+                Brim.benchLook(in: window)
+                try await Task.sleep(for: .milliseconds(rest / 3))
+                // Not in front and on no screen: nothing of it is watched.
+                Brim.benchFront = false
+                Brim.benchLook(in: window)
+                try await Task.sleep(for: .milliseconds(rest + 100))
+                Brim.benchFront = true
+                Brim.benchLook(in: window)
+                #expect(!browser.stripPeek)
+                try await Task.sleep(for: .milliseconds(rest + 100))
+                Brim.benchLook(in: window)
+                #expect(browser.stripPeek)
+            }
+        }
+    }
+
     /// Out over the page, the strip stays where it is when ⌘S brings it
     /// back: it lands, lifted no more.
     @MainActor @Test func commandSOverThePageLandsTheStrip() async throws {

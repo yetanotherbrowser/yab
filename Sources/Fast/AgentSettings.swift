@@ -284,7 +284,7 @@ struct AgentsPage: View {
         guard sync.on else { return "Needs Sync." }
         let names = sync.assistantAnswerers.map(\.name)
         guard !names.isEmpty else { return "Questions to pay, send or upload also go to your iPhone or another Mac in Sync." }
-        return "Questions to pay, send or upload also go to \(ListFormatter.localizedString(byJoining: names))."
+        return "Questions to pay, send or upload also go to \(ListFormatter.englishString(byJoining: names))."
     }
 
     /// This month's spending once there is some, else what the threshold means.
@@ -468,8 +468,8 @@ final class AgentSetupModel: ObservableObject {
 
     private var geminiChanges: AnyCancellable?
 
-    init(status: AgentSetup.Status = AgentSetup.status(), consent: ProviderConsent = .shared) {
-        self.consent = consent
+    init(status: AgentSetup.Status = AgentSetup.status(), consent: ProviderConsent? = nil) {
+        self.consent = consent ?? .shared
         self.status = status
         geminiChanges = GeminiAccount.shared.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()

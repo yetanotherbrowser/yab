@@ -13,7 +13,7 @@ struct FullscreenToolbar<Content: View>: NSViewRepresentable {
     func makeNSView(context: Context) -> FullscreenToolbarView { FullscreenToolbarView() }
 
     func updateNSView(_ view: FullscreenToolbarView, context: Context) {
-        view.host.rootView = AnyView(content.environment(\.self, context.environment))
+        view.host.rootView = AnyView(content.hosted(in: context.environment))
         view.configure(fullScreen: fullScreen, pinned: pinned, enabled: enabled)
     }
 

@@ -127,12 +127,12 @@ struct ClipText {
 
 extension Clips.Clip {
     func lastCopied(now: Date = Date(), calendar: Calendar = .current) -> String {
-        let time = last.formatted(date: .omitted, time: .shortened)
+        let time = last.englishFormatted(date: .omitted, time: .shortened)
         let day: String
         if calendar.isDate(last, inSameDayAs: now) { day = "Today at \(time)" }
         else if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(last, inSameDayAs: yesterday) {
             day = "Yesterday at \(time)"
-        } else { day = last.formatted(date: .abbreviated, time: .shortened) }
+        } else { day = last.englishFormatted(date: .abbreviated, time: .shortened) }
         return day + (times > 1 ? ", \(times) times" : "")
     }
 

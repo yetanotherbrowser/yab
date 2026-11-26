@@ -167,13 +167,29 @@ extension Browser {
 
         // Going over to saving power puts down at once what has already
         // gone an hour unwatched, rather than at the next minute's look.
-        Thrift.watch { [weak self] on in
+        Thrift.watch(self) { [weak self] on in
             if on { self?.sleepIdle() }
         }
 
         // Pictures of sleeping tabs are for this run only: a tab brought
         // back from the last session has no page and no picture of one.
+        // Once, not with every window: another window's sleeping tabs keep theirs.
+        guard !Self.picturesCleared else { return }
+        Self.picturesCleared = true
         Tab.disk.async { try? FileManager.default.removeItem(at: Tab.pictures) }
+    }
+
+    private static var picturesCleared = false
+
+    /// The window is gone: its looks stop with it, or every closed window
+    /// leaves four timers and an ear for memory running for good.
+    func stopWatching() {
+        stoppedWatching = true
+        dozing?.invalidate(); dozing = nil
+        pressure?.cancel(); pressure = nil
+        nextLook?.cancel(); nextLook = nil
+        Thrift.unwatch(self)
+        stuck.stop()
     }
 
     /// Memory short: the heaviest tab that can sleep goes to sleep, and a
@@ -183,7 +199,7 @@ extension Browser {
     /// page to wait for.
     func relieve(assuming assumed: Int = 1) {
         // Whatever Put idle tabs to sleep says: that switch is the timer's.
-        guard !relieving else { return }
+        guard !relieving, !stoppedWatching else { return }
         let level = Pressure.level ?? assumed
         guard level > 1 else {
             passedOver = []
@@ -515,20 +531,26 @@ enum Thrift {
             ChromiumEnergySaver.tell()
         }
     }
-    private static var changed: ((Bool) -> Void)?
+    /// Everyone told of a change, each owner its own: one gone stops hearing.
+    private static var watchers: [(owner: () -> AnyObject?, changed: (Bool) -> Void)] = []
     private static var battery: CFRunLoopSource?
 
-    static func watch(_ changed: @escaping (Bool) -> Void) {
-        self.changed = changed
+    static func watch(_ owner: AnyObject, _ changed: @escaping (Bool) -> Void) {
+        watchers.removeAll { $0.owner() == nil || $0.owner() === owner }
+        watchers.append(({ [weak owner] in owner }, changed))
         // Every change to any power source, a percent gone, a cable in or
-        // out, delivered on the main run loop.
-        if let source = IOPSNotificationCreateRunLoopSource({ _ in
+        // out, delivered on the main run loop. One source for every watcher.
+        if battery == nil, let source = IOPSNotificationCreateRunLoopSource({ _ in
             MainActor.assumeIsolated { Thrift.look() }
         }, nil)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
             battery = source
         }
         look()
+    }
+
+    static func unwatch(_ owner: AnyObject) {
+        watchers.removeAll { $0.owner() == nil || $0.owner() === owner }
     }
 
     static func look() {
@@ -541,7 +563,7 @@ enum Thrift {
         }
         guard now != on else { return }
         on = now
-        changed?(now)
+        for watcher in watchers where watcher.owner() != nil { watcher.changed(now) }
     }
 }
 

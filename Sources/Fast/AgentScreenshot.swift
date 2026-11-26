@@ -22,7 +22,9 @@ enum AgentScreenshot {
     static func capture(_ tab: Tab, width: Double?) async throws -> NSImage {
         guard let page = tab.page as? ChromiumPage else { throw AgentSecrets.Refused() }
         var receipt: Set<String>?
-        return try await AgentImageGate.capture(page, shot: PageShot(width: width.map { CGFloat($0) })) {
+        var shot = PageShot(width: width.map { CGFloat($0) })
+        shot.scrollMayMove = true
+        return try await AgentImageGate.capture(page, shot: shot) {
             guard !tab.gone, tab.builtPage === page, !tab.wallet.agentScreenshotBlocked,
                   await AgentSecrets.check(page), case let frames = (try? await page.agentFrames()) ?? [],
                   // A frame with no script context is left out of the

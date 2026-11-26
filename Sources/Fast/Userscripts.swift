@@ -517,7 +517,7 @@ final class Userscripts: ObservableObject {
                 parts.append(installs.formatted() + (installs == 1 ? " install" : " installs"))
             }
             if let when = (value["code_updated_at"] as? String).flatMap({ ISO8601DateFormatter.fractional.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }) {
-                let format = Calendar.current.isDate(when, equalTo: Date(), toGranularity: .year) ? Date.FormatStyle().month(.abbreviated).day() : Date.FormatStyle().month(.abbreviated).day().year()
+                let format = Calendar.current.isDate(when, equalTo: Date(), toGranularity: .year) ? AppDates.dateTime.month(.abbreviated).day() : AppDates.dateTime.month(.abbreviated).day().year()
                 parts.append("updated " + when.formatted(format))
             }
         }

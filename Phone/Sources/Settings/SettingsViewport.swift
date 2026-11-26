@@ -8,6 +8,7 @@ struct SettingsViewport: UIViewControllerRepresentable {
     let size: CGSize
     var top: CGFloat = 0
     var keyboardOffset: CGFloat = 0
+    var column: SettingsColumn? = nil
 
     func makeUIViewController(context: Context) -> SettingsViewportController {
         let controller = SettingsViewportController()
@@ -16,7 +17,7 @@ struct SettingsViewport: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: SettingsViewportController, context: Context) {
-        controller.update(AnyView(SettingsSheet(size: size, top: top, keyboardOffset: keyboardOffset)
+        controller.update(AnyView(SettingsSheet(size: size, top: top, keyboardOffset: keyboardOffset, column: column)
             .environment(app)
             .environment(\.colorScheme, context.environment.colorScheme)
             .environment(\.dynamicTypeSize, context.environment.dynamicTypeSize)

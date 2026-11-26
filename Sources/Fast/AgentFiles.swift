@@ -125,6 +125,42 @@ final class AgentFiles {
         return nil
     }
 
+    /// Why Yab can't read the file's bytes, or nil when it can. macOS lets
+    /// an app without Files and Folders access see a file in Documents,
+    /// Desktop or Downloads (its name, its size) but not read it: the page
+    /// was given a File it couldn't open, NotReadableError, while upload
+    /// said it was done (#1090, a CSV in ~/Documents). Only a regular file
+    /// is opened: a named pipe's open would wait for a writer forever.
+    nonisolated static func unreadable(_ path: String) -> String? {
+        let name = (path as NSString).lastPathComponent
+        var info = stat()
+        guard stat(path, &info) == 0 else { return "\(name) can't be read (\(String(cString: strerror(errno)))). Don't say it was uploaded" }
+        guard info.st_mode & S_IFMT == S_IFREG else { return "\(name) isn't a file Yab can upload (a pipe, a device or a socket)" }
+        let fd = open(path, O_RDONLY | O_NONBLOCK)
+        var failure = fd < 0 ? errno : 0
+        if fd >= 0 {
+            var byte: UInt8 = 0
+            if read(fd, &byte, 1) < 0 { failure = errno }
+            close(fd)
+        }
+        switch failure {
+        case 0: return nil
+        case EPERM:
+            return "macOS doesn't let Yab read \(name) in \(privacyFolder(path)): the user can turn on Yab under System Settings › Privacy & Security › Files and Folders, then upload again. Don't say it was uploaded"
+        default:
+            return "\(name) can't be read (\(String(cString: strerror(failure)))). Don't say it was uploaded"
+        }
+    }
+
+    /// The folder macOS asks about, as Files and Folders names it.
+    nonisolated static func privacyFolder(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let folders = ["Documents": "your Documents folder", "Desktop": "your Desktop folder", "Downloads": "your Downloads folder",
+                       "Library/Mobile Documents": "iCloud Drive"]
+        for (inside, said) in folders where path.hasPrefix(home + "/" + inside + "/") { return said }
+        return path.hasPrefix("/Volumes/") ? "that volume" : "that folder"
+    }
+
     /// Whether these words name the file by its path, as given, as the
     /// disk has it (/tmp is /private/tmp), or from ~.
     static func named(_ url: URL, in told: [String]) -> Bool {

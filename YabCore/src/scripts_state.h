@@ -18,6 +18,14 @@ struct ScriptState {
   NSDictionary* relays = @{};
   std::map<std::string, ScriptContext> contexts;
   std::set<std::string> sessions;
+  // Child sessions Target.attachedToTarget announced whose ScriptAttach is
+  // still queued. A detach before it runs removes the entry, and the queued
+  // attach then does nothing: inserting it anyway left a dead session in
+  // `sessions` for good, and every later hide failed on it (#883).
+  std::set<std::string> attaching;
+  // The session each child session arrived on. When a frame goes, Chromium
+  // can drop its route before its children's detaches: they go with it.
+  std::map<std::string, std::string> sessionParents;
   std::map<std::string, std::vector<NSString*>> identifiers;
   // Per session: a release of the "console" object group in flight (1), and
   // another owed after it (2). See ConsoleRelease in scripts.inc.

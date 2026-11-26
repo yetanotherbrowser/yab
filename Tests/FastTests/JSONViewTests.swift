@@ -83,6 +83,15 @@ struct JSONViewTests {
         #expect(same == "same")
     }
 
+    @Test func aStringWithLineBreaksStaysOnItsRow() throws {
+        let c = try core()
+        let drawn = eval(c, "return C.oneLine(C.parse('{\"body\":\"one\\\\n\\\\ntwo\\\\r\\\\n\\\\tthree\\\\u0001\"}').root.v[0].v.v)").toString()
+        #expect(drawn == "one\\n\\ntwo\\r\\n\\tthree\\u0001")
+        #expect(eval(c, "return C.oneLine('plain \"quoted\" text')").toString() == "plain \"quoted\" text")
+        // Copy Value still takes the string itself.
+        #expect(eval(c, "return C.plain(C.parse('\"a\\\\nb\"').root)").toString() == "a\nb")
+    }
+
     @Test func pathsForCopying() throws {
         let c = try core()
         #expect(call(c, "pathText", [["owner", "login"]]).toString() == "owner.login")
@@ -91,6 +100,17 @@ struct JSONViewTests {
         #expect(call(c, "jq", [["a b"]]).toString() == ".[\"a b\"]")
         #expect(call(c, "pathText", [[]]).toString() == "$")
         #expect(call(c, "jq", [[]]).toString() == ".")
+    }
+
+    @Test func jqQuotesAKeyWithADollarSign() throws {
+        let c = try core()
+        // jq reads `.$schema` as a variable and won't run it.
+        #expect(call(c, "jq", [["$schema"]]).toString() == ".[\"$schema\"]")
+        #expect(call(c, "jq", [["definitions", "user", "$ref"]]).toString() == ".definitions.user[\"$ref\"]")
+        #expect(call(c, "jq", [["$"]]).toString() == ".[\"$\"]")
+        #expect(call(c, "jq", [["items", 0, "id"]]).toString() == ".items[0].id")
+        // Copy Path keeps its own way: `$` is fine in a script's path.
+        #expect(call(c, "pathText", [["definitions", "$ref"]]).toString() == "definitions.$ref")
     }
 
     @Test func quietHintsBesideValues() throws {

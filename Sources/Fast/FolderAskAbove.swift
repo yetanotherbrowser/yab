@@ -29,7 +29,7 @@ struct FolderAskAbove: View {
             if details {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(ask.path).truncationMode(.middle)
-                    Text("Read \(ask.checked.formatted(date: .omitted, time: .standard)): \(ask.error)")
+                    Text("Read \(ask.checked.englishFormatted(date: .omitted, time: .standard)): \(ask.error)")
                 }
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Palette.muted)

@@ -67,6 +67,8 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
     var prepareFrame: ((URL) async -> Void)?
     /// A hop of a WebKit navigation: a sign-in leaves cookies on the way.
     var redirected: ((URL) -> Void)?
+    /// A WebKit navigation committed: the page has its new address.
+    var committed: ((URL?) -> Void)?
     var popups: [UUID: WebKitPopup] = [:]
     private var loadRetry = DNSRetry()
     private weak var recoveryPage: PageView?
@@ -119,7 +121,12 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         // A new destination cancels recovery before async policy can hold it.
         if action.targetFrame?.isMainFrame == true { cancelLoadRetry() }
-        let decide: (WKNavigationActionPolicy) -> Void = { [weak self] policy in
+        let decide: (WKNavigationActionPolicy) -> Void = { [weak self, weak webView] policy in
+            if policy == .allow, #available(macOS 15.4, *), let webView,
+               !ChromiumDRMResources.recordNavigation(action, in: webView) {
+                decisionHandler(.cancel)
+                return
+            }
             if action.targetFrame?.isMainFrame == true {
                 if policy == .allow { self?.acceptNavigation(action.request) }
                 else { self?.cancelLoadRetry() }
@@ -209,6 +216,7 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let page = webView as? PageView else { return }
         currentNavigation = navigation?.pageNavigation
         cancelLoadRetry()
+        committed?(webView.url)
         listener?.page(page, navigation: .committed(navigation?.pageNavigation))
     }
 

@@ -189,7 +189,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
             if stagePair == nil, (oldValue == nil) != (activeID == nil) { columnAfresh(preservingScroll: true) }
             // Another tab in front by any other way: the switch waiting
             // for its page's first frame is off (`select`).
-            if switchPending != activeID { switchPending = nil }
+            if switchPending != activeID { releaseSwitch() }
             // Back on a minimized video's tab: leaving it floats it again.
             minimizeHold.shown(activeID)
             searchSuggestions.update(nil, engine: searchEngine.engine) {}
@@ -216,6 +216,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
             // In mail: its page, or one of the space's tabs (MailTabRows).
             if inMail { mailFollows() }
             findFollows(left: oldValue)
+            // Hide Elements points at one page, and ends with it. Left on,
+            // its bar stood over a page nothing pointed at, Esc there
+            // turned it off on the wrong tab, and the page left went on
+            // hiding whatever was clicked, with no bar to say so.
+            if veiling {
+                veiling = false
+                tab(id: oldValue)?.stopPicking()
+            }
             // Developer Tools are the tab's (DevTools.swift).
             devFollows(left: oldValue)
             // The tab just left is the tab just looked at. Whether a tab has
@@ -2905,6 +2913,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
     @ObservationIgnored var passedOverSince: TimeInterval?
     /// The next look while memory stays short (`lookAgain`).
     @ObservationIgnored var nextLook: DispatchWorkItem?
+    /// The window is gone (`stopWatching`): a relief under way looks no more.
+    @ObservationIgnored var stoppedWatching = false
     /// The tabs you were last on, the one just left first (Sleep.swift:
     /// the few you go back and forth between are not put to sleep).
     @ObservationIgnored var recent: [Tab.ID] = []
@@ -4024,10 +4034,12 @@ final class Browser: NSObject, ObservableObject, Relaying {
         if let opening { opening(self) } else { BrowserWindows.shared.newWindow(from: self) }
     }
 
-    /// A separate private window, seeded before it can be shown or restored.
-    func newPrivateWindow() {
+    /// A separate private window, seeded before it can be shown or restored,
+    /// with `url` in it when there is one (a link menu's Open Link in Private Window).
+    func newPrivateWindow(opening url: URL? = nil) {
         if NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.isARepeat == true { return }
-        BrowserWindows.shared.newPrivateWindow(from: self)
+        let window = BrowserWindows.shared.newPrivateWindow(from: self)
+        if let url { window.arrive(url) }
     }
 
     /// The field, empty, asking where to go, with no tab in front: over
@@ -4280,7 +4292,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         // its page's frame: that switch is off, and its page comes back.
         if tab.id == activeID, switchPending != nil {
             let stage = heldStage
-            switchPending = nil
+            releaseSwitch()
             if let stage, let page = tab.builtPage { stage.show(page, of: tab.id, tab: tab) }
             return
         }
@@ -4309,11 +4321,9 @@ final class Browser: NSObject, ObservableObject, Relaying {
         // the page has drawn its first frame there, which it couldn't while
         // that redraw held the thread its frames go through. 80 ms at most.
         if early, Narrow.deferSwitch, let web = tab.webKitOnly("WebKit native page lifecycle", build: false) {
-            switchPending = tab.id
-            heldStage = web.superview as? StageView
-            heldStage?.heldFor = tab.id
+            let attempt = holdSwitch(to: tab.id, on: web.superview as? StageView)
             let finish = { [weak self, weak tab] in
-                guard let self, let tab, self.switchPending == tab.id else { return }
+                guard let self, let tab, self.hold.holds(tab.id, attempt: attempt) else { return }
                 self.finishSelect(tab)
             }
             StageView.afterNextDrawing(web) { DispatchQueue.main.async { finish() } }
@@ -4324,11 +4334,9 @@ final class Browser: NSObject, ObservableObject, Relaying {
         if Narrow.deferSwitch, !LinkGap.cut("chromium.defer"), let page = tab.builtPage as? ChromiumPage,
            let stage = early ? page.superview as? StageView : StageView.earlyChromium(from: active, to: tab,
                single: stagePair == nil && !splitBook.frozen && stages.compactMap { $0 }.count == 1 && pair(of: tab.id) == nil) {
-            switchPending = tab.id
-            heldStage = stage
-            stage.heldFor = tab.id
+            let attempt = holdSwitch(to: tab.id, on: stage)
             let finish = { [weak self, weak tab] in
-                guard let self, let tab, self.switchPending == tab.id else { return }
+                guard let self, let tab, self.hold.holds(tab.id, attempt: attempt) else { return }
                 self.finishSelect(tab)
             }
             page.afterShown { DispatchQueue.main.async { finish() } }
@@ -4358,14 +4366,28 @@ final class Browser: NSObject, ObservableObject, Relaying {
         row?()
     }
 
-    @ObservationIgnored private(set) var switchPending: Tab.ID? {
-        didSet { if switchPending == nil { heldStage?.heldFor = nil; heldStage = nil } }
-    }
+    @ObservationIgnored private var hold = SwitchHold()
+    var switchPending: Tab.ID? { hold.tab }
     @ObservationIgnored private weak var heldStage: StageView?
+
+    /// Holds the switch to `id`, on `stage` if given, letting go of any
+    /// earlier hold and its stage first. The attempt is what its finishers check.
+    private func holdSwitch(to id: Tab.ID, on stage: StageView?) -> Int {
+        releaseSwitch()
+        heldStage = stage
+        stage?.heldFor = id
+        return hold.hold(id)
+    }
+
+    private func releaseSwitch() {
+        hold.release()
+        heldStage?.heldFor = nil
+        heldStage = nil
+    }
 
     /// The switch, written: the tab in front, the window redrawn for it.
     private func finishSelect(_ tab: Tab) {
-        switchPending = nil
+        releaseSwitch()
         guard tab.id != activeID, tabs.contains(where: { $0 === tab }) else { return }
         cancelVideoRequest(for: tab)
         // Coming back to the tab whose video is out brings it home first, so
@@ -4398,6 +4420,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// closed there, without going to it, and kept for ⌘⇧T and the diary
     /// as a close in the row is.
     func closeElsewhere(_ tab: Tab) {
+        if closePeekTab(tab) { return }
         guard let space = parked.first(where: { $0.value.tabs.contains(where: { $0 === tab }) })?.key,
               let index = parked[space]?.tabs.firstIndex(where: { $0 === tab }) else { return }
         remember(tab, at: index)
@@ -5034,7 +5057,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         let hosts = Set(sites.compactMap(\.host))
         let name = hosts.count == 1
             ? Address.pretty(URL(string: "https://\(hosts.first!)")!)
-            : Date.now.formatted(.dateTime.day().month(.abbreviated))
+            : Date.now.formatted(AppDates.dateTime.day().month(.abbreviated))
         bookmarks.insert(.folder(name, sites), into: nil)
         announce("\(sites.count) tabs bookmarked in \(name)", mark: "folder.bookmark", feedback: .success)
     }
@@ -5584,7 +5607,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         // address; a tab with none is no folder's (Folders.settle).
         if let nest, tabs.contains(where: { $0 === tab }) { land(tab, in: nest) }
         if foreground {
-            switchPending = tab.id
+            let attempt = holdSwitch(to: tab.id, on: nil)
             // Once: the page's frames and the 0.3 s both call it, and the
             // second putting the row back would bring a tab closed between
             // them (⌘W, or a script's close) back into the row.
@@ -5593,8 +5616,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
                 guard !fronted else { return }
                 fronted = true
                 row()
-                guard let self, let tab, self.switchPending == tab.id else { return }
-                self.switchPending = nil
+                guard let self, let tab, self.hold.holds(tab.id, attempt: attempt) else { return }
+                self.releaseSwitch()
                 guard self.tabs.contains(where: { $0 === tab }), self.activeID != tab.id else { return }
                 OpenTrace.time("front") {
                     self.leaving()
@@ -7414,7 +7437,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         // for all of it: ⌘T, then whatever you meant.
         let openMatches = MainBudget.chunk("field.open") { openPageMatches(matching: typed) }
         let open = openMatches.rows
-        let already = Set(open.filter { automaticOpenPage($0) }.compactMap { $0.url.map { Address.pretty($0).lowercased() } })
+        let already = Set(open.filter { automaticOpenPage($0) }.compactMap { $0.url.map(History.key(for:)) })
         // Bookmarks among the places, as browsers' address fields
         // offer them: read again only after they change.
         history.keep(bookmarks: bookmarks.roots, revision: bookmarks.revision)
@@ -7509,6 +7532,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
         let named = pasteNamed ?? (ending == nil && (text.count >= 3 || short)
             ? things.first.flatMap { thing -> Suggestion? in
                 guard thing.1 >= 2 else { return nil }
+                // A page open or visited that the words name comes first: a
+                // command leads over it only called by its whole name. "ins"
+                // and "insta" are Instagram before Inspect Element or Add
+                // Extension (its "install extension"), and Return goes there.
+                // Only rows the list shows count: with Open Tabs or History
+                // off in Settings › Field, a hidden tab doesn't hold it back.
+                let shown = open.contains(where: FieldUnder.shared.wants) || places.contains(where: FieldUnder.shared.wants)
+                if shown, !calledByName(thing.0, text) { return nil }
                 // Empty-window Close Tab now closes the window itself. Keep
                 // its row discoverable, but require picking it deliberately.
                 // A page's existing full-title Return behavior stays unchanged.
@@ -7591,7 +7622,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         for remote in openElsewhere {
             if asked == .tab, FieldUnder.shared.tabs, let url = remote.url {
                 let key = History.key(for: url)
-                if !already.contains(Address.pretty(url).lowercased()), remoteDestinations.insert(key).inserted {
+                if !already.contains(key), remoteDestinations.insert(key).inserted {
                     var destination = places.first { $0.url.map(History.key(for:)) == key }
                         ?? Suggestion(key: key, title: remote.key, url: url, kind: .known)
                     destination.opensHere = true
@@ -7658,14 +7689,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
                   // only its address begun means navigation. A title match
                   // ("google" in Play Console) stays under the words searched.
                   let kept = (openHere + remoteCopies + saved).first(where: {
-                      $0.url.map { Address.pretty($0).lowercased().hasPrefix(text.lowercased()) } == true
+                      $0.url.map { History.key(for: $0).hasPrefix(text.lowercased()) } == true
                   }), let row = list.firstIndex(of: kept) {
             lead = row
         } else if let ending {
             // Finishing the address of a page that is already open: Return
             // goes back to it rather than opening it again.
             let whole = (typed + ending).lowercased()
-            lead = list.firstIndex { automaticOpenPage($0) && $0.url.map { Address.pretty($0).lowercased() } == whole }
+            lead = list.firstIndex { automaticOpenPage($0) && $0.url.map(History.key(for:)) == whole }
                 ?? list.firstIndex { $0.isPlace && $0.key == whole }
         } else if let quickName = quick.first(where: { $0.name.lowercased() == text.lowercased() }),
                   let quickRow = list.firstIndex(where: { $0.kind == .quickAction(quickName.id) }) {
@@ -7949,6 +7980,17 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// holds the tab.
     func parkedOwner(of id: Tab.ID, in space: UUID) -> Browser? {
         ([self] + BrowserWindows.shared.browsers).first { $0.parked[space]?.tabs.contains { $0.id == id } == true }
+    }
+
+    /// The words are a thing's whole name, or one of its other whole names:
+    /// "add extension" or "install extension", not "inst".
+    private func calledByName(_ thing: Suggestion, _ words: String) -> Bool {
+        let typed = words.trimmingCharacters(in: .whitespaces)
+        if case .command(let command) = thing.kind { return command.matchesExactly(typed, in: self) }
+        if let id = thing.menuTargetID, let target = MenuCommands.targets(in: self).first(where: { $0.id == id }) {
+            return target.matchesExactly(typed)
+        }
+        return Command.normalizedName(thing.key) == Command.normalizedName(typed)
     }
 
     /// A tab of a space not on screen, in this window or another, taken from
@@ -8678,7 +8720,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
 
         let target: URL?
         if ending != nil {
-            target = Address.url(from: completed)
+            // The words the ending finished are a place's name in the list,
+            // its address without its scheme: read back alone, a machine
+            // known by one word (nas) is no address, and a server its row
+            // opens over http, dev.test:3000, would be tried over https (#761).
+            let place = query.lead.flatMap { lead in
+                offers.indices.contains(lead) && offers[lead].isPlace && offers[lead].key == completed.lowercased() ? offers[lead].url : nil
+            }
+            target = Address.finished(completed, place: place)
         } else {
             target = searchEngine.destination(for: typed)
         }
@@ -9229,9 +9278,26 @@ extension Browser {
         download.webKitCreated()
     }
 
+    /// Closes a Peek tab when its page calls `window.close()` (for example at
+    /// the end of an adopted OAuth popup). Returns whether `tab` was a Peek.
+    @discardableResult
+    func closePeekTab(_ tab: Tab) -> Bool {
+        guard !isLive(tab) else { return false }
+        if peeking === tab {
+            closePeek()
+            return true
+        }
+        if let source = tabs.first(where: { $0.peek === tab }) ?? parkedTabs.first(where: { $0.peek === tab }) {
+            dropPeek(of: source)
+            return true
+        }
+        return false
+    }
+
     /// An ordinary tab's page asking to close itself.
     func pageClosed(_ page: any PageHandle) {
         guard let tab = tab(owning: page) else { return }
+        if closePeekTab(tab) { return }
         // Back to whoever opened it, so you land where you started the sign-in
         // rather than wherever the row happens to put you.
         if !tab.bench || tab.id == activeID, let home = self.tab(id: tab.opener) {
@@ -9347,6 +9413,7 @@ extension Browser {
     /// Reopened, the window comes back from its session file.
     func letGo() {
         fullscreenDeparture.stop()
+        stopWatching()
         for tab in tabs + parkedTabs + outside { tab.close() }
     }
 

@@ -52,6 +52,10 @@ enum SyncWallet {
         /// their date; handed back if this read is thrown away.
         var touched: Set<String> = []
         var published: [String: Int] = [:]
+        /// The collections whose records `now` changes: only they are
+        /// told to the journal, which otherwise decodes every record of all
+        /// four again on the main thread to find nothing changed.
+        var differs: Set<String> = []
     }
 
     /// One pass over the keychain. `stamps` is when each item was last read
@@ -127,16 +131,24 @@ enum SyncWallet {
         // here, else not written in yet.
         let listed = Set(logins.map { "\(login)/\($0.id)" } + codes.keys.map { "\(code)/\($0)" } + cards.map { "\(card)/\($0.id)" } + places.map { "\(address)/\($0.id)" })
         for collection in collections {
-            for record in journal.living(collection) where !listed.contains(record.key.description) {
+            let living = journal.living(collection)
+            var differs = !Set(out.now[collection, default: [:]].keys).isSubset(of: living.map(\.id))
+            for record in living {
+                guard !listed.contains(record.key.description) else {
+                    if !holds(out.now[collection]?[record.id], record) { differs = true }
+                    continue
+                }
                 if seen.contains(record.key.description) || local[record.key.description] != nil {
                     out.published[record.key.description] = local[record.key.description]
                     out.seen.remove(record.key.description)
                     out.stamps[record.key.description] = nil
+                    differs = true
                 } else {
                     out.now[collection, default: [:]][record.id] = record.visible
                     out.writes.append(record)
                 }
             }
+            if differs { out.differs.insert(collection) }
         }
         // A removed item must leave no stale "seen" entry. Otherwise a later
         // password saved under the same names is mistaken for another removal.
@@ -148,6 +160,12 @@ enum SyncWallet {
             out.published[key] = generation
         }
         return out
+    }
+
+    /// Whether a record already says `fields`, so telling the journal them
+    /// changes nothing (Record.update).
+    static func holds(_ fields: [String: Value]?, _ record: SyncKit.Record) -> Bool {
+        fields.map { $0.filter { !$0.value.isNull } == record.visible } ?? false
     }
 
     /// A login's record fields, its password still plain (`sealed` hides it).
@@ -169,8 +187,12 @@ enum SyncWallet {
     }
 
     /// Records from elsewhere, into the keychain: each written only if it
-    /// says something the keychain doesn't, each removal deleted.
-    static func write(_ records: [SyncKit.Record], seal: Seal, contextEpoch: String = ContextPrivacy.shared.epoch) {
+    /// says something the keychain doesn't, each removal deleted. Whether
+    /// the keychain is to be read again: something was written, or an item
+    /// here is newer than its record and goes up.
+    @discardableResult
+    static func write(_ records: [SyncKit.Record], seal: Seal, contextEpoch: String = ContextPrivacy.shared.epoch) -> Bool {
+        var again = false
         // When each item here last changed, read once for the lot.
         lazy var logins = Dictionary((Vault.listed() ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         lazy var codes = OneTime.modified()
@@ -180,8 +202,10 @@ enum SyncWallet {
             let key = record.key
             // Changed here after the record was: this side goes up instead.
             func newerHere(_ modified: Date??) -> Bool {
-                Vault.localChanges()[key.description] != nil ||
+                let newer = Vault.localChanges()[key.description] != nil ||
                     keychainIsNewer(than: record, modified: Vault.modified(key.description, fallback: modified ?? nil), synced: Vault.synced(key.description))
+                if newer { again = true }
+                return newer
             }
             switch record.collection {
             case login:
@@ -189,7 +213,7 @@ enum SyncWallet {
                 if newerHere(listed?.modified) { continue }
                 guard record.alive() else {
                     let names = record.id.components(separatedBy: "\u{1}")
-                    if names.count == 2, listed != nil { Vault.forget(host: names[0], user: names[1], from: record.latest?.wall) }
+                    if names.count == 2, listed != nil { Vault.forget(host: names[0], user: names[1], from: record.latest?.wall); again = true }
                     continue
                 }
                 guard let host = record["host"]?.string, let user = record["user"]?.string,
@@ -204,42 +228,43 @@ enum SyncWallet {
                     || listed?.used.map({ $0.timeIntervalSince1970.rounded(.down) }) != used?.timeIntervalSince1970
                     || (tagged != nil && listed?.space != tagged)
                     || Vault.password(host: host, user: user) != password {
-                    Vault.save(host: host, user: user, password: password, used: used, clear: clear, space: tagged, from: record.latest?.wall)
+                    if Vault.save(host: host, user: user, password: password, used: used, clear: clear, space: tagged, from: record.latest?.wall) { again = true }
                 }
             case code:
                 let names = record.id.components(separatedBy: "\u{1}")
                 guard names.count == 2, !newerHere(codes[record.id]) else { continue }
                 guard record.alive() else {
-                    if codes[record.id] != nil { OneTime.forget(host: names[0], user: names[1], from: record.latest?.wall) }
+                    if codes[record.id] != nil { OneTime.forget(host: names[0], user: names[1], from: record.latest?.wall); again = true }
                     continue
                 }
                 guard let text = record["secret"]?.string.flatMap({ seal.reveal($0, in: key) }).flatMap({ String(data: $0, encoding: .utf8) }),
                       text != OneTime.text(host: names[0], user: names[1]) else { continue }
-                OneTime.save(text, host: names[0], user: names[1], from: record.latest?.wall)
+                if OneTime.save(text, host: names[0], user: names[1], from: record.latest?.wall) { again = true }
             case card, address:
                 if record.collection == address, !ContextPrivacy.shared.current(contextEpoch) { continue }
                 let isCard = record.collection == card
                 let modified = isCard ? cards[record.id] : places[record.id]
                 if newerHere(modified) { continue }
                 guard record.alive() else {
-                    if modified != nil { Wallet.remove(card: isCard, record.id, from: record.latest?.wall) }
+                    if modified != nil { Wallet.remove(card: isCard, record.id, from: record.latest?.wall); again = true }
                     continue
                 }
                 guard let secret = record["secret"]?.string.flatMap({ seal.reveal($0, in: key) }) else { continue }
                 let facts = record["facts"].flatMap { try? JSONEncoder().encode($0) }
-                if let kept = Wallet.kept(card: isCard, record.id), kept.secret == secret, !isCard || same(kept.facts, facts) { continue }
+                if unchanged(Wallet.kept(card: isCard, record.id), secret: secret, facts: facts, card: isCard) { continue }
                 if !isCard {
                     guard let incoming = contextAddress(secret, id: record.id) else { continue }
-                    _ = ContextPrivacy.shared.mergeSyncedAddress(incoming, epoch: contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record)) { merged in
-                        guard let data = try? JSONEncoder().encode(merged) else { return false }
+                    if ContextPrivacy.shared.mergeSyncedAddress(incoming, epoch: contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record), write: { merged in
+                        guard let data = Wallet.addressData(merged) else { return false }
                         return Wallet.put(card: false, record.id, secret: data, facts: facts, from: record.latest?.wall)
-                    }
+                    }) { again = true }
                 } else {
-                    Wallet.put(card: isCard, record.id, secret: secret, facts: facts, from: record.latest?.wall)
+                    if Wallet.put(card: isCard, record.id, secret: secret, facts: facts, from: record.latest?.wall) { again = true }
                 }
             default: continue
             }
         }
+        return again
     }
 
     /// Whether a record that says something other than the keychain's item
@@ -285,7 +310,7 @@ enum SyncWallet {
     // MARK: -
 
     /// The secret fields sealed for the journal.
-    private static func sealed(_ fields: [String: Value], _ key: SyncKit.Record.Key, _ seal: Seal) -> [String: Value] {
+    static func sealed(_ fields: [String: Value], _ key: SyncKit.Record.Key, _ seal: Seal) -> [String: Value] {
         var out = fields
         for name in ["secret"] {
             if let plain = fields[name]?.string, let hidden = try? seal.hide(Data(plain.utf8), in: key) { out[name] = .string(hidden) }
@@ -307,19 +332,38 @@ enum SyncWallet {
         // or the two would take each other's turn every pass.
         var plain = plain
         if opened["space"]?.isNull ?? true { plain["space"] = nil }
+        if let mine = plain["secret"]?.string, let theirs = opened["secret"]?.string, mine != theirs,
+           sameSecret(Data(mine.utf8), Data(theirs.utf8), in: key.collection) {
+            opened["secret"] = plain["secret"]
+        }
         return opened.filter { !$0.value.isNull } == plain.filter { !$0.value.isNull }
     }
 
     /// New fields over a record, keeping the sealed box of a secret that
     /// didn't change, so it isn't sent again for a new nonce alone.
-    private static func merge(_ fresh: [String: Value], over record: SyncKit.Record, _ key: SyncKit.Record.Key, _ seal: Seal) -> [String: Value] {
+    static func merge(_ fresh: [String: Value], over record: SyncKit.Record, _ key: SyncKit.Record.Key, _ seal: Seal) -> [String: Value] {
         var out = fresh
         for name in ["secret"] {
             guard let old = record[name]?.string, let new = fresh[name]?.string,
-                  let a = seal.reveal(old, in: key), let b = seal.reveal(new, in: key), a == b else { continue }
+                  let a = seal.reveal(old, in: key), let b = seal.reveal(new, in: key), sameSecret(a, b, in: key.collection) else { continue }
             out[name] = .string(old)
         }
         return out
+    }
+
+    /// Whether a card or an address kept here already says what a record
+    /// from elsewhere does, so it isn't written in again.
+    static func unchanged(_ kept: (secret: Data, facts: Data?)?, secret: Data, facts: Data?, card: Bool) -> Bool {
+        guard let kept else { return false }
+        return card ? kept.secret == secret && same(kept.facts, facts) : sameSecret(kept.secret, secret, in: address)
+    }
+
+    /// Whether two secrets say the same: an address by what it says, as a
+    /// Mac from before kept its keys in any order; the rest as they are.
+    static func sameSecret(_ a: Data, _ b: Data, in collection: String) -> Bool {
+        if a == b { return true }
+        guard collection == address, let mine = Wallet.address(of: a) else { return false }
+        return mine == Wallet.address(of: b)
     }
 
     private static func same(_ a: Data?, _ b: Data?) -> Bool {

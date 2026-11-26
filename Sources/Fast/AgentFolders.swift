@@ -1408,9 +1408,12 @@ final class Folders: ObservableObject {
 
     /// `drawn`: the folders' rows as the column draws them now, for an
     /// empty one in the hand (ColumnDrag.emptyDrawn); worked out here
-    /// without it.
-    func nestLanding(_ nest: Nest, want: Double, deep: Int? = nil, among loose: [Tab], current: NestLanding? = nil,
-                     drawn: [String: Int]? = nil) -> NestLanding {
+    /// without it. `joined`: the two of a pair are one row, as `slots`
+    /// draws them; counted as two, every place under a pair was measured a
+    /// row low, and let go just above Clear it went into a folder above
+    /// (#1037).
+    func nestLanding(_ nest: Nest, want: Double, deep: Int? = nil, among loose: [Tab], joined: Bool = false,
+                     current: NestLanding? = nil, drawn: [String: Int]? = nil) -> NestLanding {
         // A folder of today's lands among the kept as one of them (#440).
         let today = nest.today ? Set(loose.filter { $0.nest?.within(nest) == true }.map(\.id)) : []
         let rest = loose.filter { $0.nest?.within(nest) != true }
@@ -1437,7 +1440,7 @@ final class Folders: ObservableObject {
                 // going to. Measured where it stood, the rows under the hand
                 // were a row off from those drawn, and every place between
                 // two shut folders was inside one (#1981).
-                let base = slots(rest, kept: today).folders
+                let base = slots(rest, joined: joined, kept: today).folders
                 let own = base[nest.key]
                 heads = base.filter { $0.key != nest.key }.mapValues { at in
                     let without = own.map { at > $0 ? at - 1 : at } ?? at
@@ -1446,7 +1449,7 @@ final class Folders: ObservableObject {
             } else {
                 var order = rest
                 order.insert(contentsOf: members, at: min(max(0, current.index), keptIn))
-                heads = slots(order, moved: Set(members.map(\.id)), kept: today).folders
+                heads = slots(order, joined: joined, moved: Set(members.map(\.id)), kept: today).folders
             }
             for folder in folders {
                 guard let other = folder.nest, other !== nest, !other.open || folder.members.isEmpty, !other.today, fits(other),
@@ -1488,21 +1491,31 @@ final class Folders: ObservableObject {
         var standsOver: [Int: Int] = [:]
         var begun: Set<String> = []
         var slot = 0
+        var seen: Set<Tab.ID> = []
+        var last: Tab.ID?
+        // The second of a pair drawn as one row: no row of its own, as in
+        // `slots` (after the first, or anywhere after it in a folder).
+        func second(_ tab: Tab, placed: Bool) -> Bool {
+            guard joined, let pair = browser?.pair(of: tab.id), pair.second == tab.id else { return false }
+            return placed ? seen.contains(pair.first) : pair.first == last
+        }
         for (at, tab) in rest.prefix(keptIn).enumerated() {
             prefix.append(slot)
+            defer { seen.insert(tab.id); last = tab.id }
             if !stood.before.isEmpty, begun.insert(run(tab)).inserted, let nests = stood.before[run(tab)] {
                 slot += nests.count
                 standsOver[at] = nests.count
             }
             guard let place = places[tab.id] else {
-                if !away.contains(tab.id) { slot += 1 }
+                if !away.contains(tab.id), !second(tab, placed: false) { slot += 1 }
                 continue
             }
             for key in place.chain where first[key] == nil {
                 first[key] = at
                 slot += 1
             }
-            if place.shown { slot += 1 }
+            if place.shown, !second(tab, placed: true) { slot += 1 }
+            if place.more > 0 { slot += 1 }
             for key in place.chain where ends[key] == at && folder(key)?.nest?.open == true {
                 slot += trail[key]?.filter { $0.key != carried }.count ?? 0
             }
@@ -1513,6 +1526,9 @@ final class Folders: ObservableObject {
         // Over a shut folder's top or bottom: the place just above or below
         // its run, among the folders it is in, wherever the nearest is.
         for index in 0...keptIn where only.map({ $0.index == index }) ?? true {
+            // Never between the two of a pair drawn as one row.
+            if joined, index > 0, index < keptIn, let pair = browser?.pair(of: rest[index].id),
+               pair.second == rest[index].id, pair.first == rest[index - 1].id { continue }
             let before = index > 0 ? rest[index - 1].nest?.chain ?? [] : []
             let after = index < keptIn ? rest[index].nest?.chain ?? [] : []
             var common = 0
@@ -1544,7 +1560,7 @@ final class Folders: ObservableObject {
             }
         }
         if only != nil, !gap.isFinite {
-            return nestLanding(nest, want: want, deep: deep, among: loose, current: nil)
+            return nestLanding(nest, want: want, deep: deep, among: loose, joined: joined, current: nil)
         }
         return best
     }

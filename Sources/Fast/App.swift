@@ -107,7 +107,14 @@ private struct FileItems: View {
         Divider()
         Button("Open Address…") { selected.pressOpenAddress() }
             .shortcut(.openAddress)
-        Button("Paste and Go") { selected.pasteAndGo() }
+        Button("Paste and Go") {
+            // From its key, in a text field, the key is the text's
+            // (PasteStyleTarget.takesPasteAndGoKey). Chosen from the menu,
+            // by the pointer or by the arrows and Return, it goes.
+            if let event = NSApp.currentEvent, event.type == .keyDown, Keymap.shared.matches(event, .pasteAndGo),
+               PasteStyleTarget.takesPasteAndGoKey(in: NSApp.keyWindow) { return }
+            selected.pasteAndGo()
+        }
             .shortcut(.pasteAndGo)
         Divider()
         // Close Tab and Close Window in
@@ -1029,11 +1036,21 @@ struct ContentView: View {
                     // given back.
                     Color.clear.frame(height: shelfRoom)
 
-                    // One stage, always, or two side by side (Split.swift).
-                    // Each tab on screen keeps its stage for as long as it is
-                    // there: a pair coming together keeps the page in front
-                    // on the stage it was on, so it can be held and drawn to
-                    // its half rather than handed to another view.
+                    // One stage, always, or two side by side (Split.swift);
+                    // with no tab in front, the page-shaped empty state in
+                    // its place. Each tab on screen keeps its stage for as
+                    // long as it is there: a pair coming together keeps the
+                    // page in front on the stage it was on, so it can be
+                    // held and drawn to its half rather than handed to
+                    // another view. The chat's column is the window's own
+                    // surface, standing beside a page or beside the empty
+                    // state alike, so a task's answer is there to read with
+                    // the last tab closed too (#1008).
+                    let devRim = DevRoom.Rim(card: laid)
+                    // A chat in full on the right, the page making room
+                    // as it does for the sheet, and the empty state as the
+                    // page it stands in (ChatColumn.swift).
+                    ChatRoom(open: browser.chatOpen, rim: devRim, width: chatShown, leading: browser.chatLeads) {
                     if let tab = browser.active {
                         // Developer Tools (DevTools.swift): a card of its own
                         // on the backdrop, under the page's card or beside
@@ -1042,10 +1059,6 @@ struct ContentView: View {
                         // reads the page's address, and the window's body
                         // ran again at every navigation for it.
                         let devHere = (!Narrow.dev || browser.devOpen || browser.devMoving) && browser.toolsFront != nil
-                        let devRim = DevRoom.Rim(card: laid)
-                        // A chat in full on the right, the page making room
-                        // as it does for the sheet (ChatColumn.swift).
-                        ChatRoom(open: browser.chatOpen, rim: devRim, width: chatShown, leading: browser.chatLeads) {
                         DevRoom(open: devHere && browser.devOpen && !browser.devDetached, side: browser.devSide, rim: devRim, height: devSize.height, width: devSize.width) {
                         SplitRoom(drag: browser.splitDrag, preview: browser.splitPreview, share: browser.stagePair?.share ?? 0.5, book: browser.splitBook, measured: { browser.floorWindow() }) {
                             ForEach(0..<2, id: \.self) { slot in
@@ -1070,65 +1083,6 @@ struct ContentView: View {
                             .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
                                 browser.measuredDevRoom(size.width)
                                 devSize.room = size.height
-                            }
-                            if browser.chatOpen || browser.chatMoving || !Extensions.all.allSatisfy({ $0.panelPages(in: browser).isEmpty }) {
-                                // Moved by Core Animation, in a hosting view
-                                // of its own, the air on its left its edge's.
-                                ChatColumnHost(browser: browser, shown: browser.chatOpen, corner: devRim.corner, width: chatShown, leading: browser.chatLeads)
-                                    .padding(browser.chatLeads ? .trailing : .leading, -Backdrop.inset)
-                            }
-                        }
-                            // How wide the column may be beside the page,
-                            // which keeps 400 as beside the developer tools.
-                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { room in
-                                let widest = room - devRim.gap - devRim.inset - DevLook.pageBeside
-                                ChatLook.widest = widest
-                                let was = chatRoom.widest
-                                chatRoom.widest = widest
-                                if abs(min(browser.chatWidth, was) - min(browser.chatWidth, widest)) > 0.5 { chatWidest = widest }
-                            }
-                            // Where Open in Chat lands (ChatFlight).
-                            .background(FlightMark(kind: .room, inset: devRim.inset))
-                            .padding(margins)
-                            .overlay(alignment: .topTrailing) {
-                                // Its width measured here, where the find bar
-                                // is drawn: the half in front's corner follows
-                                // the room and the share as they change.
-                                GeometryReader { room in
-                                VStack(alignment: .trailing, spacing: 0) {
-                                    // The half in front's: ⌘F looks through that page.
-                                    if browser.finding, let tab = browser.active {
-                                        FindBar(finder: tab.finder) { browser.closeFind() }
-                                            .padding(.top, Metrics.rim)
-                                            .transition(.opacity.combined(with: .offset(y: -4)))
-                                    }
-                                    // One surface for every notice, coming
-                                    // out from under the page's top edge,
-                                    // or the find bar's, while it is up.
-                                    notices(top: browser.finding ? 8 : Metrics.rim, bar: barHeight)
-                                }
-                                // The page's own rim, top and right alike,
-                                // for everything that floats over it,
-                                // measured from the card's edge, not the
-                                // window's: this hangs on the page after
-                                // its margins, so they are added back. The
-                                // top rim is each one's own, so the notice
-                                // can be tucked away above it.
-                                .padding(.top, margins.top + barHeight)
-                                .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                                }
-                            }
-                            .overlay(alignment: .bottomTrailing) {
-                                // An agent's question with its home out of
-                                // sight stands at the page's bottom right,
-                                // its buttons in the corner (AskStand).
-                                GeometryReader { room in
-                                    AskStandView(browser: browser)
-                                        .padding(.bottom, margins.bottom + Metrics.rim)
-                                        .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
-                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                                }
                             }
                     } else {
                         Group {
@@ -1161,20 +1115,66 @@ struct ContentView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
                             }
                         }
-                        .padding(margins)
-                        .overlay(alignment: .topTrailing) {
-                            notices(top: Metrics.rim)
-                                .padding(.top, margins.top)
-                                .padding(.trailing, margins.trailing + Metrics.rim)
-                        }
-                        // With no page in front too: a question asked of
-                        // a tab elsewhere, or of a chat, stands here.
-                        .overlay(alignment: .bottomTrailing) {
-                            AskStandView(browser: browser)
-                                .padding(.bottom, margins.bottom + Metrics.rim)
-                                .padding(.trailing, margins.trailing + Metrics.rim)
+                    }
+                        if browser.chatOpen || browser.chatMoving || !Extensions.all.allSatisfy({ $0.panelPages(in: browser).isEmpty }) {
+                            // Moved by Core Animation, in a hosting view
+                            // of its own, the air on its left its edge's.
+                            ChatColumnHost(browser: browser, shown: browser.chatOpen, corner: devRim.corner, width: chatShown, leading: browser.chatLeads)
+                                .padding(browser.chatLeads ? .trailing : .leading, -Backdrop.inset)
                         }
                     }
+                        // How wide the column may be beside the page,
+                        // which keeps 400 as beside the developer tools.
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { room in
+                            let widest = room - devRim.gap - devRim.inset - DevLook.pageBeside
+                            ChatLook.widest = widest
+                            let was = chatRoom.widest
+                            chatRoom.widest = widest
+                            if abs(min(browser.chatWidth, was) - min(browser.chatWidth, widest)) > 0.5 { chatWidest = widest }
+                        }
+                        // Where Open in Chat lands (ChatFlight).
+                        .background(FlightMark(kind: .room, inset: devRim.inset))
+                        .padding(margins)
+                        .overlay(alignment: .topTrailing) {
+                            // Its width measured here, where the find bar
+                            // is drawn: the half in front's corner follows
+                            // the room and the share as they change.
+                            GeometryReader { room in
+                            VStack(alignment: .trailing, spacing: 0) {
+                                // The half in front's: ⌘F looks through that page.
+                                if browser.finding, let tab = browser.active {
+                                    FindBar(finder: tab.finder) { browser.closeFind() }
+                                        .padding(.top, Metrics.rim)
+                                        .transition(.opacity.combined(with: .offset(y: -4)))
+                                }
+                                // One surface for every notice, coming
+                                // out from under the page's top edge,
+                                // or the find bar's, while it is up.
+                                notices(top: browser.finding ? 8 : Metrics.rim, bar: barHeight)
+                            }
+                            // The page's own rim, top and right alike,
+                            // for everything that floats over it,
+                            // measured from the card's edge, not the
+                            // window's: this hangs on the page after
+                            // its margins, so they are added back. The
+                            // top rim is each one's own, so the notice
+                            // can be tucked away above it.
+                            .padding(.top, margins.top + barHeight)
+                            .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            }
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            // An agent's question with its home out of
+                            // sight stands at the page's bottom right,
+                            // its buttons in the corner (AskStand).
+                            GeometryReader { room in
+                                AskStandView(browser: browser)
+                                    .padding(.bottom, margins.bottom + Metrics.rim)
+                                    .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            }
+                        }
                 }
                 // Under the card, so that going, the card comes up over it.
                 // Drawn where the strip has it while ⌘S moves the strip.
@@ -1312,7 +1312,8 @@ struct ContentView: View {
                         browser: browser, tab: tab, peek: browser.peek, strip: !browser.prefs.sidebar,
                         height: AddressBar.height(sidebar: browser.prefs.sidebar, carded: laid), corner: corner,
                         half: split, doors: side != .left,
-                        columnDoor: side != .right, leadingInset: margins.leading,
+                        // Of two halves, the one on the column's side.
+                        columnDoor: side != (browser.flank == .right ? .left : .right), leadingInset: margins.leading,
                         leave: split ? { [browser, id = tab.id] in browser.leaveSplit(id) } : nil
                     )
                     .toned(worn)
@@ -1634,15 +1635,41 @@ struct ContentView: View {
     /// and read as misplaced); in split view the half in front's, widened
     /// evenly and kept in the window where a half is narrower than the field.
     /// The field can overlap the column, so its width never pushes it away
-    /// from the window's middle.
+    /// from the window's middle. One exception: with no tab in front the
+    /// empty state is all there is beside the column, and the field
+    /// centers in the room the column leaves it (#1008), where the
+    /// window's middle stood the box over the chat's own field.
     private func fieldRoom(in width: CGFloat) -> (CGFloat, CGFloat) {
         guard browser.splitShown, let id = browser.activeID, let half = browser.splitBook.frames[id], width > 0 else {
-            return (0, 0)
+            guard browser.chatOpen, browser.active == nil, width > 0 else { return (0, 0) }
+            let room = ChatRoom.room(DevRoom.Rim(card: laid), width: chatShown)
+            let side = browser.flank == .left ? browser.sideShown : 0
+            let far = browser.flank == .left ? 0 : browser.sideShown
+            return Self.emptyWindowFieldRoom(in: width, side: side, far: far, margins: margins,
+                                             chatRoom: room, chatLeads: browser.chatLeads)
         }
         let need = Metrics.fieldWidth + 32
         guard half.width < need else { return (half.minX, max(0, width - half.maxX)) }
         let lead = min(max(half.midX - need / 2, 0), max(0, width - need))
         return (lead, max(0, width - lead - need))
+    }
+
+    /// Empty-window field insets beside an open chat column: center in the
+    /// remaining empty card when it holds the compact box width, keep the
+    /// chat column clear while the rest of the window still fits it, and
+    /// keep the box inside the window when the window is narrower than both.
+    static func emptyWindowFieldRoom(in width: CGFloat, side: CGFloat, far: CGFloat,
+                                     margins: EdgeInsets, chatRoom: CGFloat, chatLeads: Bool) -> (CGFloat, CGFloat) {
+        let lead = side + margins.leading + (chatLeads ? chatRoom : 0)
+        let trail = far + margins.trailing + (chatLeads ? 0 : chatRoom)
+        let need = Omnibox.compactWidth + 2 * Omnibox.margin
+        guard width - lead - trail < need else { return (lead, trail) }
+        if chatLeads {
+            let keptLead = max(0, min(lead, width - need))
+            return (keptLead, max(0, width - keptLead - need))
+        }
+        let keptTrail = max(0, min(trail, width - need))
+        return (max(0, width - keptTrail - need), keptTrail)
     }
 
     /// The panels. All the same kind of thing, so they are built the same way.
@@ -1711,13 +1738,16 @@ struct ContentView: View {
     var body: some View {
         let _ = StripRenderMeter.window()
         lower
-            .overlay { HoardSky(hoard: browser.hoard).allowsHitTesting(false).ignoresSafeArea() }
+            // An AppKit view over the window, even one let through, is where
+            // SwiftUI's accessibility hit test stops: Magnet and VoiceOver
+            // found nothing under it. Those that only draw are hidden from it.
+            .overlay { HoardSky(hoard: browser.hoard).allowsHitTesting(false).accessibilityHidden(true).ignoresSafeArea() }
             .overlay { KeyFlightLayer(sky: browser.keySky).ignoresSafeArea() }
             .overlay { TearGround(sky: browser.keySky).ignoresSafeArea() }
-            .overlay { ChorusSky(chorus: browser.chorus).allowsHitTesting(false).ignoresSafeArea() }
+            .overlay { ChorusSky(chorus: browser.chorus).allowsHitTesting(false).accessibilityHidden(true).ignoresSafeArea() }
             // ⇧⌘2's outline, picture and card (Capture.swift): a room kept
             // in the window's own stack, empty and let through until then.
-            .overlay { CaptureSky(capture: browser.capture).ignoresSafeArea() }
+            .overlay { CaptureSkyLayer(capture: browser.capture).ignoresSafeArea() }
             // Picking a model, in the middle of the window over everything.
             .overlay { if let request = browser.modelPicker { ModelPickerLayer(browser: browser, request: request) } }
             // What the page in front is asking: in the middle of it for an
@@ -1796,10 +1826,23 @@ struct ContentView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { Hints.shared.compose() }
             if browser.windowID == nil { BookmarkMenu.shared.start(for: browser) }
         }
-        .onDisappear {
-            if let keys { NSEvent.removeMonitor(keys); self.keys = nil }
-            if let middle { NSEvent.removeMonitor(middle); self.middle = nil }
+        .onDisappear { unwatchKeys() }
+        // A window of its own closing goes for good, unlike the first, which
+        // is shown again, yet nothing in it disappears: its watchers, which
+        // hold this view and with it the window and its browser, go with
+        // it, and so does the view's own hold on the window. Kept, they held
+        // every closed window for as long as Yab ran (#1046).
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            guard let window, note.object as? NSWindow === window,
+                  (browser.windowID ?? BrowserWindows.primaryID) != BrowserWindows.primaryID else { return }
+            unwatchKeys()
+            self.window = nil
         }
+    }
+
+    private func unwatchKeys() {
+        if let keys { NSEvent.removeMonitor(keys); self.keys = nil }
+        if let middle { NSEvent.removeMonitor(middle); self.middle = nil }
     }
 
     /// Give the keyboard back to the page once the field is done with it.

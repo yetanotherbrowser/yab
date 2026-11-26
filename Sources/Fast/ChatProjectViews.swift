@@ -213,7 +213,7 @@ struct ChatListRowBody<Face: View>: View {
     static func when(_ date: Date, working: Bool) -> String {
         if working { return "working" }
         let calendar = Calendar.current
-        let format = DateFormatter()
+        let format = AppDates.formatter()
         if calendar.isDateInToday(date) { format.dateFormat = "HH:mm" }
         else if calendar.isDateInYesterday(date) { return "Yesterday" }
         else if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 { format.dateFormat = "EEE" }

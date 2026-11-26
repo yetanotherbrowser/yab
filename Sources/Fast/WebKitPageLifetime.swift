@@ -34,6 +34,7 @@ extension PageView {
         web.onPictureCopied = nil
         web.onMailLink = nil
         web.onSplitLink = nil
+        web.onPrivateLink = nil
         web.onHideAt = nil
         web.onCapture = nil
         web.onSelectionCommand = nil

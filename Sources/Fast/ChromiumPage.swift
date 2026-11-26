@@ -157,6 +157,14 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     /// Where the hidden window was last put (placeProducer); nil for a new one.
     private var placedProducer: ProducerPlace?
     private var geometryQueued = false
+    /// Which queued geometry operation owns geometryQueued.
+    private var geometryTurn = 0
+    /// A tab.visible threw: the helper may or may not have applied it (a hide
+    /// can answer an error from its focus cleanup on an iframe's session that
+    /// has just gone, #883). The next sync sends visibility whatever
+    /// sentGeometry says; trusting it left the page hidden in the helper
+    /// while Yab counted it shown, and no show was sent again.
+    private var visibilityUnknown = false
     private var navigation: PageNavigation?
     private var awaitingInitialDocument = false
     var reachingFirstDocument: Bool { awaitingInitialDocument && !warmed }
@@ -699,7 +707,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                 guard tab.chromiumProfile == self.profile else { throw SiteEngineError.profileChanged }
                 // Cookies that didn't carry over cost a sign-in, never the page.
                 OpenTrace.mark("chromium.cookies.begin")
-                do { if !LinkGap.cut("chromium.cookies") { try await ChromiumDRMCookies.of(tab).prepare(for: target, in: .chromium) } }
+                do { if !LinkGap.cut("chromium.cookies") { try await ChromiumDRMCookies.of(tab).prepare(for: target, in: .chromium, page: tab.id) } }
                 catch is CancellationError { throw CancellationError() }
                 catch { NSLog("DRM cookies: not carried over: %@", String(describing: error)) }
                 OpenTrace.mark("chromium.cookies.end")
@@ -852,7 +860,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     /// Heard from the helper: `url` is being navigated to in this page.
     func cookiesTouched(_ url: URL, mainFrame: Bool) {
         guard !retired else { return }
-        ChromiumDRMCookies.session(of: tab)?.touched(url, mainFrame: mainFrame, by: .chromium)
+        ChromiumDRMCookies.session(of: tab)?.touched(url, mainFrame: mainFrame, by: .chromium, in: tab?.id)
     }
     /// `recover`: the page comes back by itself, now if it is on screen,
     /// else when it next is. Out of retries, it says what happened.
@@ -1100,6 +1108,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
             title = ""
             stateEvents?.page(self, changed: .title(""))
             committedURL = committed; events?.page(self, navigation: .committed(navigation))
+            ChromiumDRMCookies.session(of: tab)?.pageCommitted(committed, by: .chromium, in: tab?.id)
             firstPaintMayHaveCome()
         case "page.finished":
             readCertificate()
@@ -1422,7 +1431,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); updateSurface() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { recoverPage() }
+        if window != nil { recoverPage(); ChromiumDRMCookies.session(of: tab)?.pageChanged() }
         if window == nil { hoverLeft(); receiveTooltip("") }
         updateSurface()
         watchKeyWindow()
@@ -1435,7 +1444,10 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
     override func viewDidHide() { super.viewDidHide(); hoverLeft(); syncGeometry(); focusChanged() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); scripts.appearanceChanged() }
-    override func viewDidUnhide() { super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon() }
+    override func viewDidUnhide() {
+        super.viewDidUnhide(); OpenTrace.mark("chromium.unhide"); restoreSurfaceAttachment(); syncGeometry(); focusChanged(); pictureSoon()
+        ChromiumDRMCookies.session(of: tab)?.pageChanged()
+    }
 
     /// Chrome draws only what is on screen, so ⌃Tab's picture of a page in the
     /// back is the one taken here while it was in front.
@@ -1534,6 +1546,7 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         restoreSurfaceAttachment()
         syncGeometry()
         focusChanged()
+        ChromiumDRMCookies.session(of: tab)?.pageChanged()
     }
     /// Surface ownership acknowledgement. Every layer.changed says which
     /// document and renderer the compositor shows and whether the helper
@@ -1559,6 +1572,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         desiredGeometry = nil; sentGeometry = nil
         placedProducer = nil
         geometryQueued = false
+        geometryTurn &+= 1
+        visibilityUnknown = false
         layer?.backgroundColor = nil
     }
     /// A replacement compositor owns a new geometry handshake even when the
@@ -1604,12 +1619,18 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                 firstPaintMayHaveCome()
             }
         }
-        if geometry.changesVisibility(from: sentGeometry) {
+        if visibilityUnknown || geometry.changesVisibility(from: sentGeometry) {
             OpenTrace.mark("chromium.visible.send")
             // `keep`: a covered page stays drawn and comes back at once, as Chromium's
             // occluded page does. Only a page the stage took away gives up its layers.
-            _ = try await core.request("tab.visible", params: ["tab": .string(id), "visible": .bool(geometry.visible && !geometry.covered),
-                                                               "keep": .bool(geometry.visible)])
+            do {
+                _ = try await core.request("tab.visible", params: ["tab": .string(id), "visible": .bool(geometry.visible && !geometry.covered),
+                                                                   "keep": .bool(geometry.visible)])
+                visibilityUnknown = false
+            } catch {
+                visibilityUnknown = true
+                throw error
+            }
             OpenTrace.mark("chromium.visible.done")
         }
         sentGeometry = geometry
@@ -1622,15 +1643,38 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
         // and a resize keeps its top, so a place sent first left a page that
         // grew taller standing its growth too low (a new tab, 900 points).
         defer { placeProducer() }
-        guard !geometryQueued, desiredGeometry != sentGeometry else { return }
+        guard let desired = desiredGeometry, !geometryQueued, geometryNeedsSend(desired) else { return }
         geometryQueued = true
+        geometryTurn &+= 1
+        let turn = geometryTurn
+        let ran = GeometryRun()
         enqueue { [weak self] core, id in
+            ran.started = true
             guard let self else { return }
-            defer { self.geometryQueued = false }
-            while self.remoteID == id, let geometry = self.desiredGeometry, geometry != self.sentGeometry {
+            defer { self.geometryFinished(turn) }
+            // A throw ends the loop; with visibilityUnknown set, the next sync sends again.
+            while self.remoteID == id, let geometry = self.desiredGeometry, self.geometryNeedsSend(geometry) {
                 try await self.sendGeometry(core, id, geometry)
             }
         }
+        // enqueue can return without running the operation (endpoint failed,
+        // helper not current, cancelled): then nothing else would clear
+        // geometryQueued, and every later sync of this page would be skipped.
+        if let queued = tail {
+            Task { @MainActor [weak self] in
+                await queued.value
+                guard let self, !ran.started else { return }
+                self.geometryFinished(turn)
+            }
+        }
+    }
+    @MainActor private final class GeometryRun { var started = false }
+    private func geometryNeedsSend(_ geometry: ChromiumResize.Geometry) -> Bool {
+        visibilityUnknown || geometry != sentGeometry
+    }
+    /// The queued geometry operation `turn` ended: ran, failed, or never ran.
+    private func geometryFinished(_ turn: Int) {
+        if turn == geometryTurn { geometryQueued = false }
     }
     private func applyZoom() {
         command("page.zoom", ["factor": .number(Double(pageZoom * magnification))])
@@ -1733,10 +1777,16 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
                                                   "scale": .number(min(1, 16_000 / max(height * (window?.backingScaleFactor ?? 2), 1)))])
                 }
                 let value = try await core.request("page.snapshot", params: parameters)
+                // Yab's own copy of the scroll lags the page's by a report
+                // (at most every 100 ms, from a frame): one landing while an
+                // agent's picture was drawn failed it, though the picture
+                // showed the page after the scroll.
                 guard !retired, remoteID == id, documentTurn == turn, bounds.size == size,
-                      pageZoom == zoom, magnification == magnify, url == location, tab?.lastY == scroll else { throw PageShotFailed() }
+                      pageZoom == zoom, magnification == magnify, url == location,
+                      shot.keeps(scroll: scroll, tab?.lastY) else { throw PageShotFailed() }
                 guard let encoded = value["data"].string else { throw PageShotFailed() }
-                if !beyond, format == "jpeg", rect == CGRect(origin: .zero, size: size) {
+                // Kept only under the scroll it was taken at.
+                if !beyond, format == "jpeg", rect == CGRect(origin: .zero, size: size), tab?.lastY == scroll {
                     keepRecentWhole(encoded, turn: turn, size: size, zoom: zoom, magnification: magnify, url: location, y: scroll)
                 }
                 let width = shot.width ?? rect.width
@@ -1999,6 +2049,11 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     }
 
     func input(_ kind: String, _ fields: [String: JSONValue] = [:]) {
+        // A press that reached this route belongs to the page. Finish the
+        // composition on the same queue before the renderer handles it.
+        if hasMarkedText(), ["keyDown", "mouseDown", "rightDown", "middleDown"].contains(kind) {
+            finishComposition()
+        }
         // A press or a key, as a WebKit page counts it. A pointer passing over
         // the page is nobody asking for a download or a window.
         if ["mouseDown", "rightDown", "middleDown", "keyDown", "text"].contains(kind) { lastInput = ProcessInfo.processInfo.systemUptime }

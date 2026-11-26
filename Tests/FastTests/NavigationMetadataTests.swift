@@ -4,16 +4,21 @@ import Testing
 
 @MainActor @Suite(.serialized)
 struct NavigationMetadataTests {
-    @Test func aNewPageDoesNotBorrowThePreviousPagesHostIcon() async throws {
+    private func keptIcon() async throws -> String {
         let site = "metadata-" + UUID().uuidString.lowercased() + ".test"
-        let old = URL(string: "https://\(site)/a")!
-        let next = URL(string: "https://\(site)/b")!
         let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
             NSColor.red.setFill(); NSBezierPath(rect: rect).fill(); return true
         }
         let bitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         await Favicons.shared.adopt(png, for: site)
+        return site
+    }
+
+    @Test func aNewPageDoesNotBorrowThePreviousPagesHostIcon() async throws {
+        let site = try await keptIcon()
+        let old = URL(string: "https://\(site)/a")!
+        let next = URL(string: "https://\(site)/b")!
         let tab = Tab(shy: true, factory: .webKitOnly)
         defer { tab.close() }
         tab.restore(url: old, title: "Alpha")
@@ -22,6 +27,17 @@ struct NavigationMetadataTests {
         #expect(tab.title.isEmpty)
         #expect(tab.icon == nil, "The host fallback belongs to Alpha, not the pending Beta document")
         #expect(Favicons.shared.cached(site) != nil, "Navigation must not erase the site's icon cache")
+    }
+
+    @Test func aReloadOrAWokenTabKeepsTheIconItWears() async throws {
+        let site = try await keptIcon()
+        let tab = Tab(shy: true, factory: .webKitOnly)
+        defer { tab.close() }
+        tab.restore(url: URL(string: "https://\(site)/a")!, title: "Alpha")
+        let worn = try #require(tab.icon)
+        tab.navigationStarted(nil)
+        #expect(tab.awaitingDocumentMetadata)
+        #expect(tab.icon === worn, "The same page loading again keeps its icon, not its letter (#735)")
     }
     @Test(arguments: [PageEngineKind.webKit, .chromium])
     func theRealCommitRouteReleasesIconDiscoveryOnBothEngines(engine: PageEngineKind) {

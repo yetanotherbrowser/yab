@@ -63,6 +63,8 @@ struct ChromiumKeyInterpretation: Equatable {
         case page
         /// The input context's edits go to the page; the key does not.
         case inputMethod
+        /// The input method finished and left an editing command for the page.
+        case inputMethodThenPage
         /// The input context took the key and made nothing of it yet: a held
         /// letter's repeats while its accent menu is coming, or the key that
         /// picks from the open menu (the pick arrives a moment later, as an
@@ -79,13 +81,18 @@ struct ChromiumKeyInterpretation: Equatable {
     ///   - inputMethod: an input method (Kana, Pinyin, Hangul) is selected.
     ///   - taken: what the input context answered for the key.
     func route(typed: String?, inputMethod: Bool, taken: Bool, composing: Bool = false) -> Route {
-        guard !edits.isEmpty else {
+        guard let last = edits.last else {
             // A key the context took without typing or a command is one it
             // keeps; passed on, the page would type it after all.
             return taken && commands == 0 ? .kept : .page
         }
-        if !inputMethod, !composing, commands == 0, edits.count == 1,
-           case .insert(let text, let range) = edits[0], range.location == NSNotFound,
+        if commands > 0 {
+            // Chromium keeps the key with a candidate that is still marked.
+            if case .mark(let text, _, _) = last, !text.isEmpty { return .inputMethod }
+            return .inputMethodThenPage
+        }
+        if !inputMethod, !composing, edits.count == 1,
+           case .insert(let text, let range) = last, range.location == NSNotFound,
            let typed, !typed.isEmpty, text == typed { return .page }
         return .inputMethod
     }

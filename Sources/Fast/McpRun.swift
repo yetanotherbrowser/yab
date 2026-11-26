@@ -22,6 +22,8 @@ enum McpRun {
     private static var outputLimit = 8000
     private static var truncated = false
     private static var calls = 0
+    /// A native change this run left waiting for the person, whose session must outlive the run.
+    private static var waiting: String?
     private static let budget = 200
     private static var tool: ((String, [String: Any]) -> [String: Any])!
 
@@ -40,6 +42,9 @@ enum McpRun {
       t.press(keys) t.hover(ref) t.drag(ref, toRef) t.drag(ref, {dx, dy}) t.drag({x, y}, {x, y}) t.scroll(ref|null, dy)
       t.dialog(accept, text) t.text() t.wait(forText) t.navigate(url) t.fetch(url) t.show() t.close()
       sleep(ms), keep (an object that lasts between runs)
+      native_context(query|{…}) native_actions(query) native_apply({action, target, arguments, requestId})
+      native_operation(id) native_undo(changeId): Yab's own settings, as parsed JSON
+      native_apply waits up to 30 seconds for the user's yes, then throws "status: needs_user" with its operationId
     Each action returns what changed on the page, as the tool does. At most \(200) steps a run.
     outputLimit bounds printed text (8000 characters by default, 256–32000); print only the result you need.
     A promise that remains pending is an error; there are no background JavaScript tasks here.
@@ -54,6 +59,7 @@ enum McpRun {
         printed = ""
         truncated = false
         calls = 0
+        waiting = nil
         let js = context ?? make()
         context = js
         defer { self.tool = nil; js.exceptionHandler = nil }
@@ -90,7 +96,8 @@ enum McpRun {
         let characters = out.count
         if truncated { out += "\n… (cut at \(outputLimit) characters: print less, or pick what you need)" }
         let footer = "(\(calls) step\(calls == 1 ? "" : "s"))"
-        let metadata: [String: Any] = ["steps": calls, "outputCharacters": characters, "truncated": truncated]
+        var metadata: [String: Any] = ["steps": calls, "outputCharacters": characters, "truncated": truncated]
+        if let waiting { metadata["waitingOperation"] = waiting }
         if failed != nil {
             return ["content": [["type": "text", "text": out + "\n" + footer]], "isError": true, "structuredContent": metadata]
         }
@@ -116,6 +123,8 @@ enum McpRun {
             printed += line.prefix(room)
         }
         let nap: @convention(block) (Double) -> Void = { usleep(useconds_t(max(0, min($0, 20000)) * 1000)) }
+        let wait: @convention(block) (String) -> Void = { waiting = $0 }
+        js.setObject(unsafeBitCast(wait, to: AnyObject.self), forKeyedSubscript: "__waiting" as NSString)
         js.setObject(unsafeBitCast(call, to: AnyObject.self), forKeyedSubscript: "__call" as NSString)
         js.setObject(unsafeBitCast(log, to: AnyObject.self), forKeyedSubscript: "__log" as NSString)
         js.setObject(unsafeBitCast(nap, to: AnyObject.self), forKeyedSubscript: "sleep" as NSString)
@@ -191,6 +200,22 @@ enum McpRun {
     function tabs() {
       return __tool('tabs', {}).split('\n').map(l => { const m = l.match(/^(\w+) \[(\w+)\]/); return m ? { id: m[1], whose: m[2], line: l } : null; }).filter(Boolean);
     }
+    function __native(name, input) {
+      const said = __tool(name, input);
+      try { return JSON.parse(said); } catch (e) { return said; }
+    }
+    function native_context(o = {}) { return __native('native_context', typeof o === 'string' ? { query: o } : o); }
+    function native_actions(query) { return __native('native_actions', query ? { query: String(query) } : {}); }
+    function native_apply(o) {
+      const waits = r => r && ['needs_user', 'running', 'prepared'].includes(r.status) && r.operationId;
+      let r = __native('native_apply', o);
+      for (let i = 0; i < 3 && waits(r); i++) r = __native('native_operation', { operationId: r.operationId, seconds: 10 });
+      if (!waits(r)) return r;
+      __waiting(r.operationId);
+      throw new Error('status: needs_user, operationId: ' + r.operationId + '. The change still waits for the user in Yab.');
+    }
+    function native_operation(o) { return __native('native_operation', typeof o === 'string' ? { operationId: o } : o); }
+    function native_undo(changeId) { return __native('native_undo', changeId ? { changeId: String(changeId) } : {}); }
     var page = new Proxy({}, { get(o, k) { throw new Error('there is no page here: const t = open(url), or tab(id), then t.' + String(k) + '(…)'); } });
     """#
 }

@@ -299,6 +299,15 @@ struct DayThreadsTests {
         #expect(DayThreads.naming("Doing: " + String(repeating: "word ", count: 20)) == nil)
     }
 
+    /// The Mac's model shapes its answer from `ThreadNaming`'s guides and
+    /// copied the example names it was told into threads about anything
+    /// else (#1058): what every model is told names no example.
+    @Test func theNamingInstructionsGiveNoNameToCopy() {
+        for example in ["Arc and Dia pricing", "Comparing Arc and Dia pricing", "Compared Arc and Dia pricing"] {
+            #expect(!DayThreads.instructions.contains(example))
+        }
+    }
+
     // MARK: the day's note
 
     @Test func theDaysNoteSaysWhatYouDidAndKeepsYourCorrection() throws {

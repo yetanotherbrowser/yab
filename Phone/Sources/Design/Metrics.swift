@@ -613,6 +613,8 @@ enum Metrics {
 
     enum Settings {
         static let top: CGFloat = 60
+        /// The iPad's card: its head this far in from the card's top, as from its sides.
+        static let cardTop: CGFloat = 12
         static let titleFont: CGFloat = 28
         static let groupRadius: CGFloat = 16
         /// A page's row as tall as the root's, its icon the root's tile.

@@ -266,6 +266,19 @@ final class ReleaseGuardsTests: XCTestCase {
 
     // MARK: - paying
 
+    /// The limit an agent pays under without asking is in US dollars. Other
+    /// dollars and pesos aren't US dollars, and a decimal comma is read as
+    /// one: R$ 1.234,56, about 220 US dollars, counted as $1.23.
+    func testOnlyUSDollarsCountTowardTheLimitAsWritten() {
+        XCTAssertEqual(AgentRules.dollars("$42.10"), 42.10)
+        XCTAssertEqual(AgentRules.dollars("US$42.10"), 42.10)
+        XCTAssertEqual(AgentRules.dollars("$1,234.56"), 1234.56)
+        XCTAssertEqual(AgentRules.dollars("$1.234,56"), 1234.56)
+        for amount in ["R$1.234,56", "HK$780.00", "MX$1,000.00", "Mex$19.99", "CAD$5.00", "AR$19.99", "A$50.00", "CA$20", "€1.299,00", "$"] {
+            XCTAssertNil(AgentRules.dollars(amount), amount)
+        }
+    }
+
     func testPaymentsInOtherLanguagesAreNeverExceptions() {
         for label in ["Pay now", "Jetzt kaufen", "Zahlungspflichtig bestellen", "Payer", "Comprar", "Acquista"] {
             XCTAssertTrue(AgentRules.paying(label), label)

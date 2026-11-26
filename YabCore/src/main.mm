@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <objc/runtime.h>
 #include "include/cef_application_mac.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
@@ -27,10 +28,11 @@
 // a menu an extension's popup opens) activates it, and it stayed active
 // after them. Now it activates only for such a window, and once none is up
 // activation goes back to Yab, as an app shim's helper never keeps it.
+static bool Concealed(NSWindow* window) { return window.alphaValue <= 0 || window.ignoresMouseEvents; }
 static bool ShowsOwnWindow() {
   for (NSWindow* window in NSApp.windows) {
     if ([window isKindOfClass:NSSavePanel.class]) return true;
-    if (window.isVisible && window.alphaValue > 0 && !window.ignoresMouseEvents) return true;
+    if (window.isVisible && !Concealed(window)) return true;
   }
   return false;
 }
@@ -66,6 +68,23 @@ static void HandActivationBackSoon(const char* why) {
 @end
 #include "application_navigation.inc"
 #include "apple_events.inc"
+// Chromium shows each page's window with makeKeyAndOrderFront:, so a hidden
+// page window was this process's key window and its focused field made this
+// the focused application to Accessibility while Yab was in front. Window
+// managers (Magnet) then moved the hidden window, and the page slid inside
+// Yab's (#816). A concealed window is never key.
+static IMP cefCanBecomeKeyOriginal = nullptr;
+static BOOL CefCanBecomeKey(NSWindow* self, SEL command) {
+  if (Concealed(self)) return NO;
+  return ((BOOL (*)(NSWindow*, SEL))cefCanBecomeKeyOriginal)(self, command);
+}
+static void KeepHiddenWindowsFromKey() {
+  Class window = NSClassFromString(@"CefNSWindow");
+  Method method = window ? class_getInstanceMethod(window, @selector(canBecomeKeyWindow)) : nullptr;
+  if (!method) return;
+  cefCanBecomeKeyOriginal = method_getImplementation(method);
+  class_replaceMethod(window, @selector(canBecomeKeyWindow), (IMP)CefCanBecomeKey, method_getTypeEncoding(method));
+}
 static void Mark(const char* step) {
   if (getenv("YAB_CEF_TRACE_TIMING")) fprintf(stderr, "YabCore T %.1f %s\n", NSDate.date.timeIntervalSince1970 * 1000, step);
 }
@@ -109,6 +128,7 @@ int main(int argc, char* argv[]) {
   @autoreleasepool {
     [YabCoreApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    KeepHiddenWindowsFromKey();
     NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
     [center addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:NSOperationQueue.mainQueue
                     usingBlock:^(NSNotification*) { HandActivationBack("became active"); }];

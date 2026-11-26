@@ -1980,8 +1980,12 @@ enum ExtensionShims {
             // it from the extension: kept from it without asking again.
             let choices = Extensions.choices(id)
             guard !(sites.map(\.string) + wanted).contains(where: { choices[$0] == false }) else { return false }
+            let picks = Dictionary(sites.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a })
+            guard owner.admits(choices: picks, for: id) else { return false }
             if !sites.isEmpty || !wanted.allSatisfy(Extensions.quiet.contains) {
                 guard await owner.ask(wants: Extensions.wants(sites: sites, permissions: wanted), context: context) else { return false }
+                // Again, before anything is given: the room may have gone while the card waited.
+                guard owner.admits(choices: picks, for: id) else { return false }
             }
             if !ours.isEmpty {
                 let had = Store.settings.stringArray(forKey: "extensions.granted.\(id)") ?? []

@@ -188,7 +188,7 @@ final class SecurityReader: ObservableObject {
            let number = values[key]?[kSecPropertyKeyValue] as? NSNumber {
             until = Date(timeIntervalSinceReferenceDate: number.doubleValue)
         }
-        let when = until.map { "until " + $0.formatted(date: .abbreviated, time: .omitted) }
+        let when = until.map { "until " + $0.englishFormatted(date: .abbreviated, time: .omitted) }
         let detail = [subject, issuer.map { "issued by " + $0 }, when].compactMap { $0 }.joined(separator: " · ")
         return .init(title: judging, detail: detail, state: .neutral)
     }

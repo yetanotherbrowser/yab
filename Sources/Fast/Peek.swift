@@ -630,6 +630,12 @@ final class ColumnView: NSView {
     var frostCount: Int { host.layer.map { Self.frosts(in: $0).count } ?? 0 }
     func groundCount(_ card: CGRect) -> Int { host.layer.map { Self.grounds(in: $0, card: card).count } ?? 0 }
 
+    /// Whether `layer` is the one a PagerStage draws into: a layer-backed
+    /// view is its layer's delegate, so the stage is found through that.
+    static func isPagerLayer(_ layer: CALayer) -> Bool {
+        (layer.delegate as AnyObject?) is PagerStage
+    }
+
     /// What of the window draws in `band` while the column's own drawing of
     /// it is masked, and is neither the pages over it nor under the mask:
     /// what would show through the row of spaces sliding. For the bench.
@@ -638,7 +644,7 @@ final class ColumnView: NSView {
         var found: [[String: Any]] = []
         func walk(_ layer: CALayer, masked: Bool) {
             if layer.isHidden || layer.opacity < 0.01 || found.count > 40 { return }
-            if layer.delegate is PagerStage { return }
+            if Self.isPagerLayer(layer) { return }
             let masked = masked || (layer === mine && layer.mask != nil)
             let frame = layer.convert(layer.bounds, to: mine)
             let draws = layer.contents != nil || (layer.backgroundColor.map { $0.alpha > 0.01 } ?? false) || layer is CATextLayer

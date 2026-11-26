@@ -21,14 +21,18 @@ struct SettingsLayer: View {
             let origin = CGPoint(x: (geo.size.width - size.width) / 2, y: (geo.size.height - size.height) / 2)
             // Join keeps its sheet's place over Settings, 60 under the top.
             let joinSize = CGSize(width: size.width, height: max(0, size.height - Metrics.Settings.top))
+            let column = tablet ? nil : SettingsColumn(workspace: app.workspace, size: size, folded: app.chrome.folded, hasNow: app.nowItem != nil)
             ZStack(alignment: .topLeading) {
                 if ui.sheet.presented {
                     Color.black
                         .opacity(Metrics.Settings.dim * ui.sheet.presence(height: size.height))
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .allowsHitTesting(false)
+                        // On iPad the sheet is a card: a tap beside it closes it, as a form sheet does.
+                        .contentShape(Rectangle())
+                        .onTapGesture { if tablet, !ui.join.presented { app.surfaces.closeSettings() } }
+                        .allowsHitTesting(tablet)
                         .accessibilityHidden(true)
-                    SettingsViewport(app: app, size: size, top: tablet ? 0 : SettingsLayer.statusBar, keyboardOffset: origin.y)
+                    SettingsViewport(app: app, size: size, top: tablet ? Metrics.Settings.cardTop : SettingsLayer.statusBar, keyboardOffset: origin.y, column: column)
                         .frame(width: size.width, height: size.height)
                         .clipShape(RoundedRectangle(cornerRadius: tablet ? 22 : 0))
                         // Corners while it moves; at rest none, the screen's own glass rounds it.
@@ -88,8 +92,28 @@ extension SettingsLayer {
     }
 }
 
+/// Settings beside a status column (an iPhone Duo's cover). Apple puts Back
+/// or Close at the top of the column, so the head's button stands exactly
+/// where the page's Back does, and the head and bodies keep to the safe area.
+struct SettingsColumn: Equatable {
+    /// The page's Back, from the chrome's own geometry: it already clears
+    /// the camera, a Live Activity and a fold.
+    let button: CGRect
+    let sides: ChromeGeometry.Sides
+
+    /// nil without a status column: the head as on every other phone. The
+    /// workspace's own reservations (the whole window's, as Settings is) are
+    /// observed, so a Live Activity growing while Settings is open moves it.
+    @MainActor init?(workspace: BrowserWorkspace, size: CGSize, folded: Bool, hasNow: Bool) {
+        guard workspace.statusColumn else { return nil }
+        sides = workspace.sides(ofSurface: size.width)
+        button = ChromeGeometry(size: size, folded: folded, hasNow: hasNow, verticalControls: workspace.verticalControls,
+                                leadingRail: workspace.leadingRail, sides: sides, reservations: workspace.reservations).back
+    }
+}
+
 /// The Settings sheet: one head and one body. The head's button on the left
-/// is × on the root and ‹ on a page, the one turning into the other; its
+/// (at the top of a status column) is × on the root and ‹ on a page, the one turning into the other; its
 /// title crossfades. A page does not push in from the side: it changes the
 /// body in place, the old body going up 8 and out while the new one comes
 /// from 8 below, overlapping (settingsPush, 0.28 s; back, 0.22 s). The root
@@ -103,6 +127,7 @@ struct SettingsSheet: View {
     /// The status bar over its head: Settings is the whole screen.
     var top: CGFloat = 0
     var keyboardOffset: CGFloat = 0
+    var column: SettingsColumn? = nil
     @State private var position = ScrollPosition(edge: .top)
     @State private var pulledFar = false
     @State private var keyboard: CGFloat = 0
@@ -122,6 +147,15 @@ struct SettingsSheet: View {
         // under the standard iOS bar: a blurred ground down to the head's
         // foot, with its hairline, there only once rows are under it.
         let barShown = routes.isEmpty ? ui.rootUnder : ui.pageUnder
+        let sides = column?.sides ?? .zero
+        // How far a finger has taken the page in front back, 0 to 1: the
+        // button and the title go over to the page under it as it goes.
+        let pull = size.width > 0 ? min(max(ui.backDrag / size.width, 0), 1) : 0
+        // The page in front is the one Settings opened at: × closes, as on the root.
+        let onPage = !routes.isEmpty && !ui.standsAsRoot
+        let button = SettingsHeadButton(page: !onPage ? 0 : routes.count == 1 ? 1 - pull : 1,
+                                        diameter: column?.button.width ?? Metrics.Settings.headButton,
+                                        action: onPage ? { ui.closePage() } : close)
         ZStack(alignment: .top) {
             ZStack(alignment: .top) {
                 root
@@ -135,6 +169,8 @@ struct SettingsSheet: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .safeAreaPadding(.top, top + Metrics.Settings.headBar)
+            .safeAreaPadding(.leading, sides.left)
+            .safeAreaPadding(.trailing, sides.right)
             .scrollEdgeEffectHidden(true, for: .top)
             .clipped()
             SettingsHeadBar()
@@ -142,9 +178,13 @@ struct SettingsSheet: View {
                 .opacity(barShown ? 1 : 0)
                 .animation(.easeOut(duration: 0.18), value: barShown)
                 .allowsHitTesting(false)
-            SettingsHead(routes: routes, asRoot: ui.standsAsRoot, pull: size.width > 0 ? min(max(ui.backDrag / size.width, 0), 1) : 0,
-                         close: close, back: { ui.closePage() }, drag: headerDrag)
+            SettingsHead(routes: routes, pull: pull, button: column == nil ? button : nil, drag: headerDrag)
+                .padding(.leading, sides.left)
+                .padding(.trailing, sides.right)
                 .padding(.top, top)
+            if let column {
+                button.position(x: column.button.midX, y: column.button.midY)
+            }
         }
         .tint(SettingsInk.text)
         .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -309,27 +349,22 @@ private struct SettingsHeadBar: View {
 }
 
 /// The sheet's one head: the round glass button on the left (× on the root,
-/// ‹ on a page) and the title in the middle ("Settings" on the root, a page
-/// whose body has no big title of its own says its name here).
+/// ‹ on a page; nil when it stands in a status column) and the title in the
+/// middle ("Settings" on the root, a page whose body has no big title of its
+/// own says its name here).
 private struct SettingsHead<Drag: Gesture>: View {
     let routes: [SettingsRoute]
-    /// The page in front is the one Settings opened at: × closes, as on the root.
-    var asRoot = false
-    /// How far a finger has taken the page in front back, 0 to 1: the
-    /// button and the title go over to the page under it as it goes.
+    /// How far a finger has taken the page in front back, 0 to 1 (SettingsSheet).
     var pull: CGFloat = 0
-    let close: () -> Void
-    let back: () -> Void
+    let button: SettingsHeadButton?
     let drag: Drag
 
     var body: some View {
-        let onPage = !routes.isEmpty && !asRoot
         let title = Self.title(routes.last)
         // The page under the one in front: the root's when only one is open.
         let under: String? = routes.isEmpty ? nil : Self.title(routes.count >= 2 ? routes[routes.count - 2] : nil)
-        let page: CGFloat = !onPage ? 0 : routes.count == 1 ? 1 - pull : 1
         HStack(spacing: 0) {
-            SettingsHeadButton(page: page, action: onPage ? back : close)
+            if let button { button }
             Spacer(minLength: 0)
         }
         .padding(.leading, Metrics.Settings.headSide)
@@ -383,6 +418,8 @@ private struct SettingsHeadButton: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     /// 0 ×, 1 ‹, between them as a finger takes the last page back.
     let page: CGFloat
+    /// The head's 44, or the rail's round in a status column.
+    var diameter = Metrics.Settings.headButton
     let action: () -> Void
     private var onPage: Bool { page > 0.5 }
 
@@ -398,7 +435,7 @@ private struct SettingsHeadButton: View {
                     .rotationEffect(.degrees(90 * (1 - page)))
                     .scaleEffect(0.7 + 0.3 * page)
             }
-            .frame(width: Metrics.Settings.headButton, height: Metrics.Settings.headButton)
+            .frame(width: diameter, height: diameter)
             .modifier(SettingsHeadGlass(opaque: reduceTransparency))
             .contentShape(Circle())
         }

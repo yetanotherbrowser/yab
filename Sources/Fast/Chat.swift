@@ -81,6 +81,11 @@ struct Chat: Codable, Identifiable, Equatable {
     var textOnly: Bool? = nil
     /// Gemini's explicit reasoning choice, kept with its model across relaunch.
     var effort: String? = nil
+    /// Stopped, or its next message still owes the agent the stop note
+    /// (Agents.stoppedLine), when last kept: a chat brought back after a
+    /// relaunch says so too (#964). Optional, so chats written before it
+    /// read as they were.
+    var afterStop: Bool? = nil
 
     /// Gmail's data is in it: mail began it, an email or a list was given,
     /// or a mail tool ran. Such a chat stays on this Mac: sync never sends

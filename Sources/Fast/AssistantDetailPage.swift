@@ -81,7 +81,7 @@ struct AssistantDetailPage: View {
                     .padding(.bottom, 12)
                 Text(grant.name)
                     .font(.system(size: 22, weight: .bold))
-                Text("\(status(grant)) · connected \(grant.made.formatted(.relative(presentation: .named)))")
+                Text("\(status(grant)) · connected \(grant.made.formatted(.relative(presentation: .named).locale(AppDates.locale)))")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -214,7 +214,7 @@ struct AssistantDetailPage: View {
                         .foregroundStyle(entry.outcome == "ok" ? .primary : .secondary)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(entry.at.formatted(date: .omitted, time: .shortened))
+                    Text(entry.at.englishFormatted(date: .omitted, time: .shortened))
                         .foregroundStyle(.tertiary)
                         .monospacedDigit()
                 }

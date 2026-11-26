@@ -1039,9 +1039,10 @@ struct TaskLineView: View {
             .padding(.horizontal, 4)
         } else if !line.answer.isEmpty {
             ThreadScrollView {
-                Text(line.answer)
+                Text(AgentAnswer.rich(line.answer))
                     .font(.system(size: 13.5))
                     .foregroundStyle(Palette.ink)
+                    .lineSpacing(2)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)

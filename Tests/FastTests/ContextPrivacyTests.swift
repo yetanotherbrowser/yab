@@ -17,6 +17,7 @@ struct ContextPrivacyTests {
             var stores = ContextPrivacy.Stores()
             stores.profile = { self.profile }
             stores.saveProfile = { self.profileWrites += 1; guard self.saveWorks else { return false }; self.profile = $0; return true }
+            stores.saveSyncedProfile = stores.saveProfile
             stores.addresses = { self.addresses }
             stores.saveAddress = { next in
                 self.addressWrites += 1

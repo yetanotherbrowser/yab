@@ -86,6 +86,12 @@ extension Extensions {
         all.first { $0.seen(tab) } ?? shared
     }
 
+    /// Site Controls' extensions for `tab` in `browser`: a small window's page runs its own sign-in's.
+    static func of(_ browser: Browser?, page tab: Tab?) -> Extensions {
+        if let browser, let tab, browser.outside.contains(where: { $0 === tab }) { return of(tab: tab) }
+        return of(browser)
+    }
+
     /// The extensions whose controller loaded this context.
     static func owner(of context: WKWebExtensionContext) -> Extensions {
         all.first { $0.controller === context.webExtensionController } ?? shared

@@ -169,7 +169,7 @@ struct DevHead: View {
                 }
                 Divider()
             }
-            Button("Focus Page") { browser.active.map { $0.page.window?.makeFirstResponder($0.page) } }
+            Button("Focus Page") { if let tab = browser.active { tab.page.window?.makeFirstResponder(tab.page) } }
             if let chrome = browser.chromiumDevFront?.chromiumDev {
                 // Chrome's DevTools have these of their own, and no use for
                 // WebKit's More Tools and Device Settings.

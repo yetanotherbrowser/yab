@@ -182,7 +182,7 @@ enum AgentHistory {
     }
 
     private static func lines(_ rows: [(title: String, url: String, last: Date, device: String?)]) -> String {
-        let format = DateFormatter()
+        let format = AppDates.formatter()
         format.dateFormat = "yyyy-MM-dd"
         return rows.map { row in
             let on = row.device.map { "  (on \($0))" } ?? ""

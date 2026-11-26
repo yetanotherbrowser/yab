@@ -292,7 +292,7 @@ private struct BoostHistoryView: View {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(revision.intent).font(.system(size: 12)).lineLimit(4)
-                                Text(revision.date.formatted()).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(revision.date.formatted(AppDates.dateTime)).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button("Compare") { inspecting = revision }
@@ -322,7 +322,7 @@ struct BoostDiffView: View {
         let current = Boosts.shared.packages[record.id]?.files ?? [:]
         let changed = Set(current.keys).union(revision.files.keys).sorted().filter { current[$0] != revision.files[$0] }
         VStack(alignment: .leading, spacing: 12) {
-            Text("Changes since " + revision.date.formatted()).font(.headline)
+            Text("Changes since " + revision.date.formatted(AppDates.dateTime)).font(.headline)
             Text("Removed lines are prefixed with −, added lines with +.").font(.caption).foregroundStyle(.secondary)
             ThreadScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {

@@ -39,13 +39,22 @@ struct ChromiumContextMenuTests {
     @Test func linkRowsMatchWebKitIdentifiersAndCopyTheUnfilteredAddress() throws {
         let c = try context(["link": .string("https://example.org/a"), "unfilteredLink": .string("https://example.org/a#raw")])
         let menu = rows(c)
-        #expect(ids(menu) == ["WKMenuItemIdentifierOpenLinkInNewWindow", "YabOpenLinkInSplitView", "WKMenuItemIdentifierOpenLink",
-                              "WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierShareMenu"])
-        #expect(menu[4]?.action == .copy("https://example.org/a#raw"))
+        #expect(ids(menu) == ["WKMenuItemIdentifierOpenLinkInNewWindow", "YabOpenLinkInSplitView", "YabOpenLinkInPrivateWindow",
+                              "WKMenuItemIdentifierOpenLink", "WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierCopyLink",
+                              "WKMenuItemIdentifierShareMenu"])
+        #expect(menu[5]?.action == .copy("https://example.org/a#raw"))
         #expect(menu[0]?.action == .openTab(URL(string: "https://example.org/a")!))
         // What ⌥-click on the link does, as Arc's menu had it (feedback #1900).
         #expect(menu[1]?.title == "Open in Split View")
         #expect(menu[1]?.action == .openSplit(URL(string: "https://example.org/a")!))
+        #expect(menu[2]?.title == "Open Link in Private Window")
+        #expect(menu[2]?.action == .openPrivate(URL(string: "https://example.org/a")!))
+    }
+
+    @Test func privateTabsOfferNoPrivateWindowRow() throws {
+        let c = try context(["link": .string("https://example.org/a")])
+        let menu = ChromiumMenuRow.rows(for: c, searchName: "Kagi", canGoBack: false, canGoForward: false, askable: false, privateLink: false)
+        #expect(!ids(menu).contains("YabOpenLinkInPrivateWindow"))
     }
 
     @Test func mailtoLinkCopiesTheAddressAndOpensNoTab() throws {
@@ -173,8 +182,8 @@ struct ChromiumContextMenuTests {
         let c = try context(["link": .string("https://example.org/"), "source": .string("https://cdn.example/p.png"),
                              "media": .number(1), "hasImage": .bool(true)])
         let menu = ids(rows(c))
-        // The link's six rows, Open in Split View among them, then the image's.
-        #expect(menu.firstIndex(of: "-") == 6)
+        // The link's seven rows, Open in Split View and Open Link in Private Window among them, then the image's.
+        #expect(menu.firstIndex(of: "-") == 7)
         #expect(menu.contains("WKMenuItemIdentifierCopyLink") && menu.contains("WKMenuItemIdentifierCopyImage"))
     }
 

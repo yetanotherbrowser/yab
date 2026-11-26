@@ -651,6 +651,7 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
             if (previousView != null) { revokePagingFrame(); clearHistoryFrames() }
         }
         views[tabId] = WeakReference(view)
+        if (previousView !== view || tabId == selected) chromeClipping.apply(tabId, view)
         (view as? HistorySwipeView)?.bindAutofill(entry) {
             val document = entry.document
             val ownership = ownershipEpoch
@@ -692,6 +693,22 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
         (view as? HistorySwipeView)?.bindAutofill(null, null)
         if (views[tabId]?.get() === view) { revokePagingFrame(); clearHistoryFrames(); (view as? HistorySwipeView)?.bindHistory(null, null); views.remove(tabId) }
         historyPaintCallbacks.remove(view)
+    }
+
+    /** The bottom chrome's covered space, in this engine's own screen pixels.
+     * A page's bottom-fixed elements stay above it (GeckoView's dynamic
+     * toolbar pair; Chromium's browser controls take the same numbers). */
+    private val chromeClipping = GeckoChromeClipping(
+        { view, px -> (view as GeckoView).setDynamicToolbarMaxHeight(px) },
+        { view, px -> (view as GeckoView).setVerticalClipping(px) })
+
+    /** GeckoView wants the obscured height relative to the toolbar maximum.
+     * Numbers come from the chrome layer in screen pixels; 0/0 clears. Each
+     * report belongs to the pane that reported it (its tab id), never to
+     * whichever pane happens to be selected. A pane without a front tab has
+     * no engine view of its own; its numbers wait under the empty key. */
+    fun setChromeClipping(owner: String?, obscuredPx: Int, maxPx: Int) {
+        chromeClipping.update(owner ?: "", obscuredPx, maxPx, owner?.let { views[it]?.get() })
     }
 
     internal fun setHistorySwipeConsumer(consumer: HistorySwipeConsumer?) {
@@ -1604,6 +1621,7 @@ class GeckoEngine(private val context: Context, val runtime: GeckoRuntime, priva
         if (historyFrameOwner === pages[tabId]) clearHistoryFrames()
         historyTouchChannels.remove(tabId)?.close()
         pages[tabId]?.let { old -> historyTargets.entries.removeAll { it.value === old } }
+        chromeClipping.forget(tabId)
         if (disposed) return
         dismissContextMenu(tabId)
         privateKeepers.values.forEach { it.readiness.cancel(tabId) }

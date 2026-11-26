@@ -172,4 +172,22 @@ struct ChromiumAdoptedPeekTests {
         #expect(!scene.browser.peekAdoptedLink(scene.child, from: scene.source, action: action))
         #expect(scene.browser.tabs.contains { $0 === scene.child })
     }
+
+    @Test func closingAdoptedPeekTabDismissesPeek() throws {
+        let scene = Scene()
+        defer { scene.end() }
+        let browser = scene.browser, child = scene.child, source = scene.source
+        let page = try #require(child.page as? ChromiumPage)
+        page.events = browser
+        page.popupBackSource = source
+        page.receiveAction(["request": .string("oauth-peek"), "url": .string("https://accounts.google.com/o/oauth2/auth"),
+                            "transition": .number(0), "gesture": .bool(true)])
+        #expect(browser.peeking === child)
+        #expect(source.peek === child)
+
+        page.receive(YabCoreEvent(name: "tab.closed", params: [:]))
+        #expect(browser.peeking == nil)
+        #expect(browser.peekFrom == nil)
+        #expect(source.peek == nil)
+    }
 }

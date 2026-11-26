@@ -254,7 +254,7 @@ enum MailPeople {
 
     /// A page with Who as you wrote it, over the day you did.
     static func withWho(_ existing: String, text: String, now: Date = Date()) -> String {
-        let day = now.formatted(.dateTime.month(.abbreviated).day())
+        let day = now.formatted(AppDates.dateTime.month(.abbreviated).day())
         let who = text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n_\(yoursMark) · \(day)_"
         var all = sections(existing)
         if let at = all.firstIndex(where: { $0.heading == "Who" }) {

@@ -1037,6 +1037,7 @@ struct AskLayer: View {
             // A card or an address to keep waits behind both (WalletKeep).
             let pay = question == nil && offer == nil && offers ? tab.payOffer.flatMap { $0.parked ? nil : $0 } : nil
             let page = pageFrame
+            let covered = browser.fieldShowing && (offers || !keyed)
             ZStack(alignment: .topLeading) {
                 Color.clear.allowsHitTesting(false)
                 if let offer {
@@ -1082,8 +1083,13 @@ struct AskLayer: View {
                 // the clicks of; back as it was once the field goes. The
                 // browser's own field: a small window's page has none over it.
                 AskHost(browser: browser, tab: tab, question: question, place: question.map { place($0, page) }, keys: keys(question),
-                        covered: browser.fieldShowing && (offers || !keyed), room: room, origin: origin)
+                        covered: covered, room: room, origin: origin)
                     .frame(width: window.width, height: window.height)
+                    // Over the whole window, where SwiftUI's accessibility
+                    // hit test stops (as at HoardSky): kept out of it until
+                    // there is a question on it to read, and while the field
+                    // stands over it with the question out of sight.
+                    .accessibilityHidden(question == nil || covered)
             }
             // Gone with its tab's layer: no card of its stands over the corner.
             .onDisappear { room?.card = nil }

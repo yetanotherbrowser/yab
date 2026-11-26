@@ -272,6 +272,45 @@ struct EmptyFolderDragTests {
         }
     }
 
+    /// #1037: split view pairs among the kept, each drawn as one row, and a
+    /// folder of today's carried up and let go just above Clear, under an
+    /// open folder of yours: it stays a folder of its own there. Measured
+    /// with every tab of a pair as a row, the place was a row low for each
+    /// pair above, among the open folder's tabs, and it went into it.
+    @Test(arguments: Density.allCases, [0.1, 0.3])
+    func anUnpinnedFolderDroppedUnderPairsStaysOnItsOwn(_ density: Density, _ above: Double) async throws {
+        try await world(density) { f in
+            let pairs = (0..<3).map { _ in (f.tab("Left", kept: true), f.tab("Right", kept: true)) }
+            f.browser.pairs = pairs.map { Pair(first: $0.0.id, second: $0.1.id) }
+            let open = Nest(name: "Open", open: true)
+            let inside = (0..<4).map { f.tab("In \($0)", kept: true, nest: open) }
+            let today = Nest(name: "Today", open: false)
+            today.fleeting = true
+            let four = f.tab("Four", kept: false), five = f.tab("Five", kept: false)
+            _ = f.tab("Loose", kept: false)
+            four.nest = today; five.nest = today
+            f.sync()
+            let slots = f.folders.slots(f.browser.tabs, joined: true).folders
+            let line = try #require(slots[Folders.line]), from = try #require(slots[today.key])
+            try #require(slots[open.key] == 3, "the three pairs are three rows")
+            // The fixture's `begin` counts a pair as two rows; start from the
+            // row as drawn.
+            let start = CGPoint(x: 120, y: try #require(f.page.rowMiddle(today.key)))
+            var drag = Fixture.Drag(start: start, from: from, last: start)
+            try f.send(.leftMouseDown, start)
+            for step in stride(from: Double(from) - 0.5, through: Double(line) - above, by: -0.05) { try f.move(&drag, want: step) }
+            try f.move(&drag, want: Double(line) - above)
+            try #require(f.folders.carried == today.key, "a real carry")
+            try f.end(drag)
+            #expect(today.parent == nil, "went into \(today.parent?.name ?? "none")")
+            #expect(!today.today && four.kept && five.kept && four.nest === today && five.nest === today)
+            #expect(inside.allSatisfy { $0.nest === open })
+            let kept = f.browser.tabs.filter(\.kept).map(\.id)
+            #expect(Array(kept.suffix(2)) == [four.id, five.id], "at the end of the kept, under Open's run; kept: \(f.browser.tabs.filter(\.kept).map { "\($0.title)/\($0.nest?.name ?? "-")" })")
+            f.expectReleased()
+        }
+    }
+
     @Test(arguments: Density.allCases)
     func aKeptFolderCrossesClearInBothDirections(_ density: Density) async throws {
         try await world(density) { f in

@@ -120,7 +120,7 @@ enum PinList {
         let meetings = Meetings.shared
         let now = Date()
         let calendar = Calendar.current
-        let times = DateFormatter()
+        let times = AppDates.formatter()
         times.timeStyle = .short
         times.dateStyle = .none
         return meetings.list

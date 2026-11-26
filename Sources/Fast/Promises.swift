@@ -238,8 +238,8 @@ final class Promises {
         }
         if promise.soft { return "this week" }
         if calendar.isDate(due, inSameDayAs: calendar.date(byAdding: .day, value: 1, to: now) ?? now) { return "due tomorrow" }
-        if due.timeIntervalSince(now) < 6 * 86_400 { return "due " + due.formatted(.dateTime.weekday(.abbreviated)) }
-        return "due " + due.formatted(.dateTime.month(.abbreviated).day())
+        if due.timeIntervalSince(now) < 6 * 86_400 { return "due " + due.formatted(AppDates.dateTime.weekday(.abbreviated)) }
+        return "due " + due.formatted(AppDates.dateTime.month(.abbreviated).day())
     }
 
     // MARK: - the budget (anti-nag)

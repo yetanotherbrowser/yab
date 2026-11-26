@@ -48,7 +48,9 @@
       e.preventDefault();
       return;
     }
-    if (e.navigationType === 'push' || e.navigationType === 'replace') {
+    // pushState and replaceState fire these too, but the page stays put, so
+    // its own reload right after (a marker in the URL, then reload) goes on.
+    if ((e.navigationType === 'push' || e.navigationType === 'replace') && !e.destination.sameDocument) {
       leaving = e;
       since = Date.now();
     }

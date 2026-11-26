@@ -5,7 +5,7 @@ import SwiftUI
 import WebKit
 
 /// A web view that reads the two-finger swipe for itself.
-final class PageView: WKWebView, NSTextContent {
+final class PageView: QuietWebView, NSTextContent {
     // Retained here because WebKit holds its navigation delegate weakly.
     let navigationEvents = WebKitPageEvents()
     let stateObservation = WebKitPageState()
@@ -205,7 +205,7 @@ final class PageView: WKWebView, NSTextContent {
         wrapContextLink(in: menu, event: event)
         defer {
             Self.dress(menu)
-            splitLinkHere(menu)
+            linkRowsHere(menu)
             Self.menuWatch?(menu)
         }
         if let (user, linked) = onAppleCodeContext?() {
@@ -379,13 +379,12 @@ final class PageView: WKWebView, NSTextContent {
         guard contextLinkItem === item,
               let command = objc_getAssociatedObject(item, &Self.contextLinkActionKey) as? ContextLinkAction else { return }
         menuOpen = nil
-        if let link = contextLink, link.at >= contextMenuStarted,
-           link.source == url, contextMenuSource == url {
+        if let link = currentContextLink {
             // Shift at either the context press or the native selection is
             // an explicit request to show the destination.
             let flags = (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).union(contextMenuFlags)
             let id = UUID()
-            menuOpen = (id, link.url, url, ProcessInfo.processInfo.systemUptime + 1, flags.contains(.shift))
+            menuOpen = (id, link, url, ProcessInfo.processInfo.systemUptime + 1, flags.contains(.shift))
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 if self?.menuOpen?.id == id { self?.menuOpen = nil }
             }
@@ -402,27 +401,57 @@ final class PageView: WKWebView, NSTextContent {
     /// Puts a link in Split View beside this page's tab.
     var onSplitLink: ((URL) -> Void)?
 
-    private func splitLinkHere(_ menu: NSMenu) {
-        guard onSplitLink != nil,
-              let tab = menu.items.first(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" }),
-              !menu.items.contains(where: { $0.identifier?.rawValue == Self.splitLinkID }) else { return }
-        let item = NSMenuItem(title: Self.splitLinkTitle, action: #selector(splitContextLink(_:)), keyEquivalent: "")
-        item.target = self
-        item.identifier = NSUserInterfaceItemIdentifier(Self.splitLinkID)
-        MenuMark.put(Self.marks[Self.splitLinkID], on: item)
-        menu.insertItem(item, at: menu.index(of: tab) + 1)
+    /// The link menu's Open Link in Private Window, under Open in Split
+    /// View: a private window of its own, as ⇧⌘N opens. Not from a private
+    /// tab, whose new tab rows already stay private.
+    static let privateLinkTitle = "Open Link in Private Window"
+    static let privateLinkID = "YabOpenLinkInPrivateWindow"
+    /// Opens a link in a new private window.
+    var onPrivateLink: ((URL) -> Void)?
+
+    /// Open in Split View, then Open Link in Private Window, under Open Link
+    /// in New Tab, each where this page has somewhere to send the link.
+    private func linkRowsHere(_ menu: NSMenu) {
+        guard let tab = menu.items.first(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" }) else { return }
+        var index = menu.index(of: tab)
+        let rows: [(on: Bool, title: String, id: String, action: Selector)] = [
+            (onSplitLink != nil, Self.splitLinkTitle, Self.splitLinkID, #selector(splitContextLink(_:))),
+            (onPrivateLink != nil, Self.privateLinkTitle, Self.privateLinkID, #selector(privateContextLink(_:))),
+        ]
+        for row in rows where row.on && !menu.items.contains(where: { $0.identifier?.rawValue == row.id }) {
+            let item = NSMenuItem(title: row.title, action: row.action, keyEquivalent: "")
+            item.target = self
+            item.identifier = NSUserInterfaceItemIdentifier(row.id)
+            MenuMark.put(Self.marks[row.id], on: item)
+            index += 1
+            menu.insertItem(item, at: index)
+        }
     }
 
-    /// The link is the page's contextmenu event's for this press, as Open
-    /// Link in New Tab reads it; without one (a link that isn't the web's),
-    /// the new tab row's own action.
+    /// The page's contextmenu event's link for this press, as Open Link in
+    /// New Tab reads it, or nil when none was heard for it.
+    private var currentContextLink: URL? {
+        guard let link = contextLink, link.at >= contextMenuStarted, link.source == url, contextMenuSource == url else { return nil }
+        return link.url
+    }
+
+    /// Without the page's link (a link that isn't the web's), the new tab
+    /// row's own action.
     @objc private func splitContextLink(_ item: NSMenuItem) {
-        if let link = contextLink, link.at >= contextMenuStarted, link.source == url, contextMenuSource == url {
+        if let link = currentContextLink {
             contextLink = nil
-            onSplitLink?(link.url)
+            onSplitLink?(link)
         } else if let tab = contextLinkItem {
             openContextLink(tab)
         }
+    }
+
+    /// Without the page's link, nothing opens: a link that isn't the web's
+    /// has no business in a private window.
+    @objc private func privateContextLink(_ item: NSMenuItem) {
+        guard let link = currentContextLink else { return }
+        contextLink = nil
+        onPrivateLink?(link)
     }
 
     func takeMenuOpen(for destination: URL?) -> Bool? {
@@ -443,6 +472,7 @@ final class PageView: WKWebView, NSTextContent {
         "WKMenuItemIdentifierOpenLink": "yab.arrowout",
         "WKMenuItemIdentifierOpenLinkInNewWindow": "yab.tab.plus",
         "YabOpenLinkInSplitView": "rectangle.split.2x1",
+        "YabOpenLinkInPrivateWindow": "incognito",
         "WKMenuItemIdentifierDownloadLinkedFile": "yab.download",
         "WKMenuItemIdentifierCopyLink": "link",
         "WKMenuItemIdentifierCopyLinkWithHighlight": "yab.text",
@@ -1300,36 +1330,11 @@ final class PageView: WKWebView, NSTextContent {
         if let onStep { onStep(forward) } else if forward { goForward() } else { goBack() }
     }
 
-    // MARK: - keys the page didn't use
+    // MARK: - keys the page didn't use (QuietWebView keeps them quiet)
 
-    /// The last key handed to the page. WebKit sends a key the page didn't
-    /// use back up the responder chain, the same event, a second time,
-    /// where nothing takes it and macOS plays its "can't do that" sound.
-    /// Editors that put the text in themselves (X's reply box, anything built
-    /// on Draft.js) leave WebKit thinking their keys unused, so typing into
-    /// them beeped. Safari keeps those quiet, and so does this view. The
-    /// app's own shortcuts never get this far: its key monitor takes them
-    /// before the page sees the key.
-    private var handed: NSEvent?
-    /// How many came back unused and were kept quiet, for the bench.
-    static var quieted = 0
-
-    /// Arrows, Home, End and the page keys carry function flags, so AppKit
-    /// offers them as key equivalents first, and WebKit takes them for the
-    /// page there, never in `keyDown`. One the page leaves unused (a player
-    /// that seeks on its own keydown without preventDefault, a page with
-    /// nowhere to scroll) comes back to `keyDown` all the same, so it is
-    /// marked as handed here too. Only a key WebKit took: one it passes on
-    /// still reaches `keyDown` for the first time. ⌘ and ⌃ are left to beep
-    /// as anywhere else when nothing has them.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         recordWindowInput(event)
-        let taken = super.performKeyEquivalent(with: event)
-        if taken, event.type == .keyDown, window?.firstResponder === self,
-           event.modifierFlags.isDisjoint(with: [.command, .control]) {
-            handed = event
-        }
-        return taken
+        return super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -1337,12 +1342,6 @@ final class PageView: WKWebView, NSTextContent {
         clearMenuOpen()
         if !PageView.agentActing { PageView.person?(self); RelayGuard.felt(self); lastInput = event.timestamp }
         PageView.reached?(self)
-        if let handed, PageView.same(handed, event) {
-            self.handed = nil
-            PageView.quieted += 1
-            return
-        }
-        handed = event
         super.keyDown(with: event)
     }
 
@@ -1353,12 +1352,6 @@ final class PageView: WKWebView, NSTextContent {
     /// and Chrome keep the window as it is; a page's own full screen (a
     /// video's) still ends on Escape, which WebKit handles itself.
     override func cancelOperation(_ sender: Any?) {}
-
-    /// The same key press: the event WebKit sends back is the one it was
-    /// given, and no two presses share a timestamp.
-    static func same(_ one: NSEvent, _ other: NSEvent) -> Bool {
-        one === other || (one.timestamp == other.timestamp && one.keyCode == other.keyCode && one.type == other.type)
-    }
 
     // MARK: - two fingers sideways
 

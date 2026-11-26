@@ -83,4 +83,19 @@ struct LinkPeekRoutingTests {
         #expect(Browser.modifiedForeground(for: action(.other), isPopup: false, held: [.command], afterClick: false) == nil)
         #expect(Browser.modifiedForeground(for: action(.linkActivated, flags: [.command]), isPopup: false, held: [], afterClick: false) == false)
     }
+
+    @MainActor @Test func pinnedOAuthAndSignInLinksStayInTabToPreserveSessionStorage() {
+        let replit = URL(string: "https://replit.com/login?source=home&goto=%2F%7E")!
+        let oauthLinks = [
+            URL(string: "https://accounts.google.com/o/oauth2/v2/auth?client_id=123&redirect_uri=https%3A%2F%2Freplit.com%2F__%2Fauth%2Fhandler")!,
+            URL(string: "https://github.com/login/oauth/authorize?client_id=abc&redirect_uri=https%3A%2F%2Freplit.com%2Fcallback")!,
+            URL(string: "https://replit.firebaseapp.com/__/auth/handler?apiKey=key&authType=signInViaRedirect")!,
+            URL(string: "https://idp.example.com/authorize?client_id=abc&response_type=code&redirect_uri=https%3A%2F%2Freplit.com%2Fcb")!,
+            URL(string: "https://sso.example.com/idp?SAMLRequest=payload")!
+        ]
+        for destination in oauthLinks {
+            #expect(!Browser.shouldPeek(destination, from: replit, pinned: true, flags: [], button: 0))
+            #expect(Browser.shouldPeek(destination, from: replit, pinned: true, flags: .shift, button: 0))
+        }
+    }
 }

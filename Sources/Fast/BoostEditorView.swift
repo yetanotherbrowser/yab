@@ -49,7 +49,7 @@ struct BoostEditorLayer: View {
             }
             .animation(still ? nil : editor.open ? Motion.arrive : Motion.depart, value: editor.open)
             .animation(still ? nil : Motion.chatQuick, value: editor.choice != nil)
-            .background(BoostEditorAnchor(box: box).allowsHitTesting(false))
+            .background(BoostEditorAnchor(box: box).allowsHitTesting(false).accessibilityHidden(true))
         }
         .onChange(of: browser.activeID) { _, _ in if editor.browser === browser { editor.close() } }
         .onChange(of: browser.spaceID) { _, _ in if editor.browser === browser { editor.close() } }

@@ -665,7 +665,7 @@ final class Diary: @unchecked Sendable {
                 let rows = (self.searchNow(words)["results"] as? [[String: Any]] ?? []).prefix(limit)
                 let lines = rows.compactMap { row -> String? in
                     guard let url = row["url"] as? String, !url.isEmpty else { return nil }
-                    let day = Date(timeIntervalSince1970: (row["at"] as? Double ?? 0) / 1000).formatted(date: .abbreviated, time: .omitted)
+                    let day = Date(timeIntervalSince1970: (row["at"] as? Double ?? 0) / 1000).englishFormatted(date: .abbreviated, time: .omitted)
                     let passage = (row["passage"] as? String)?.replacingOccurrences(of: "\u{2}", with: "")
                         .replacingOccurrences(of: "\u{3}", with: "").replacingOccurrences(of: "\n", with: " ")
                     return "- \(row["title"] as? String ?? "") · \(url) · \(day)" + (passage.map { $0.isEmpty ? "" : " · \u{201C}\($0)\u{201D}" } ?? "")

@@ -852,11 +852,11 @@ final class PlanAccounts: ObservableObject {
     /// Whether a generic password of this service is in the keychain. Its
     /// attributes only, never its secret, with no prompt allowed: a locked
     /// or guarded item still counts as there.
-    nonisolated static func inKeychain(_ service: String) -> Bool {
+    @Sendable nonisolated static func inKeychain(_ service: String) -> Bool {
         inKeychain(service, account: nil)
     }
 
-    nonisolated static func inKeychain(_ service: String, account: String?) -> Bool {
+    @Sendable nonisolated static func inKeychain(_ service: String, account: String?) -> Bool {
         let context = LAContext()
         context.interactionNotAllowed = true
         var query: [String: Any] = [
@@ -1042,7 +1042,7 @@ final class PlanAccounts: ObservableObject {
             let home = Self.make(cli, id: id)
             var account = PlanAccount(id: id, cli: cli, home: home.path)
             let env = env(account, base: found.env)
-            let end = await Agents.shared.connect(cli, binary: binary, env: env, in: browser, privately: true, permit: permit) { [weak self] page in
+            let end = await Agents.shared.connect(cli, binary: binary, env: env, in: browser, privately: true, permit: permit) { [weak self = self] page in
                 guard let self, self.adding == cli, self.step != .checking else { return }
                 self.step = Step(page)
             }

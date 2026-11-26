@@ -496,7 +496,7 @@ final class SiteItems: ObservableObject {
         switch state(skill) {
         case .on where footQuiet(skill): return "Buttons only: you skipped its suggestions 3 times this week"
         case .on: return "Buttons in its own rows, and ⌘J over what you point at"
-        case .never(let since): return "Off since \(since.formatted(.dateTime.month(.abbreviated).day())), you chose Never"
+        case .never(let since): return "Off since \(since.formatted(AppDates.dateTime.month(.abbreviated).day())), you chose Never"
         case .quiet: return "Hidden, unused for 2 weeks"
         case .everywhereOff: return "Off with every site"
         }

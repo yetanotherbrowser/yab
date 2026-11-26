@@ -33,9 +33,9 @@ struct MailCodeBar: View {
     private var title: String { FieldMail.title(item.read) }
 
     private func detail(_ state: MailCodes.State) -> String {
-        let time = item.expires.formatted(date: .omitted, time: .shortened)
+        let time = item.expires.englishFormatted(date: .omitted, time: .shortened)
         if state == .used, let used = MailCenter.shared.engines[item.account]?.store.codeUse(message: item.message) {
-            return "Entered on " + used.site + " at " + used.at.formatted(date: .omitted, time: .shortened)
+            return "Entered on " + used.site + " at " + used.at.englishFormatted(date: .omitted, time: .shortened)
         }
         if state == .copied { return "On the clipboard until " + time }
         let prefix = item.read.card.map { "Card ••" + $0 + " · " } ?? ""

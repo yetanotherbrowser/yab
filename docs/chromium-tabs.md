@@ -90,7 +90,7 @@ are closed until Yab tab adoption is implemented. Chromium PageFoot obscured
 insets are not implemented. Non-GET requests, custom headers/body (except a
 validated HTTP(S) Referer carried across a WebKit navigation), HTML with a base
 URL, PDF and foreign frames fail explicitly. Child-frame discovery is empty.
-Page zoom currently uses DOM zoom. Full IME marked-text composition and
+Page zoom sets Chromium's own zoom level. Full IME marked-text composition and
 accessibility are not implemented. Mixed-DPI producer-screen selection and
 large tab counts have not been accepted. The smoke uses a normal isolated
 space; private-window storage and cross-space profile scenarios were not run.

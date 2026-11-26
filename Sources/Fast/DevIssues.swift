@@ -124,7 +124,7 @@ extension DevCopy {
             if let page { line.append("Page " + clean(page.absoluteString)) }
             if let size, size.width > 0 { line.append("\(Int(size.width))×\(Int(size.height))") }
             line.append(browser)
-            line.append(Date().formatted(date: .abbreviated, time: .shortened))
+            line.append(Date().englishFormatted(date: .abbreviated, time: .shortened))
             out += line.joined(separator: " · ") + "\n"
         }
         for entry in errors + warnings {

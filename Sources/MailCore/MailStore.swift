@@ -1760,6 +1760,21 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// When the sender's next newer code is dated, which replaces this one
+    /// half a minute before (`codeReplaced`); nil if none has come.
+    public func codeReplacedAt(message: String) -> Date? {
+        queue.sync {
+            let found = query("""
+            SELECT min(newer.at) FROM codes old JOIN messages m ON m.id=old.message
+              JOIN messages next ON next.from_addr=m.from_addr JOIN codes newer ON newer.message=next.id
+            WHERE old.message=? AND newer.at>old.at
+              AND next.labels NOT LIKE '%SPAM%' AND next.labels NOT LIKE '%TRASH%'
+            """, [message]).first?.first
+            guard let at = (found as? Double) ?? (found as? Int64).map(Double.init) else { return nil }
+            return Date(timeIntervalSince1970: at)
+        }
+    }
+
     public func useCode(message: String, site: String, at: Date = Date()) {
         queue.sync { run("UPDATE codes SET used=?, site=? WHERE message=?", [at.timeIntervalSince1970, site, message]) }
     }

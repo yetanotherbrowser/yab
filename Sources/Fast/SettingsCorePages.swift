@@ -135,7 +135,7 @@ struct GeneralPage: View {
     private var versionDetail: String {
         switch updater.stage {
         case .none:
-            return updater.lastChecked.map { SettingsWords.format("Checked %@. Yab looks every hour", [$0.formatted(.relative(presentation: .named))]) }
+            return updater.lastChecked.map { SettingsWords.format("Checked %@. Yab looks every hour", [$0.formatted(.relative(presentation: .named).locale(AppDates.locale))]) }
                 ?? SettingsWords.text("Yab looks for a new version every hour")
         // What's new is the card's to say after the restart, with the
         // changelog; a release's notes are a paragraph, not a row's line.

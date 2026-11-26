@@ -115,7 +115,7 @@ final class MemberStamp: ObservableObject {
                         at: info?.at ?? Date(), owner: answer["owner"] as? String ?? installation)
         guard next != info else { return }
         info = next
-        Store.settings.set(try? JSONEncoder().encode(next), forKey: "stamp.info")
+        Store.settings.set(Self.data(next), forKey: "stamp.info")
         announceIfDue()
     }
 
@@ -285,6 +285,15 @@ final class MemberStamp: ObservableObject {
         guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// The stamp as its synced setting keeps it, its keys sorted: the
+    /// setting syncs as its bytes, and an encoder orders them anew in each
+    /// run, so the same stamp written on two Macs went up as a change.
+    nonisolated static func data(_ info: Info) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try? encoder.encode(info)
     }
 
     private static func decode(_ data: Data?) -> Info? {

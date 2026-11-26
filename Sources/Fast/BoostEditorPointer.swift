@@ -12,7 +12,7 @@ struct BoostEditorPointer: NSViewRepresentable {
 
     func makeNSView(context: Context) -> Area { Area(rootView: AnyView(EmptyView())) }
     func updateNSView(_ view: Area, context: Context) {
-        view.rootView = AnyView(content.environment(\.self, context.environment))
+        view.rootView = AnyView(content.hosted(in: context.environment))
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: Area, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)

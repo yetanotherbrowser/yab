@@ -1108,6 +1108,21 @@ final class CaptureView: NSView, NSDraggingSource {
     }
 }
 
+/// The room, kept out of accessibility until a capture is up in it.
+struct CaptureSkyLayer: View {
+    let capture: Capture
+    @ObservedObject private var model: CaptureModel
+
+    init(capture: Capture) {
+        self.capture = capture
+        model = capture.model
+    }
+
+    var body: some View {
+        CaptureSky(capture: capture).accessibilityHidden(!model.up)
+    }
+}
+
 /// The room the capture's view is put in, over everything in the window,
 /// as the other skies are (HoardSky, ChorusSky). Empty, it lets every click
 /// through.

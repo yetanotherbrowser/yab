@@ -190,7 +190,7 @@ final class SyncCenter: ObservableObject {
                 guard let seal, let data = record["secret"]?.string.flatMap({ seal.reveal($0, in: record.key) }) else { return nil }
                 return SyncWallet.contextAddress(data, id: record.id)
             }, writeAddress: { address, record in
-                guard let data = try? JSONEncoder().encode(address) else { return false }
+                guard let data = Wallet.addressData(address) else { return false }
                 let facts = record["facts"].flatMap { try? JSONEncoder().encode($0) }
                 return Wallet.put(card: false, record.id, secret: data, facts: facts, from: record.latest?.wall)
             })
@@ -1191,12 +1191,14 @@ final class SyncCenter: ObservableObject {
         if let routines = read.routines { try SyncShapes.reconcileRoutines(journal, routines, device: read.device) }
         if let projects = read.projects { try journal.reconcile(SyncShapes.project, SyncShapes.projects(projects)) }
         if let visits = read.visits {
-            let now = SyncShapes.visits(visits)
-            // Deleted by hand: marked first, then removed, so the other
-            // devices tell it from a place that only left the two weeks.
-            let cut = SyncShapes.cut(read.cuts, in: journal, keeping: now)
-            if !cut.isEmpty { try journal.reconcile(SyncShapes.visit, now.merging(cut) { mine, _ in mine }) }
-            try journal.reconcile(SyncShapes.visit, now)
+            do {
+                try SyncShapes.tellVisits(visits, cuts: read.cuts, into: journal)
+            } catch {
+                // Deleted by hand and not told: told with the next flush.
+                let cuts = read.cuts
+                if !cuts.isEmpty { DispatchQueue.main.async { MainActor.assumeIsolated { History.shared.keepCuts(cuts) } } }
+                throw error
+            }
         }
         if let now = read.now { try SyncNow.reconcile(journal, now, device: read.device) }
         if read.failed != nil { return }
@@ -1293,6 +1295,17 @@ final class SyncCenter: ObservableObject {
         let named = Set((living + livingFolders).compactMap { $0["folder"]?.string })
         // Nor a pair whose other tab hasn't come yet.
         let heldTabs = Set(every.map(\.id))
+        // Nor one whose tabs, as this Mac last took them in, stand in
+        // another space than it does: a split view moved a record at a
+        // time (PhoneSync.move, or a page between them) can't be drawn
+        // until its tabs and it are in one space again, and a removal
+        // here would win over the pair's own move when it came.
+        let standing = Dictionary(living.compactMap { record in record["parent"]?.string.map { (record.id, $0) } },
+                                  uniquingKeysWith: { first, _ in first })
+        func apart(_ pair: SyncKit.Record, _ ids: [String]) -> Bool {
+            let space = pair["parent"]?.string
+            return ids.allSatisfy { standing[$0] != nil } && ids.contains { standing[$0] != space }
+        }
         // Catch-up pages are ordered by sequence. A space renamed after its
         // tabs can arrive in a later page: absence from local rows is not a
         // close until this Mac has received that space. Tombstones count as
@@ -1326,6 +1339,7 @@ final class SyncCenter: ObservableObject {
         try journal.reconcile(SyncShapes.pair, out.pairs, within: { pair in
             let ids = pair.id.split(separator: "|").map(String.init)
             return !awaitingSpace(pair) && !ids.contains(where: awayIDs.contains) && ids.allSatisfy(heldTabs.contains)
+                && (!apart(pair, ids) || orphaned(pair))
         }, shown: true, orphaned: orphaned)
     }
 
@@ -1380,7 +1394,9 @@ final class SyncCenter: ObservableObject {
                 self.walletStamps = read.stamps
                 self.walletSeen = read.seen
                 do {
-                    for collection in SyncWallet.collections { try journal.reconcile(collection, read.now[collection] ?? [:]) }
+                    for collection in SyncWallet.collections where read.differs.contains(collection) {
+                        try journal.reconcile(collection, read.now[collection] ?? [:])
+                    }
                     Vault.published(read.published)
                 } catch {
                     NSLog("sync: %@", String(describing: error))
@@ -1398,7 +1414,8 @@ final class SyncCenter: ObservableObject {
         guard SyncWallet.on, let seal else { return }
         walletEpoch += 1
         walletQueue.async {
-            SyncWallet.write(records, seal: seal, contextEpoch: contextEpoch)
+            // Nothing written in and nothing here newer: nothing to read back.
+            guard SyncWallet.write(records, seal: seal, contextEpoch: contextEpoch) else { return }
             DispatchQueue.main.async { [weak self] in self?.changed(SyncWallet.login) }
         }
     }
@@ -1922,9 +1939,8 @@ final class SyncCenter: ObservableObject {
         for record in files {
             if record.id == "know.json", !ContextPrivacy.shared.mayTakeSync("know.json", epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record)) { continue }
             if record.id == "profile.json" {
-                guard ContextPrivacy.shared.current(fetched.contextEpoch), record.alive(), let json = record["json"], let data = try? JSONEncoder().encode(json) else { continue }
-                let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-                if let incoming = try? decoder.decode(Profile.self, from: data) { _ = ContextPrivacy.shared.mergeSyncedProfile(incoming, epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record)) }
+                guard ContextPrivacy.shared.current(fetched.contextEpoch), record.alive(), let incoming = SyncShapes.profile(from: record) else { continue }
+                _ = ContextPrivacy.shared.mergeSyncedProfile(incoming, epoch: fetched.contextEpoch, stamp: record.latest, image: ContextSyncReplay.image(record))
                 continue
             }
             ContextPrivacy.shared.transaction {
@@ -2145,6 +2161,11 @@ extension Preferences {
         if fullURL != o.fullURL { fullURL = o.fullURL }
         if pageZoom != o.pageZoom { pageZoom = o.pageZoom }
         if pageFonts != o.pageFonts { pageFonts = o.pageFonts }
+        // Pages read Dark pages from the store, which sync has already
+        // written: left out here, every new page went dark while Settings
+        // on this Mac still said Off, and picking Off again changed nothing.
+        if darkPages != o.darkPages { darkPages = o.darkPages }
+        if darkLook != o.darkLook { darkLook = o.darkLook }
         if bookmarkBar != o.bookmarkBar { bookmarkBar = o.bookmarkBar }
         if sleepsTabs != o.sleepsTabs { sleepsTabs = o.sleepsTabs }
         if tidyAfter != o.tidyAfter { tidyAfter = o.tidyAfter }

@@ -77,6 +77,17 @@ enum Web {
         unsafeBitCast(preferences.method(for: selector), to: Setter.self)(preferences, selector, on)
     }
 
+    /// Global Privacy Control: `Sec-GPC: 1` on a page's, frames' and subresources'
+    /// requests to secure origins, and `navigator.globalPrivacyControl`. Public on
+    /// macOS 27 only; set by name because releases build against the macOS 26 SDK.
+    static func globalPrivacyControl(_ config: WKWebViewConfiguration) {
+        let preferences: WKWebpagePreferences = config.defaultWebpagePreferences
+        let selector = NSSelectorFromString("setGlobalPrivacyControlEnabled:")
+        guard preferences.responds(to: selector) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(preferences.method(for: selector), to: Setter.self)(preferences, selector, true)
+    }
+
     /// Where yab's own page scripts run, and where their messages come
     /// from: a world of their own beside the page's. They see the same page,
     /// and the page sees none of them, no variable of theirs, and no
@@ -190,6 +201,7 @@ enum Web {
         let config = WKWebViewConfiguration()
         MainActor.assumeIsolated { AppleWritingTools.configure(config) }
         config.processPool = pool
+        globalPrivacyControl(config)
         // ⌫ is no Back on a page, whatever else is cut (Web.backspaceNavigation, #262).
         Web.backspaceNavigation(config.preferences, on: Web.backspaceGoesBack)
         if LinkGap.cut("config") {
@@ -217,6 +229,12 @@ enum Web {
         // page comes back.
         // yab://task, and the handler only that page can talk to.
         if !LinkGap.cut("diary") { MainActor.assumeIsolated { DiaryPage.attach(config) } }
+        // A DRM extension's overlay pages, iframes and assets a WebKit page
+        // of the site embeds. Inert everywhere else: only those scripts load
+        // that scheme.
+        if #available(macOS 15.4, *) {
+            config.setURLSchemeHandler(ChromiumDRMResources.shared, forURLScheme: "chrome-extension")
+        }
         if !LinkGap.cut("ua") { config.applicationNameForUserAgent = Web.userAgentName }
         if LinkGap.cut("prefs") {
             if !LinkGap.cut("localnet") { MainActor.assumeIsolated { LocalNetwork.protect(config.userContentController) } }
@@ -327,7 +345,11 @@ final class Tab: ObservableObject, Identifiable, Relaying {
     /// own a second page and never construct a WebKit page for another engine.
     var built: PageView? { builtPage?.webKit }
     @ObservationIgnored private(set) var builtPage: (any PageHandle)? {
-        didSet { ChromiumTabGroups.shared.changed() }
+        didSet {
+            ChromiumTabGroups.shared.changed()
+            // A code card's "Fill on" button needs the page waiting for it.
+            if waitingCode != nil, (oldValue == nil) != (builtPage == nil) { MailCodeState.boxMoved() }
+        }
     }
     /// Chromium keeps its browser/controller while the renderer is discarded.
     @ObservationIgnored private var sleepingChromium: ChromiumPage?
@@ -1087,7 +1109,11 @@ final class Tab: ObservableObject, Identifiable, Relaying {
         retainingEngineTitle = false
         title = ""
         Favicons.shared.navigationStarted(for: self)
-        icon = Tab.ownIcon(url) ?? url.flatMap(Favicons.shared.pageIcon)
+        // No destination yet: a reload or a woken tab, still on the page
+        // its icon belongs to (#735). Another page's address, when it
+        // arrives, comes back here with it.
+        guard let url else { return }
+        icon = Tab.ownIcon(url) ?? Favicons.shared.pageIcon(url)
     }
 
     /// Both engines commit a new document, even though their history and
@@ -2239,7 +2265,7 @@ final class Tab: ObservableObject, Identifiable, Relaying {
                 // What the bridges couldn't do costs a cookie or an extension on
                 // this page, never the page: a canceled hop of a sign-in looked
                 // like the site refusing it.
-                do { try await ChromiumDRMCookies.of(self).prepare(for: url, in: .webKit) }
+                do { try await ChromiumDRMCookies.of(self).prepare(for: url, in: .webKit, page: self.id) }
                 catch { NSLog("Cookie bridge: not carried before a WebKit page: %@", String(describing: type(of: error))) }
                 guard !self.gone else { throw CancellationError() }
                 if !self.shy {
@@ -2253,8 +2279,9 @@ final class Tab: ObservableObject, Identifiable, Relaying {
             }
         }
         if engineFactory.kinds.contains(.chromium) {
-            web.navigationEvents.redirected = { [weak self] url in ChromiumDRMCookies.session(of: self)?.touched(url, by: .webKit) }
-            web.navigationEvents.prepareFrame = { [weak self] url in await ChromiumDRMCookies.session(of: self)?.prepareFrame(url) }
+            web.navigationEvents.redirected = { [weak self] url in ChromiumDRMCookies.session(of: self)?.touched(url, by: .webKit, in: self?.id) }
+            web.navigationEvents.prepareFrame = { [weak self] url in await ChromiumDRMCookies.session(of: self)?.prepareFrame(url, in: self?.id) }
+            web.navigationEvents.committed = { [weak self] url in ChromiumDRMCookies.session(of: self)?.pageCommitted(url, by: .webKit, in: self?.id) }
         }
         if sibling != nil || spare != nil { configuration.perform(Tab.relatedSelector, with: nil) }
         if let spare {
@@ -2398,6 +2425,11 @@ final class Tab: ObservableObject, Identifiable, Relaying {
         web.onSplitLink = { [weak self] url in
             guard let self else { return }
             (self.delegate as? Browser)?.splitLink(url, from: self)
+        }
+        if !shy {
+            web.onPrivateLink = { [weak self] url in
+                (self?.delegate as? Browser)?.newPrivateWindow(opening: url)
+            }
         }
         web.onHideAt = { [weak self] point in
             guard let self else { return }
@@ -2639,13 +2671,19 @@ final class Tab: ObservableObject, Identifiable, Relaying {
     /// Whether the page is dark under that box (`DropFrame.ground`).
     @ObservationIgnored var fieldDark: Bool?
     /// The box asks for a code a site sent, not for an account.
-    struct WaitingCode {
+    struct WaitingCode: Equatable {
         let document: String
         let field: String
         let request: CodeRequest
         let address: URL
     }
-    @ObservationIgnored var waitingCode: WaitingCode?
+    @ObservationIgnored var waitingCode: WaitingCode? {
+        didSet { if Self.codeBoxMoves(from: oldValue, to: waitingCode) { MailCodeState.boxMoved() } }
+    }
+
+    /// The same box, or none, set again, which Forms does on every field
+    /// message, moves nothing.
+    nonisolated static func codeBoxMoves(from old: WaitingCode?, to new: WaitingCode?) -> Bool { old != new }
     @ObservationIgnored var fieldCode = false
     @ObservationIgnored var fieldCodeRequest = CodeRequest()
     /// Where that box last was, in points, for a list that comes up later

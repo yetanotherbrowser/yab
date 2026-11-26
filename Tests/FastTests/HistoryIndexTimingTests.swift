@@ -27,10 +27,38 @@ import Testing
     @Test func aPlaceVisitedNowIsFoundOnceTheIndexIsBack() async {
         let history = big(5_000)
         history.record(URL(string: "https://zebrafish.example/tank")!, title: "Zebrafish tank")
-        // Asked at once, the index is on its way and nothing old is offered.
-        #expect(history.isIndexing)
+        // Asked at once, the index is on its way: the last one answers,
+        // without the place just visited.
+        #expect(!history.isIndexing)
+        #expect(history.suggestions(for: "zebraf").isEmpty)
         await ready(history)
         #expect(history.suggestions(for: "zebraf").first?.key.hasPrefix("zebrafish.example") == true)
+    }
+
+    /// A page loaded, or a tab's title changing, emptied the field's places
+    /// until the index was made again, most of a second with a big history,
+    /// and the search took Return's row. The places stay meanwhile.
+    @Test func placesStayWhileTheIndexIsMadeAgain() async {
+        let history = big(5_000)
+        let before = history.suggestions(for: "bulk1").map(\.key)
+        #expect(!before.isEmpty)
+        history.record(URL(string: "https://zebrafish.example/tank")!, title: "Zebrafish tank")
+        #expect(history.suggestions(for: "bulk1").map(\.key) == before)
+        history.retitle(URL(string: "https://bulk7.example/page-7")!, title: "Renamed")
+        #expect(history.suggestions(for: "bulk1").map(\.key) == before)
+        await ready(history)
+        #expect(history.suggestions(for: "bulk1").map(\.key) == before)
+    }
+
+    /// Something forgotten is never offered from the last index.
+    @Test func aForgottenPlaceIsNotOfferedWhileTheIndexIsMadeAgain() async {
+        let history = big(5_000)
+        guard let first = history.suggestions(for: "bulk1").first?.key else { Issue.record("no rows"); return }
+        history.forget(first)
+        #expect(history.isIndexing)
+        #expect(!history.suggestions(for: "bulk1").contains { $0.key == first })
+        await ready(history)
+        #expect(!history.suggestions(for: "bulk1").contains { $0.key == first })
     }
 
     @Test func manyChangesInARowMakeOneIndexWithAllOfThem() async {

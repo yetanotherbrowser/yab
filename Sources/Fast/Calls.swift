@@ -418,7 +418,7 @@ extension Browser {
             let on = [(AVCaptureDevice.isPortraitEffectEnabled, "Portrait"), (AVCaptureDevice.isCenterStageEnabled, "Center Stage"),
                       (AVCaptureDevice.isStudioLightEnabled, "Studio Light"), (AVCaptureDevice.reactionEffectsEnabled, "Reactions")]
                 .filter(\.0).map(\.1)
-            effects.subtitle = on.isEmpty ? "Off" : ListFormatter.localizedString(byJoining: on)
+            effects.subtitle = on.isEmpty ? "Off" : ListFormatter.englishString(byJoining: on)
             menu.addItem(effects)
         }
         return menu

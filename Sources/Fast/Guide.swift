@@ -260,6 +260,20 @@ enum Guide {
     minutes; serve keeps it running. `serve --no-person` refuses requests that need someone at Yab.
     `serve --stop` stops Yab, including active tasks. Use it only when that is intended.
 
+    10. Read and change Yab's own settings:
+
+    ```bash
+    \(command) settings show theme
+    \(command) settings actions engine
+    \(command) settings apply site.set_engine '{"site":"github.com","value":"webKit"}'
+    ```
+
+    These are the MCP native tools, with the same permissions. A change that needs the user's yes
+    waits for it, then exits 3 while still unanswered; `settings operation ID --session SESSION`
+    asks again within \(Int(Mcp.keptFor / 60)) minutes. In `exec`, `native_context`, `native_actions`, `native_apply`,
+    `native_operation` and `native_undo` are functions. Undo works only inside one `exec` script,
+    after `native_apply` in that script. See `\(command) settings --help`.
+
     ## When Yab needs the user
 
     Exit 3 means the task needs input. For a question, ask the user in your chat, then run

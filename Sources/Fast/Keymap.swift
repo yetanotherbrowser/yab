@@ -1124,9 +1124,35 @@ enum Shortcut {
         .recentTabReverse: [k("`"), k("`", [.shift, .command])],
     ]
 
+    /// Of those, the ones an item of yab's own menus holds, by the item's
+    /// title as App Shortcuts names it. macOS keeps such a key only while
+    /// the item has it: give Hide Yab other keys in System Settings ›
+    /// Keyboard › App Shortcuts and ⌘H is as free as any other key
+    /// (register 2989).
+    @MainActor static var menuHeld: [String: Hotkey] {
+        let appMenu = NSApp?.mainMenu?.items.first?.submenu
+        let hide = appMenu?.items.first { $0.action == #selector(NSApplication.hide(_:)) }?.title
+            ?? "Hide " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Yab")
+        return [hide: k("h")]
+    }
+
+    /// The keys of `held` whose item App Shortcuts (`userKeys`, title to
+    /// keys in its own writing) gave other keys.
+    static func givenBack(by userKeys: [String: String], held: [String: Hotkey]) -> Set<Hotkey> {
+        Set(held.compactMap { title, key in
+            guard let value = userKeys[title], Hotkey(userKey: value) != key else { return nil }
+            return key
+        })
+    }
+
+    /// What App Shortcuts has given back now, set by Keymap.take(system:)
+    /// on the main thread whenever App Shortcuts are read again.
+    nonisolated(unsafe) static var givenBack: Set<Hotkey> = []
+
     /// macOS keeps this key from `action` (from every action, without one).
     static func kept(_ hotkey: Hotkey, from action: Action?) -> Bool {
-        system.contains(hotkey) && !(action.flatMap { fromMac[$0]?.contains(hotkey) } ?? false)
+        system.contains(hotkey) && !givenBack.contains(hotkey)
+            && !(action.flatMap { fromMac[$0]?.contains(hotkey) } ?? false)
     }
 }
 
@@ -1347,8 +1373,10 @@ final class Keymap {
         for (action, title) in Shortcut.titles {
             if let value = normalized[title], let hotkey = Hotkey(userKey: value) { given[action] = hotkey }
         }
-        guard given != system else { return }
+        let givenBack = Shortcut.givenBack(by: raw, held: Shortcut.menuHeld)
+        guard given != system || givenBack != Shortcut.givenBack else { return }
         system = given
+        Shortcut.givenBack = givenBack
         rebuild()
     }
 

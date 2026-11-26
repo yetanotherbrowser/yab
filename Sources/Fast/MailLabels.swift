@@ -606,7 +606,7 @@ final class MailLabels: ObservableObject {
         let n = accounts.count
         let within = inside(name)
         var out: [MailLabelLine] = []
-        if n > 1 { out.append(.header(ListFormatter.localizedString(byJoining: accounts))) }
+        if n > 1 { out.append(.header(ListFormatter.englishString(byJoining: accounts))) }
         out.append(MailLabelLine("Mark All as Read", mark: "yab.inbox.check", enabled: row.unread > 0) { [weak self] in self?.markAllRead(name) })
         if row.parent {
             out.append(MailLabelLine(row.open ? "Close Labels Inside" : "Open Labels Inside") { [weak self] in self?.toggle(name) })

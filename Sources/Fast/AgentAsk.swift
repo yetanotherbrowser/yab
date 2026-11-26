@@ -1090,13 +1090,13 @@ final class AgentNotices: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// A click on a chat's question: Yab in front, the question's card on
-    /// screen. Yab's own chat comes out in the column beside the page, the
-    /// card in its field; another app's agent's, or any with no page in
-    /// front to stand the column by, waits in the window's corner, where
-    /// Return and Escape answer it (Agents.cornerKeyed).
+    /// screen. Yab's own chat comes out in the column, the card in its
+    /// field, beside a page or an empty window alike; another app's
+    /// agent's, with no chat of Yab's to stand in, waits in the window's
+    /// corner, where Return and Escape answer it (Agents.cornerKeyed).
     func show(chat: String) {
         guard let browser = come(holding: nil) else { return }
-        if Agents.shared.columnHolds(chat), browser.active != nil { browser.showChat(chat) }
+        if Agents.shared.columnHolds(chat) { browser.showChat(chat) }
     }
 
     /// An agent that needs you, or is done, said by the Mac while Yab is

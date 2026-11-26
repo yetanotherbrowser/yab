@@ -528,13 +528,11 @@ extension Bench {
 
     func handleAgentUpload(_ c: AgentCall) {
         let request = c.request
-        let browser = c.browser
         let answer = c.answer
         let agents = c.agents
         let session = c.session
         func own(going: Bool = false, asking: Bool = false) -> Tab? { c.own(going: going, asking: asking) }
-        guard let tab = own(), let session else { return }
-        let ref = request["ref"] as? String ?? ""
+        guard own() != nil, let session else { return }
         let files = (request["files"] as? [String] ?? []).map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         guard !files.isEmpty else { answer(["error": "upload needs files: paths on this Mac"]); return }
         let full = agents.session(session)?.full ?? true
@@ -543,6 +541,28 @@ extension Bench {
             answer(["error": trouble])
             return
         }
+        // Each file read once off the main thread before anything is asked
+        // or given (AgentFiles.unreadable): in a folder macOS hasn't asked
+        // about yet, the open waits on the person's answer to its question.
+        // The task's permission as it was asked: a stop and resume while the
+        // read waits makes the task live again, not this request.
+        let admission = agents.session(session)?.admission
+        let paths = files.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        Task { @MainActor in
+            let unreadable = await Task.detached { paths.lazy.compactMap(AgentFiles.unreadable).first }.value
+            guard admission?.valid ?? true else { answer(["error": "This task's permission expired."]); return }
+            if let unreadable { answer(["error": unreadable]); return }
+            guard let tab = own() else { return }
+            uploadReadable(c, tab: tab, session: session, files: files)
+        }
+    }
+
+    private func uploadReadable(_ c: AgentCall, tab: Tab, session: String, files: [URL]) {
+        let request = c.request
+        let browser = c.browser
+        let answer = c.answer
+        let agents = c.agents
+        let ref = request["ref"] as? String ?? ""
         let key = "upload:" + ref
         let yes = tab.approved.flatMap { $0.session == session && $0.ref == key && Date().timeIntervalSince($0.at) < 120 ? $0 : nil }
         let rule = AgentRules.shared.verdict(site: AgentRules.site(tab.address), label: "Upload")
@@ -767,7 +787,7 @@ extension Bench {
             }
         case "pdf" where tabs.count > 1 || reader:
             PageSave.book(tabs, reader: reader, title: request["title"] as? String, in: folder, done: saved)
-        case "md", "txt" where tabs.count > 1:
+        case _ where PageSave.joinsTabs(format: format, count: tabs.count):
             PageSave.joined(tabs, as: format, title: request["title"] as? String, in: folder, done: saved)
         default:
             PageSave.save(tab, as: format, in: folder, done: saved)

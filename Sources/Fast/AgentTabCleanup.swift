@@ -53,6 +53,11 @@ final class AgentTabCleanup {
     }
 
     private var entries: [String: Entry] = [:]
+    /// The agent tabs this cleanup closed, oldest first, at most 64: an
+    /// agent that came back for one heard only "no tab", and couldn't tell
+    /// Yab's tidying from the person closing it. Written only on a close.
+    /// `after` is the wait it used; nil when a subagent's end closed it.
+    private var closed: [(id: UUID, url: URL?, after: TimeInterval?)] = []
     private var checking: [Tab.ID: UUID] = [:]
     private var timer: Timer?
     private var revision = UUID()
@@ -223,10 +228,28 @@ final class AgentTabCleanup {
                         entries[id]?.deferred.insert(tab.id)
                         return
                     }
+                    let address = tab.shy ? nil : tab.address
+                    let after: TimeInterval? = current.immediate && !current.deferred.contains(tab.id) ? nil : interval
                     browser.closeAgentTab(tab)
+                    guard !browser.everyTab.contains(where: { $0 === tab }) else { return }
+                    closed.append((tab.id, address, after))
+                    if closed.count > 64 { closed.removeFirst(closed.count - 64) }
                 }
             }
         }
+    }
+
+    /// What an agent asking for a tab by `ref` (a prefix of its id, as
+    /// `find` takes it) is told when this cleanup closed it; nil otherwise.
+    func closedNote(_ ref: String) -> String? {
+        let ref = ref.lowercased()
+        guard !ref.isEmpty, let gone = closed.last(where: { $0.id.uuidString.lowercased().hasPrefix(ref) }) else { return nil }
+        let at = gone.url.map { ", at \($0.absoluteString)" } ?? ""
+        guard let after = gone.after else {
+            return "Yab closed tab “\(ref)”\(at), when the subagent that opened it finished: open it again"
+        }
+        let wait = after >= 3600 ? "\(Int(after / 3600)) h" : "\(Int(after / 60)) min"
+        return "Yab closed tab “\(ref)”\(at), after \(wait) without a call there (Settings › Tabs › Close agent tabs): open it again"
     }
 
     private func blocked(_ tab: Tab, in browser: Browser) -> Bool {

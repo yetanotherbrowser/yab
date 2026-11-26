@@ -761,20 +761,36 @@ extension AgentPage {
         if (field) draft = field.slice(0, 2000);
       }
       // What it comes to, when it pays: on the button ("Pay $42.10"), or on
-      // the total's line of its form or page, or the line under it.
-      const cash = /(US)?[$€£]\\s?\\d[\\d,]*(\\.\\d{2})?/;
-      let amount = (name.match(cash) || [''])[0];
+      // the total's line of its form or page, or the line under it. Whole,
+      // with its digits as written ("€ 1.299,00" was read only to its first
+      // point, €1.29) and any letters against its sign (US$, R$, CAD$, AR$,
+      // Mex$): only none or US is a US dollar (AgentRules.dollars), so a
+      // currency this doesn't know asks. The button's own word and the
+      // total's label come off first: a page that draws "Pay" or "Total"
+      // against "$10" says "Pay$10", and Pay is no currency.
+      const cash = /(\\b[A-Za-z]+)?[$€£]\\s?\\d(?:[\\d.,]*\\d)?/;
+      const label = /(order total|grand total|total due|amount due|you pay|estimated total|^\\s*total\\b)/i;
+      let amount = (name.replace(verbs, '').replace(foreign, '').match(cash) || [''])[0];
       // The nearest surroundings first, out to the whole page: a checkout's
-      // total is seldom inside the button's own form.
+      // total is seldom inside the button's own form. On the total's line
+      // the amount may be on either side of its label ("$150.00 order
+      // total"); the next line with words counts only when it is the amount
+      // alone, not "Includes $5.00 tax". Two different amounts are no
+      // total, and with none the person is asked.
       for (const scope of [$closest(b, '[role=dialog],dialog'), $closest(b, 'form'), $closest(b, 'main,aside'), $body(doc)]) {
         if (amount || !scope) continue;
         const lines = textOf(scope).split('\\n');
+        const totals = new Set();
         lines.forEach((line, i) => {
-          if (/(order total|grand total|total due|amount due|you pay|estimated total|^\\s*total\\b)/i.test(line)) {
-            const m = line.match(cash) || (lines[i + 1] || '').match(cash);
-            if (m) amount = m[0];
-          }
+          if (!label.test(line)) return;
+          const here = line.replace(label, ' ').match(new RegExp(cash.source, 'g')) || [];
+          let below = i + 1;
+          while (below < lines.length && !lines[below].trim()) below++;
+          const next = (lines[below] || '').trim(), alone = next.match(cash);
+          (here.length ? here : alone && alone[0] === next ? [next] : []).forEach(m => totals.add(m.replace(/\\s/g, '')));
         });
+        if (totals.size === 1) amount = [...totals][0];
+        if (totals.size) break;
       }
       return { commit: name.charAt(0).toUpperCase() + name.slice(1), detail: detail || ($title(doc) || '').slice(0, 80), draft, amount: amount.replace(/\\s/g, ''), pays: sendsCard(b) };
     }

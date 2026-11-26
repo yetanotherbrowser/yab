@@ -135,8 +135,9 @@ final class Extensions: NSObject, ObservableObject {
     }
 
     /// `own`: thrown or rejected in the extension's own pages or worker.
-    func noteError(_ text: String, for id: String, own: Bool = false) {
-        FeedbackDiagnostics.shared.record(.extensionError, extensionID: id)
+    /// `counted`: false for Yab's own refusals, which aren't the extension's fault.
+    func noteError(_ text: String, for id: String, own: Bool = false, counted: Bool = true) {
+        if counted { FeedbackDiagnostics.shared.record(.extensionError, extensionID: id) }
         keep(text, for: id)
         if !own { notes[id] = Array(((notes[id] ?? []) + [text]).suffix(40)) }
     }
@@ -278,6 +279,8 @@ final class Extensions: NSObject, ObservableObject {
         // the extensions. Extensions are told they run in Chrome by the shim
         // instead (navigator.userAgent in their pages and workers).
         views.applicationNameForUserAgent = Web.userAgentName
+        // Extension pages send Global Privacy Control as tabs do.
+        Web.globalPrivacyControl(views)
         // A test run sits behind other windows, where WebKit slows its views
         // to a crawl and messages between an extension's popup and its
         // worker stop arriving. Not what anyone is testing.
@@ -828,6 +831,7 @@ final class Extensions: NSObject, ObservableObject {
                 },
         ]
         rowChanged()
+        for link in LinkWindow.all where link.browser === browser { follow(link) }
     }
 
     /// A window closed, and its tabs with it.
@@ -872,7 +876,11 @@ final class Extensions: NSObject, ObservableObject {
     func focusChanged() {
         if let popout = ExtensionPopout.owning(NSApp.keyWindow) {
             if popout.controller === controller { controller.didFocusWindow(popout.frame) }
-        } else if let key = NSApp.keyWindow, let known = windows.values.first(where: { $0.browser.flatMap { BrowserWindows.shared.window(for: $0) } === key }) {
+        } else if let link = LinkWindow.inFront {
+            if let own = windows[link.extensionKey] { controller.didFocusWindow(own) }
+        } else if let key = NSApp.keyWindow, let known = windows.values.first(where: {
+            !$0.isLink && $0.browser.flatMap { BrowserWindows.shared.window(for: $0) } === key
+        }) {
             controller.didFocusWindow(known)
         }
     }
@@ -999,7 +1007,8 @@ final class Extensions: NSObject, ObservableObject {
     /// The browser of the window in front, of those WebKit knows: where an
     /// extension's button is pressed, and where what it opens goes.
     var front: Browser? {
-        if let browser = BrowserWindows.shared.activeBrowser, windows[Self.key(of: browser)]?.browser === browser {
+        if let browser = LinkWindow.inFront?.browser ?? BrowserWindows.shared.activeBrowser,
+           windows[Self.key(of: browser)]?.browser === browser {
             return browser
         }
         return browser
@@ -1020,22 +1029,63 @@ final class Extensions: NSObject, ObservableObject {
         return browser
     }
 
-    /// The window in front, as WebKit knows it.
-    var window: ExtensionWindow? { front.flatMap { windows[Self.key(of: $0)] } }
+    /// The window in front, as WebKit knows it: a small window's own while it is.
+    var window: ExtensionWindow? {
+        if let link = LinkWindow.inFront, let own = windows[link.extensionKey] { return own }
+        return front.flatMap { windows[Self.key(of: $0)] }
+    }
 
     /// The tab in front in the window in front: what a button acts on.
-    var activeAdapter: ExtensionTab? { activeAdapter(in: front) }
+    var activeAdapter: ExtensionTab? {
+        // A small window in front that isn't ours: no tab, rather than the row's hidden one.
+        if let link = LinkWindow.inFront { return windows[link.extensionKey]?.activeAdapter }
+        return activeAdapter(in: front)
+    }
 
     func activeAdapter(in browser: Browser?) -> ExtensionTab? {
         guard let tab = browser?.active, seen(tab) else { return nil }
         return adapter(for: tab)
     }
 
+    /// A small window's page told as the one tab of a window of its own, as Chrome has a popup window.
+    func follow(_ link: LinkWindow) {
+        _ = Extensions.keyWatch
+        guard windows[link.extensionKey] == nil, let browser = link.browser, seen(link.tab),
+              windows[Self.key(of: browser)]?.browser === browser else { return }
+        let window = ExtensionWindow(owner: self, browser: browser, link: link)
+        windows[link.extensionKey] = window
+        windowOrder.append(link.extensionKey)
+        controller.didOpenWindow(window)
+        rowChanged()
+    }
+
+    func unfollow(_ link: LinkWindow) {
+        guard windows[link.extensionKey]?.isLink == true else { return }
+        unfollow(link.extensionKey)
+    }
+
+    /// Focus back on a browser window doesn't change `focusedID`, so every key change is told.
+    private static let keyWatch: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+    ) { _ in MainActor.assumeIsolated { Extensions.all.forEach { $0.focusChanged() } } }
+
+    /// The page a small window claims: until it is kept or let go.
+    private func linkTabs(_ link: LinkWindow) -> [Tab] {
+        guard let browser = link.browser, browser.outside.contains(where: { $0 === link.tab }),
+              offered(link.tab, in: browser) else { return [] }
+        return [link.tab]
+    }
+
+    /// A small window's tabs as last told, so they agree with each tab's window (`home`).
+    fileprivate func toldTabs(_ link: LinkWindow) -> [Tab] {
+        placed[link.extensionKey]?.contains(link.tab.id) == true ? [link.tab] : []
+    }
+
     /// The window a tab is in: where WebKit was told it is, else the one
     /// whose row has it (a tab just opened for an extension), else the first.
     func window(of tab: Tab) -> ExtensionWindow? {
         if let key = home[tab.id], let window = windows[key] { return window }
-        if let window = windows.values.first(where: { $0.browser?.tabs.contains { $0 === tab } == true }) { return window }
+        if let window = windows.values.first(where: { !$0.isLink && $0.browser?.tabs.contains { $0 === tab } == true }) { return window }
         return browser.flatMap { windows[Self.key(of: $0)] }
     }
 
@@ -1093,7 +1143,7 @@ final class Extensions: NSObject, ObservableObject {
     /// (`tabs(for:)`), and leaves out every tab of a window whose tab in
     /// front it can't find in that list: none in front (the field asking
     /// over no page), or a private tab or another sign-in's in front. Tabs
-    /// no list has (a parked row, a peek, a small window's page) it never
+    /// no list has (a parked row, a peek) it never
     /// opens there at all. A tab it hasn't opened for a context is one that
     /// context has no tab for: the extension's content scripts are put in
     /// its page, and every runtime.sendMessage and runtime.connect from
@@ -1121,16 +1171,19 @@ final class Extensions: NSObject, ObservableObject {
 
     /// Every window's tabs, told: its row, its spaces parked (a switch is
     /// no closing and reopening of every tab), and its pages not in the row
-    /// yet, a small window's, a peek's. Each runs the extensions' scripts,
-    /// so each is a tab to WebKit, one outside the row at no place in it,
-    /// as a parked one is.
+    /// yet, a peek's. Each runs the extensions' scripts, so each is a tab to
+    /// WebKit, one outside the row at no place in it, as a parked one is. A
+    /// small window's page is the one tab of its own window (`follow(_:)`).
     private func place() {
         // A row and a parked space can carry the same tab while changing
         // spaces, and two rows a tab moving between windows. WebKit knows a
         // tab once, in one window, and its positions must be unique too.
         var claimed = Set<Tab.ID>()
         var now: [UUID: [Tab]] = [:]
-        for key in windowOrder {
+        for key in windowOrder where windows[key]?.isLink == true {
+            now[key] = windows[key]?.link.map { linkTabs($0).filter { claimed.insert($0.id).inserted } } ?? []
+        }
+        for key in windowOrder where windows[key]?.isLink == false {
             guard let browser = windows[key]?.browser else { continue }
             // In the order the window lists them (`visibleTabs`), then
             // what it holds at no place: shared pins put aside, a row of a
@@ -1356,7 +1409,6 @@ final class Extensions: NSObject, ObservableObject {
                     save()
                 }
             }
-            try WebKitIPCBoundary.validateExtensions(at: (Array(contexts.keys).filter { $0 != item.id } + [item.id]).map { Extensions.folder(for: $0) })
             let context = WKWebExtensionContext(for: found)
             context.uniqueIdentifier = item.id
             // The same origin every launch. WebKit picks a fresh one
@@ -1378,6 +1430,8 @@ final class Extensions: NSObject, ObservableObject {
             // and never the ones it was kept from.
             applyAccess(context)
             Extensions.allowPrivate(context, Store.settings.bool(forKey: "extensions.private"))
+            // After applyAccess: WebKit copies each script once per granted pattern.
+            try checkBudget(item.id, WebKitIPCBoundary.Grants(context))
             if signIn == nil { ExtensionRules.prepare(context, storage: storage(of: item.id), owner: controller) }
             let began = CACurrentMediaTime()
             do {
@@ -1578,6 +1632,7 @@ final class Extensions: NSObject, ObservableObject {
         guard let context = contexts[id] else { return }
         applyChoices(context)
         applyAccess(context)
+        noteIfOverBudget(id)
     }
 
     // MARK: - installing
@@ -2055,6 +2110,7 @@ final class Extensions: NSObject, ObservableObject {
                     // github.com with every site, though the extension
                     // still names it: given again, as a relaunch would.
                     self.applyAccess(context)
+                    self.noteIfOverBudget(id)
                 }
             }
         }
@@ -2716,13 +2772,91 @@ final class Extensions: NSObject, ObservableObject {
         Store.settings.stringArray(forKey: "extensions.allowed.\(id)") ?? []
     }
 
-    func allow(_ host: String, for id: String) {
+    /// What `applyAccess` gives an extension, from the settings above.
+    struct AccessPlan {
+        var access: SiteAccess
+        var allowed: [String]
+        var blocked: [String]
+        var choices: [String: Bool]
+    }
+
+    func accessPlan(_ id: String) -> AccessPlan {
+        AccessPlan(access: access(id), allowed: allowed(id), blocked: blocked(id), choices: Extensions.choices(id))
+    }
+
+    /// Every loaded extension's content scripts within WebKit's IPC budget,
+    /// `id`'s counted under `grants`.
+    private func checkBudget(_ id: String, _ grants: WebKitIPCBoundary.Grants) throws {
+        var catalogs: [(folder: URL, grants: WebKitIPCBoundary.Grants?)] = contexts.filter { $0.key != id }
+            .map { (folder: Extensions.folder(for: $0.key), grants: WebKitIPCBoundary.Grants($0.value)) }
+        catalogs.append((folder: Extensions.folder(for: id), grants: grants))
+        try WebKitIPCBoundary.validateExtensions(catalogs)
+    }
+
+    /// An unloaded copy of a loaded context's site grants, to try a change on.
+    func trial(of live: WKWebExtensionContext) -> WKWebExtensionContext {
+        let trial = WKWebExtensionContext(for: live.webExtension)
+        // Denials first: WebKit drops the grants a denial overlaps.
+        for (pattern, until) in live.deniedPermissionMatchPatterns {
+            trial.setPermissionStatus(.deniedExplicitly, for: pattern, expirationDate: until)
+        }
+        for (pattern, until) in live.grantedPermissionMatchPatterns {
+            trial.setPermissionStatus(.grantedExplicitly, for: pattern, expirationDate: until)
+        }
+        return trial
+    }
+
+    /// Whether `change` to a loaded extension's site grants keeps every
+    /// loaded extension's scripts in the budget. Tried on `trial(of:)`, so a
+    /// refusal leaves its grants and settings as they were.
+    func admits(_ id: String, _ change: (WKWebExtensionContext) -> Void) -> Bool {
+        guard let live = contexts[id] else { return true }
+        let trial = trial(of: live)
+        change(trial)
+        let fileAccess = WebKitIPCBoundary.Grants.fileAccess(of: live)
+        let proposed = WebKitIPCBoundary.Grants(trial, fileAccess: fileAccess)
+        do {
+            try checkBudget(id, proposed)
+            return true
+        } catch {
+            // Never refused for taking access away: no more scripts than it has now.
+            if let groups = try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: id)),
+               WebKitIPCBoundary.injectedScripts(groups, grants: proposed)
+                <= WebKitIPCBoundary.injectedScripts(groups, grants: WebKitIPCBoundary.Grants(live, fileAccess: fileAccess)) {
+                return true
+            }
+            noteError("Not given more sites: its content scripts would pass WebKit's limit for all extensions", for: id, counted: false)
+            return false
+        }
+    }
+
+    /// After access was taken away, which is never refused: losing all hosts
+    /// can still expand it into more scripts than before, so say so.
+    private func noteIfOverBudget(_ id: String) {
+        guard let live = contexts[id], (try? checkBudget(id, WebKitIPCBoundary.Grants(live))) == nil else { return }
+        NSLog("Extensions: %@ passed WebKit's script budget after access was taken away", id)
+        noteError("Its content scripts now pass WebKit's limit for all extensions; it won't load next launch", for: id, counted: false)
+    }
+
+    /// Whether choosing `picks` for its extras keeps it in the budget.
+    func admits(choices picks: [String: Bool], for id: String) -> Bool {
+        var plan = accessPlan(id)
+        plan.choices.merge(picks) { _, new in new }
+        return admits(id) { _ = Extensions.apply(plan, to: $0) }
+    }
+
+    @discardableResult
+    func allow(_ host: String, for id: String) -> Bool {
         let list = allowed(id)
-        guard !list.contains(host) else { return }
+        guard !list.contains(host) else { return true }
+        var plan = accessPlan(id)
+        plan.allowed.append(host)
+        guard admits(id, { _ = Extensions.apply(plan, to: $0) }) else { return false }
         Store.settings.set(list + [host], forKey: "extensions.allowed.\(id)")
         objectWillChange.send()
         Extensions.listsChanged.send()
         if let context = contexts[id] { applyAccess(context) }
+        return true
     }
 
     func disallow(_ host: String, for id: String) {
@@ -2732,19 +2866,45 @@ final class Extensions: NSObject, ObservableObject {
         guard let context = contexts[id] else { return }
         for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
         applyAccess(context)
+        noteIfOverBudget(id)
     }
 
-    func setAccess(_ id: String, _ access: SiteAccess) {
+    @discardableResult
+    func setAccess(_ id: String, _ access: SiteAccess) -> Bool {
+        var plan = accessPlan(id)
+        plan.access = access
+        // The chosen sites go back to what the manifest says of them.
+        let reset = { (context: WKWebExtensionContext) in
+            for host in plan.allowed {
+                for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+            }
+        }
+        // Only all its sites can widen past the budget: chosen sites are cut to fit.
+        guard access != .asked || self.access(id) == .asked
+              || admits(id, { reset($0); _ = Extensions.apply(plan, to: $0) }) else {
+            // The picker bound to it goes back to the access it still has.
+            objectWillChange.send()
+            return false
+        }
         if access == .asked { Store.settings.removeObject(forKey: "extensions.access.\(id)") }
         else { Store.settings.set(access.rawValue, forKey: "extensions.access.\(id)") }
         objectWillChange.send()
         Extensions.listsChanged.send()
-        guard let context = contexts[id] else { return }
-        // The chosen sites go back to what the manifest says of them.
-        for host in allowed(id) {
-            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
-        }
+        guard let context = contexts[id] else { return true }
+        reset(context)
         applyAccess(context)
+        noteIfOverBudget(id)
+        return true
+    }
+
+    /// Sites chosen on another engine, kept whole: WebKit is given those that fit.
+    func adopt(sites hosts: [String], for id: String) {
+        var list = allowed(id)
+        for host in hosts where !list.contains(host) { list.append(host) }
+        Store.settings.set(list, forKey: "extensions.allowed.\(id)")
+        objectWillChange.send()
+        Extensions.listsChanged.send()
+        if let context = contexts[id] { applyAccess(context) }
     }
 
     func block(_ host: String, for id: String) {
@@ -2752,15 +2912,25 @@ final class Extensions: NSObject, ObservableObject {
         guard !list.contains(host) else { return }
         Store.settings.set(list + [host], forKey: "extensions.blocked.\(id)")
         objectWillChange.send()
-        if let context = contexts[id] { applyAccess(context) }
+        guard let context = contexts[id] else { return }
+        applyAccess(context)
+        noteIfOverBudget(id)
     }
 
-    func unblock(_ host: String, for id: String) {
-        Store.settings.set(blocked(id).filter { $0 != host }, forKey: "extensions.blocked.\(id)")
+    @discardableResult
+    func unblock(_ host: String, for id: String) -> Bool {
+        var plan = accessPlan(id)
+        plan.blocked.removeAll { $0 == host }
+        let reset = { (context: WKWebExtensionContext) in
+            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        }
+        guard admits(id, { reset($0); _ = Extensions.apply(plan, to: $0) }) else { return false }
+        Store.settings.set(plan.blocked, forKey: "extensions.blocked.\(id)")
         objectWillChange.send()
-        guard let context = contexts[id] else { return }
-        for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        guard let context = contexts[id] else { return true }
+        reset(context)
         applyAccess(context)
+        return true
     }
 
     /// A host and everything under it.
@@ -2782,9 +2952,58 @@ final class Extensions: NSObject, ObservableObject {
     private func applyAccess(_ context: WKWebExtensionContext) {
         let id = context.uniqueIdentifier
         if ExtensionShims.portTrace { noteError("yab trace: applyAccess", for: id) }
+        var plan = accessPlan(id)
+        let fit = sitesThatFit(plan, on: context)
+        let left = Array(plan.allowed.dropFirst(fit))
+        plan.allowed = Array(plan.allowed.prefix(fit))
+        for host in left {
+            for pattern in Extensions.patterns(for: host) { context.setPermissionStatus(.unknown, for: pattern) }
+        }
+        take(Extensions.apply(plan, to: context), from: id)
+        guard !left.isEmpty else { return }
+        let note = "Not running on \(left.joined(separator: ", ")): its content scripts would pass WebKit's limit for all extensions"
+        guard errors[id]?.contains(note) != true else { return }
+        NSLog("Extensions: %@ runs on %d of its chosen sites under WebKit's script budget", id, fit)
+        noteError(note, for: id, counted: false)
+    }
+
+    /// How many of `plan`'s chosen sites, in the order chosen, fit the
+    /// budget beside every other loaded extension. All of them when even
+    /// none would fit: that is over for another reason, `noteIfOverBudget`'s.
+    private func sitesThatFit(_ plan: AccessPlan, on live: WKWebExtensionContext) -> Int {
+        let id = live.uniqueIdentifier
+        guard plan.access == .sites, !plan.allowed.isEmpty,
+              let groups = try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: id)) else { return plan.allowed.count }
+        let others = contexts.filter { $0.key != id }.reduce(0) { total, other in
+            let theirs = (try? WebKitIPCBoundary.catalogGroups(at: Extensions.folder(for: other.key))) ?? []
+            return total + WebKitIPCBoundary.injectedScripts(theirs, grants: WebKitIPCBoundary.Grants(other.value))
+        }
+        let fileAccess = WebKitIPCBoundary.Grants.fileAccess(of: live)
+        func fits(_ count: Int) -> Bool {
+            var some = plan
+            some.allowed = Array(plan.allowed.prefix(count))
+            let trial = trial(of: live)
+            for host in plan.allowed.dropFirst(count) {
+                for pattern in Extensions.patterns(for: host) { trial.setPermissionStatus(.unknown, for: pattern) }
+            }
+            _ = Extensions.apply(some, to: trial)
+            let own = WebKitIPCBoundary.injectedScripts(groups, grants: WebKitIPCBoundary.Grants(trial, fileAccess: fileAccess))
+            return others + own <= WebKitIPCBoundary.scriptLimit
+        }
+        if fits(plan.allowed.count) || !fits(0) { return plan.allowed.count }
+        // Each site only adds scripts, so the ones that fit are a prefix.
+        var low = 0, high = plan.allowed.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if fits(mid) { low = mid } else { high = mid - 1 }
+        }
+        return low
+    }
+
+    /// `plan` set on `context`'s site grants; returns the keys it keeps from it.
+    static func apply(_ plan: AccessPlan, to context: WKWebExtensionContext) -> [String] {
         var taken: [String] = []
-        defer { take(taken, from: id) }
-        let status: WKWebExtensionContext.PermissionStatus = access(id) == .asked ? .grantedExplicitly : .unknown
+        let status: WKWebExtensionContext.PermissionStatus = plan.access == .asked ? .grantedExplicitly : .unknown
         let named = context.webExtension.allRequestedMatchPatterns
         for pattern in named {
             // Given, a pattern inside another it names is given already:
@@ -2806,7 +3025,7 @@ final class Extensions: NSObject, ObservableObject {
         // A site kept from it that overlaps one it names, every site over
         // github.com, is only not given: denied, it would take the named
         // one with it, and a denial wins where two meet.
-        for (key, on) in Extensions.choices(id) {
+        for (key, on) in plan.choices {
             guard let pattern = try? WKWebExtension.MatchPattern(string: key) else { continue }
             let overlaps = named.contains { $0.matches(pattern) || pattern.matches($0) }
             let kept: WKWebExtensionContext.PermissionStatus = overlaps ? .unknown : .deniedExplicitly
@@ -2817,20 +3036,21 @@ final class Extensions: NSObject, ObservableObject {
         // Only the sites chosen: given whether or not its manifest names
         // them one by one, as Chrome gives them; an extension that names
         // every site names these too.
-        if access(id) == .sites {
-            for host in allowed(id) {
+        if plan.access == .sites {
+            for host in plan.allowed {
                 for pattern in Extensions.patterns(for: host) {
                     context.setPermissionStatus(.grantedExplicitly, for: pattern)
                     taken.removeAll { $0 == pattern.string }
                 }
             }
         }
-        for host in blocked(id) {
+        for host in plan.blocked {
             for pattern in Extensions.patterns(for: host) {
                 context.setPermissionStatus(.deniedExplicitly, for: pattern)
                 taken.append(pattern.string)
             }
         }
+        return taken
     }
 
     /// A key someone gave one of its commands, or none. WebKit leaves
@@ -3236,11 +3456,15 @@ final class Extensions: NSObject, ObservableObject {
 
     /// Sites it was given after asking: kept, so it still has them after a
     /// relaunch, as in Chrome, and given now if it reaches sites at all.
-    func give(sites patterns: [WKWebExtension.MatchPattern], to context: WKWebExtensionContext) {
+    @discardableResult
+    func give(sites patterns: [WKWebExtension.MatchPattern], to context: WKWebExtensionContext) -> Bool {
         let id = context.uniqueIdentifier
-        Extensions.choose(Dictionary(patterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a }), for: id)
-        guard access(id) == .asked else { return }
+        let picks = Dictionary(patterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a })
+        guard admits(choices: picks, for: id) else { return false }
+        Extensions.choose(picks, for: id)
+        guard access(id) == .asked else { return true }
         applyAccess(context)
+        return true
     }
 
     /// For the bench, in a test run only: answer every question this way
@@ -3457,7 +3681,7 @@ final class Extensions: NSObject, ObservableObject {
     /// tab or for all of them, else its manifest's.
     private func popupURL(for context: WKWebExtensionContext) -> URL? {
         let set = popupPaths[context.uniqueIdentifier] ?? [:]
-        let path = browser?.active.flatMap { set[$0.id.uuidString] } ?? set["*"]
+        let path = (window?.link?.tab ?? browser?.active).flatMap { set[$0.id.uuidString] } ?? set["*"]
         guard let path else { return Extensions.popupURL(for: context) }
         guard !path.isEmpty else { return nil }
         return URL(string: path, relativeTo: context.baseURL)?.absoluteURL
@@ -3691,8 +3915,15 @@ extension Extensions: WKWebExtensionControllerDelegate {
     func webExtensionController(_ controller: WKWebExtensionController, promptForPermissionMatchPatterns matchPatterns: Set<WKWebExtension.MatchPattern>, in tab: (any WKWebExtensionTab)?, for extensionContext: WKWebExtensionContext) async -> (Set<WKWebExtension.MatchPattern>, Date?) {
         let choices = Extensions.choices(extensionContext.uniqueIdentifier)
         guard !matchPatterns.contains(where: { choices[$0.string] == false }) else { return ([], nil) }
+        // What this returns WebKit grants itself, whatever the site access.
+        let fits = { self.admits(extensionContext.uniqueIdentifier) { trial in
+            for pattern in matchPatterns { trial.setPermissionStatus(.grantedExplicitly, for: pattern) }
+        } }
+        guard fits() else { return ([], nil) }
         let sites = matchPatterns.sorted { $0.string < $1.string }
         guard await ask(wants: Extensions.wants(sites: sites, permissions: []), context: extensionContext) else { return ([], nil) }
+        // Again: another grant may have taken the room while the card waited.
+        guard fits() else { return ([], nil) }
         Extensions.choose(Dictionary(matchPatterns.map { ($0.string, true) }, uniquingKeysWith: { a, _ in a }), for: extensionContext.uniqueIdentifier)
         return (matchPatterns, nil)
     }
@@ -3954,7 +4185,11 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
 
     func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? { tab.flatMap(owner.window(of:)) }
 
+    /// The small window it is the one tab of, if it is.
+    private var link: LinkWindow? { tab.flatMap { owner.window(of: $0)?.link } }
+
     func indexInWindow(for context: WKWebExtensionContext) -> Int {
+        if link != nil { return 0 }
         guard let tab, let browser else { return NSNotFound }
         return owner.listing(browser).places[tab.id] ?? NSNotFound
     }
@@ -3963,7 +4198,7 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
     func title(for context: WKWebExtensionContext) -> String? { tab?.title }
     func url(for context: WKWebExtensionContext) -> URL? { tab?.address.map(Extensions.popped) }
     func isLoadingComplete(for context: WKWebExtensionContext) -> Bool { !(tab?.loading ?? false) }
-    func isSelected(for context: WKWebExtensionContext) -> Bool { tab?.id == browser?.activeID }
+    func isSelected(for context: WKWebExtensionContext) -> Bool { link != nil || tab?.id == browser?.activeID }
     func isPinned(for context: WKWebExtensionContext) -> Bool { tab?.pin != nil }
     func isPlayingAudio(for context: WKWebExtensionContext) -> Bool { tab?.noisy ?? false }
     func isMuted(for context: WKWebExtensionContext) -> Bool { tab?.muted ?? false }
@@ -4014,6 +4249,7 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
     func goForward(for context: WKWebExtensionContext) async throws { tab?.forward() }
 
     func activate(for context: WKWebExtensionContext) async throws {
+        if let link { return link.window.makeKeyAndOrderFront(nil) }
         guard let tab, let browser else { return }
         // A tab of a space not on screen: that space first, as a click on
         // it in the tray would (Rabby bringing its welcome tab forward).
@@ -4027,6 +4263,7 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
     /// switcher, without going to it; a pin or a kept tab is put down
     /// rather than taken out of its row, as ⌘W puts it down.
     func close(for context: WKWebExtensionContext) async throws {
+        if let link { return link.close() }
         guard let tab, let browser else { return }
         if browser.tabs.contains(where: { $0.id == tab.id }) { return browser.close(tab) }
         guard browser.parked.values.contains(where: { $0.tabs.contains { $0.id == tab.id } }) else { return }
@@ -4050,13 +4287,26 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
 final class ExtensionWindow: NSObject, WKWebExtensionWindow {
     unowned let owner: Extensions
     weak var browser: Browser?
+    /// The small window this is, rather than a browser window.
+    private(set) weak var link: LinkWindow?
+    /// Kept apart from `link`, which is weak: this is never taken for a browser window.
+    let isLink: Bool
 
-    init(owner: Extensions, browser: Browser) {
+    init(owner: Extensions, browser: Browser, link: LinkWindow? = nil) {
         self.owner = owner
         self.browser = browser
+        self.link = link
+        isLink = link != nil
+    }
+
+    /// Its tab in front: a small window's page, or the row's active tab.
+    var activeAdapter: ExtensionTab? {
+        guard isLink else { return owner.activeAdapter(in: browser) }
+        return link.flatMap { owner.toldTabs($0).first }.flatMap { owner.seen($0) ? owner.adapter(for: $0) : nil }
     }
 
     private var nsWindow: NSWindow? {
+        if let link { return link.window }
         if let browser, let window = BrowserWindows.shared.window(for: browser) { return window }
         guard browser?.windowID == nil else { return nil }
         return NSApp.windows.first { $0.isVisible && $0.contentView != nil && $0.frameAutosaveName == "yab" }
@@ -4064,13 +4314,18 @@ final class ExtensionWindow: NSObject, WKWebExtensionWindow {
     }
 
     func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] {
+        if isLink { return link.map { owner.toldTabs($0).filter(owner.seen).map(owner.adapter(for:)) } ?? [] }
         guard let browser else { return [] }
         return owner.listing(browser).adapters
     }
 
-    func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? { owner.activeAdapter(in: browser) }
-    func windowType(for context: WKWebExtensionContext) -> WKWebExtension.WindowType { .normal }
-    func isPrivate(for context: WKWebExtensionContext) -> Bool { browser?.windowPurpose == .privateOnly }
+    func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? { activeAdapter }
+    /// A popup, as Chrome's: tab managers sweeping normal windows leave it be.
+    func windowType(for context: WKWebExtensionContext) -> WKWebExtension.WindowType { isLink ? .popup : .normal }
+    func isPrivate(for context: WKWebExtensionContext) -> Bool {
+        if let link { return link.tab.shy }
+        return browser?.windowPurpose == .privateOnly
+    }
 
     func windowState(for context: WKWebExtensionContext) -> WKWebExtension.WindowState {
         guard let window = nsWindow else { return .normal }
@@ -4091,10 +4346,9 @@ final class ExtensionWindow: NSObject, WKWebExtensionWindow {
 // MARK: - where panels and popups hang
 
 /// Where Site Controls is (SiteControls.swift), or an extension pinned in
-/// the plate. There can be more than one of it, the plate's and a band's,
-/// and whichever was drawn last used to take the anchor, so one could lose
-/// it on its way out and the panel opened from the middle of the window.
-/// Now the anchor is the one on screen, the last to get there; one leaving
+/// the plate. There can be more than one of it: the plate's, a band's, a
+/// small window's. The anchor is the one on screen in the window in front,
+/// else the last to get there, never a small window behind; one leaving
 /// hands it to the other.
 @available(macOS 15.4, *)
 final class AnchorView: NSView {
@@ -4109,7 +4363,12 @@ final class AnchorView: NSView {
         self.edge = edge
         super.init(frame: .zero)
         AnchorView.live.add(self)
+        _ = AnchorView.keyWatch
     }
+
+    private static let keyWatch: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+    ) { _ in MainActor.assumeIsolated { AnchorView.resettle() } }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 
@@ -4141,10 +4400,29 @@ final class AnchorView: NSView {
         }
     }
 
+    /// Every id again, after the window in front changed.
+    @MainActor
+    static func resettle() {
+        Set(live.allObjects.map(\.id)).forEach(settle)
+    }
+
+    /// The key window and the windows it hangs from.
+    @MainActor
+    private static var frontChain: [NSWindow] {
+        Array(sequence(first: NSApp.keyWindow, next: { $0?.parent }).prefix { $0 != nil }.compactMap { $0 })
+    }
+
     @MainActor
     static func settle(_ id: String) {
         let here = live.allObjects.filter { $0.id == id && $0.window != nil && !$0.isHiddenOrHasHiddenAncestor }
-        let pick = here.max { $0.arrived < $1.arrived }
+        // The window in front's own anchors first; a small window's only while it is in front.
+        let chain = frontChain
+        let inFront = here.filter { view in chain.contains { $0 === view.window } }
+        let frontHasDoor = live.allObjects.contains { view in
+            view.id == Extensions.menuAnchor && !view.isHiddenOrHasHiddenAncestor && chain.contains { $0 === view.window }
+        }
+        let pool = !inFront.isEmpty ? inFront : frontHasDoor ? [] : here.filter { LinkWindow.owning($0.window) == nil }
+        let pick = pool.max { $0.arrived < $1.arrived }
         let extensions = Extensions.shared
         extensions.anchors[id] = pick.map(WeakView.init)
         if id == Extensions.menuAnchor, let pick { extensions.menuEdge = pick.edge }

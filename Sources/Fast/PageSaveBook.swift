@@ -42,6 +42,12 @@ extension PageSave {
         next(0)
     }
 
+    /// Whether `count` tabs saved as `format` are joined into one file:
+    /// Markdown or text, and more than one tab. One tab is saved as itself.
+    nonisolated static func joinsTabs(format: String, count: Int) -> Bool {
+        (format == "md" || format == "txt") && count > 1
+    }
+
     /// Tabs' Markdown or text one after another in one file, a rule between.
     static func joined(_ tabs: [Tab], as format: String, title: String?, in folder: URL,
                        done: @escaping @MainActor (Result<URL, Error>) -> Void) {

@@ -71,6 +71,11 @@ final class Agents: ObservableObject {
         /// by its path may go up from a task kept to the browser
         /// (AgentFiles.refuse, feedback #141).
         var told: [String] = []
+        /// The next message carries on a thread the person stopped: the agent
+        /// is told so once, apart from the words kept as the prompt. Pending
+        /// until a message is handed to the provider (Agents.delivered), so
+        /// a launch that fails does not spend it (#964).
+        var afterStop = false
         var state: State
         /// Tabs the person released from this attached session. A later call cannot reclaim them.
         var stoppedTabs: Set<UUID> = []
@@ -148,6 +153,13 @@ final class Agents: ObservableObject {
         /// Your own words for the messages still to go, oldest first: its
         /// chat shows them in place of the prompt wrapped around them.
         var saying: [String] = []
+        /// Messages sent, heard back or not: the transcript follows each
+        /// down. The last `queue.count` of `saying` wait in the queue, not
+        /// sent until it lets them go; Claude Code says one back the moment
+        /// it goes, so those heard back are counted too.
+        var sends: Int { echoed + max(0, saying.count - queue.count) }
+        /// Of `saying`, those heard back since this session was made.
+        var echoed = 0
         /// Words steered into the turn going on, not yet heard back: they
         /// stand in that turn, not in one of their own.
         var steering = 0
@@ -492,7 +504,7 @@ final class Agents: ObservableObject {
         if now != calling { calling = now }
     }
     /// Waiting on a session to change: long polls from `agent-wait`.
-    private var waiters: [String: [() -> Void]] = [:]
+    private var waiters: [String: [@MainActor @Sendable () -> Void]] = [:]
     private var calm: DispatchWorkItem?
     /// Per attached session, the moment it will have gone quiet (AgentFeed.rest).
     private var quieting: [String: DispatchWorkItem] = [:]
@@ -649,7 +661,8 @@ final class Agents: ObservableObject {
             session.resent -= 1
             return
         }
-        let words = session.saying.isEmpty ? text : session.saying.removeFirst()
+        if !session.saying.isEmpty { session.echoed += 1 }
+        let words = session.saying.isEmpty ? Agents.unsaid(text) : session.saying.removeFirst()
         var item = ChatItem(id: UUID().uuidString, kind: .asked, text: words, state: .done)
         if !session.carrying.isEmpty { item.detail = session.carrying.removeFirst().joined(separator: "\n") }
         if !session.attaching.isEmpty { session.sent[item.id] = session.attaching.removeFirst() }
@@ -684,7 +697,8 @@ final class Agents: ObservableObject {
                     mail: session.mail || old?.mail == true ? true : nil, remoteTask: session.remoteTask,
                     source: Agents.source(of: session) ?? old?.source, routine: session.routine ?? old?.routine,
                     project: session.project, textOnly: session.cli == "gemini" ? session.textOnly : nil,
-                    effort: session.cli == "gemini" ? session.effort : nil)
+                    effort: session.cli == "gemini" ? session.effort : nil,
+                    afterStop: session.afterStop || session.state == .stopped ? true : nil)
             // A name, pin or read chosen on another device outlives the
             // session's own title and unread (R4).
             .keepingMetadata(from: old)
@@ -754,6 +768,8 @@ final class Agents: ObservableObject {
         session.result = chat.answer
         session.asked = chat.items.filter { $0.kind == .asked }.map(\.text)
         session.ended = chat.updated
+        // Stopped, or owed the note, when Yab quit: the next message says so (#964).
+        session.afterStop = chat.afterStop == true
         register(session)
         return session
     }
@@ -860,9 +876,9 @@ final class Agents: ObservableObject {
         changed(session)
     }
 
-    func wait(_ id: String, seconds: Double, _ then: @escaping () -> Void) {
+    func wait(_ id: String, seconds: Double, _ then: @escaping @MainActor @Sendable () -> Void) {
         var fired = false
-        let once = { if !fired { fired = true; then() } }
+        let once: @MainActor @Sendable () -> Void = { if !fired { fired = true; then() } }
         waiters[id, default: []].append(once)
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: once)
     }
@@ -942,8 +958,31 @@ final class Agents: ObservableObject {
     }
 
     func detach(_ id: String) {
+        leftUntil[id] = nil
         guard let session = session(id), session.state == .attached, !session.script else { return }
         finish(session, .done)
+    }
+
+    /// Sessions a terminal left waiting for the person (`yab settings --session`), and when each ends unused.
+    private(set) var leftUntil: [String: Date] = [:]
+
+    func leave(_ id: String, for life: TimeInterval = Mcp.keptFor, now: Date = Date()) {
+        guard let session = session(id), session.state == .attached, !session.script else { return }
+        leftUntil[id] = now.addingTimeInterval(life)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(life))
+            self?.expireLeft()
+        }
+    }
+
+    /// A call in a left session: its time starts again.
+    func used(_ id: String?, now: Date = Date()) {
+        guard let id, leftUntil[id] != nil else { return }
+        leave(id, now: now)
+    }
+
+    func expireLeft(now: Date = Date()) {
+        for (id, until) in leftUntil where until <= now { detach(id) }
     }
 
     // MARK: - agents the browser starts
@@ -1014,6 +1053,9 @@ final class Agents: ObservableObject {
         if let earlier, earlier.cli == cli, !earlier.state.live {
             session = earlier
             session.prompt = prompt
+            // Its thread ends inside what the person stopped (#964). A note
+            // a failed launch never delivered stays owed, not overwritten.
+            session.afterStop = session.afterStop || earlier.state == .stopped
             session.state = .starting
             session.result = ""
             session.ended = nil
@@ -1461,6 +1503,7 @@ final class Agents: ObservableObject {
             geminiRunners[session.id] = runner
             session.process = runner.child
             try runner.send(message)
+            delivered(session)
             // One message a turn: the CLI ends after its result.
             runner.close()
         } catch {
@@ -1869,6 +1912,8 @@ final class Agents: ObservableObject {
             }
             return
         }
+        // Only said here; it is owed until delivered() (#964).
+        let message = Agents.said(message, afterStop: session.afterStop)
         if session.agent == .gemini { return gemini(session, message: message) }
         let process = Process()
         session.archiveError = nil
@@ -2025,6 +2070,7 @@ final class Agents: ObservableObject {
                     Shell.end(process, grace: 1)
                 }
             }
+            var queued = false
             if let input {
                 // Nor its stdin, once it has gone.
                 _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -2034,16 +2080,23 @@ final class Agents: ObservableObject {
                     let server = CodexServer { try? writer.write(contentsOf: $0) }
                     server.images = Store.file("chats/images")
                     session.server = server
+                    queued = true
                     server.open(thread: session.thread, fork: from, instructions: brief, cwd: process.currentDirectoryURL?.path ?? room.path)
                 } else if session.agent == .cursor {
                     let writer = input.fileHandleForWriting
                     let server = CursorServer { try? writer.write(contentsOf: $0) }
                     session.cursor = server
+                    queued = true
                     server.open(thread: session.thread, cwd: room.path,
                         mcp: session.textOnly ? [] : [["name": Mcp.name, "command": me, "args": mcpArgs(session), "env": []]], textOnly: session.textOnly)
                 }
                 send(session, session.agent == .cursor && session.thread == nil ? brief + "\n\n" + message : message)
             }
+            // Written to Claude Code's stdin above; a Codex exec has it in
+            // its arguments, handed over by the launch. Codex's and Cursor's
+            // servers only queue it until their thread opens: theirs is
+            // delivered on .ready (#964).
+            if !queued { delivered(session) }
             if !session.remembering {
                 session.state = .running
                 note(session, "\(session.name) is working")
@@ -2673,7 +2726,7 @@ final class Agents: ObservableObject {
     /// works. Filing it into the subject pages is the daily pass's job.
     static func extractionPrompt(_ session: Session) -> String {
         if let project = Projects.shared.project(session.project), project.memoryOn { return projectExtraction(session, project) }
-        let clock = DateFormatter()
+        let clock = AppDates.formatter()
         clock.dateFormat = "HH:mm"
         return """
         Now, quietly (the user sees nothing of this turn), keep this task's episodic memory. Look back \
@@ -3008,6 +3061,33 @@ final class Agents: ObservableObject {
         return session
     }
 
+    /// Said before the words of a message that carries on a stopped turn
+    /// (#964): its thread ends inside the work the person stopped, and an
+    /// agent left to read it carried on with that.
+    static let stoppedLine = """
+    The person stopped you in your last turn. Don't resume or retry what it was doing, a sign-in handoff \
+    included; do only what this message asks.
+
+    """
+
+    /// The person's words of a message as the agent got it: the chat shows
+    /// no note (#964).
+    static func unsaid(_ text: String) -> String {
+        text.hasPrefix(stoppedLine) ? String(text.dropFirst(stoppedLine.count)) : text
+    }
+
+    /// A message has reached the provider (written to its stdin or server,
+    /// or its process launched with it): the stop note is spent. Before
+    /// this, a launch that throws leaves it owed to the next message (#964).
+    func delivered(_ session: Session) {
+        session.afterStop = false
+    }
+
+    /// The message as the agent gets it: after a stop, the note first.
+    static func said(_ message: String, afterStop: Bool) -> String {
+        afterStop ? stoppedLine + message : message
+    }
+
     func stop(_ id: String) -> Bool {
         guard let session = session(id), session.state.live else { return false }
         session.turnPermit.revoke()
@@ -3027,7 +3107,7 @@ final class Agents: ObservableObject {
             tab.permit = nil
             tab.handoff = nil
         }
-        for tab in tabs(of: session) where tab.handoff != nil {
+        for tab in windowTabs where tab.agent == session.id && tab.handoff != nil {
             tab.handoff = nil
             Agents.optional.remove(tab.id)
         }
@@ -3077,7 +3157,7 @@ final class Agents: ObservableObject {
         if session.state == .done { tallyForWrapped(session) }
         // What it asked and never heard back on goes with it: an answer
         // now would reach no one, and the page's foot would still ask.
-        for tab in tabs(of: session) where tab.handoff != nil && tab.permit == nil {
+        for tab in windowTabs where tab.agent == session.id && tab.handoff != nil && tab.permit == nil {
             tab.handoff = nil
             tab.handoffDetail = nil
             tab.choices = []
@@ -3236,7 +3316,10 @@ final class Agents: ObservableObject {
     private func cursor(_ heard: [CursorServer.Heard], _ session: Session) {
         for event in heard {
             switch event {
-            case .ready(let thread): session.thread = thread
+            case .ready(let thread):
+                session.thread = thread
+                // The queued first message went out as the chat opened (#964).
+                delivered(session)
             case .delta(let id, let words, let thinking):
                 session.items.grow(id, by: words, kind: thinking ? .thinking : .message, at: Date())
                 if !thinking { session.result += words }
@@ -3552,6 +3635,8 @@ final class Agents: ObservableObject {
             switch event {
             case .ready(let thread):
                 session.thread = thread
+                // The queued first message went out as the thread opened (#964).
+                delivered(session)
             case .taken:
                 session.unread = max(0, session.unread - 1)
                 if session.unread == 0, session.turnFinished, session.server?.turn == nil {
@@ -3567,7 +3652,8 @@ final class Agents: ObservableObject {
                     continue
                 }
                 // What it was told, said back: in your words.
-                if item.kind == .asked, !session.saying.isEmpty { item.text = session.saying.removeFirst() }
+                if item.kind == .asked, !session.saying.isEmpty { session.echoed += 1 }
+                if item.kind == .asked { item.text = session.saying.isEmpty ? Agents.unsaid(item.text) : session.saying.removeFirst() }
                 if item.kind == .asked, !session.carrying.isEmpty { item.detail = session.carrying.removeFirst().joined(separator: "\n") }
                 if item.kind == .asked, !session.attaching.isEmpty { session.sent[item.id] = session.attaching.removeFirst() }
                 if item.kind == .asked, session.steering > 0 { item.name = "steer"; session.steering -= 1 }
@@ -5034,7 +5120,16 @@ enum Shell {
 /// `yab agent "task"`: a task started in the running browser, followed here
 /// the way `aside "…"` is.
 enum AgentCLI {
-    static func run(_ args: [String]) -> Never {
+    static let verbs: Set<String> = ["steer", "queue", "memory", "stop", "list"]
+
+    /// Whether `arg` is one of `verbs` rather than a task's first word:
+    /// only after `yab agent` or from `yab session`, so "yab list my open
+    /// pull requests" is a task.
+    static func isVerb(_ arg: String, first: Bool, verbs allowed: Bool) -> Bool {
+        allowed && first && verbs.contains(arg)
+    }
+
+    static func run(_ args: [String], verbs allowed: Bool = true) -> Never {
         // Each step as it happens, even into a pipe.
         setvbuf(stdout, nil, _IOLBF, 0)
         let socket = Wire.socket(args)
@@ -5058,12 +5153,12 @@ enum AgentCLI {
             case "--wait-person": skip = true
             // The word other agent CLIs use for it, so the same flag works here.
             case "--permission": access = args[safe: i + 1] == "full-access" ? "full" : "browser"; skip = true
-            case "steer" where words.isEmpty, "queue" where words.isEmpty:
+            case "steer" where isVerb(arg, first: words.isEmpty, verbs: allowed), "queue" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let text = args.dropFirst(i + 2).filter { $0 != "--socket" && $0 != socket }.joined(separator: " ")
                 let got = Wire.ask(socket, ["do": arg == "steer" ? "agent-steer" : "agent-queue", "session": args[safe: i + 1] ?? "", "text": text])
                 print(got["error"] as? String ?? (arg == "steer" ? "Steered." : "Queued."))
                 exit(got["error"] == nil ? 0 : 1)
-            case "memory" where words.isEmpty:
+            case "memory" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let query = args.dropFirst(i + 1).filter { $0 != "--socket" && $0 != socket }.joined(separator: " ")
                 if query.isEmpty {
                     let got = Wire.ask(socket, ["do": "agent-memory-read", "file": "memory"])
@@ -5073,11 +5168,11 @@ enum AgentCLI {
                     for hit in got["hits"] as? [[String: Any]] ?? [] { print("\(hit["file"] ?? ""):\(hit["line"] ?? "")  \(hit["text"] ?? "")") }
                 }
                 exit(0)
-            case "stop" where words.isEmpty:
+            case "stop" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let got = Wire.ask(socket, ["do": "agent-stop", "session": args[safe: i + 1] ?? ""])
                 print(got["error"] as? String ?? "Stopped.")
                 exit(got["error"] == nil ? 0 : 1)
-            case "list" where words.isEmpty:
+            case "list" where isVerb(arg, first: words.isEmpty, verbs: allowed):
                 let got = Wire.ask(socket, ["do": "agents"])
                 if let error = got["error"] as? String { FileHandle.standardError.write(Data((error + "\n").utf8)); exit(1) }
                 let all = got["agents"] as? [[String: Any]] ?? []

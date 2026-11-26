@@ -102,11 +102,15 @@ final class AgentRules: ObservableObject {
 
     // MARK: - money
 
-    /// An amount as a page writes it, "$42.10", read as dollars; nil for
-    /// another currency or none.
+    /// An amount as a page writes it, "$42.10" or "US$42.10", read as
+    /// dollars; nil for another currency or none. The page script keeps the
+    /// letters before the sign, so A$, C$, R$ (reais), HK$ and the other
+    /// dollars and pesos aren't taken for US dollars, and the number is read
+    /// the way it is written, "$1,234.56" or "$1.234,56" (Calc.digits).
     nonisolated static func dollars(_ amount: String) -> Double? {
-        guard amount.contains("$"), !amount.contains("A$"), !amount.contains("C$") else { return nil }
-        let digits = amount.filter { $0.isNumber || $0 == "." }
+        let text = amount.filter { !$0.isWhitespace }
+        guard let sign = text.firstIndex(of: "$"), ["", "US"].contains(text[..<sign].uppercased()),
+              let digits = Calc.digits(String(text[text.index(after: sign)...])) else { return nil }
         return Double(digits)
     }
 

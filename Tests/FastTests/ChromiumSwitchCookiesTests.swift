@@ -270,4 +270,206 @@ struct ChromiumSwitchCookiesTests {
         let deletion = ChromiumDRMCookieMerge.plan(webKit: [gone.key: gone], chromium: [:], previous: agreed(gone)).owingClearing()
         #expect(deletion.toWebKit.count == 1 && deletion.toWebKit[0].cookie == nil)
     }
+
+    // The step reads a host open on both engines every few seconds; most
+    // passes find both jars as they were.
+    private func jar(_ count: Int, value: String = "v") -> [String: ChromiumDRMCookie] {
+        Dictionary(uniqueKeysWithValues: (0..<count).map { n in
+            let made = cookie("c\(n)", value + "\(n)", domain: ".switch.test")
+            return (made.key, made)
+        })
+    }
+
+    @Test func aHostReadAgainUnchangedIsNeitherHashedNorSavedAgain() {
+        var book = ChromiumCookieBook()
+        let scope = book.scope(host: "switch.test", seen: [])
+        let both = jar(40)
+        let changed1 = book.record(scope, webKit: both, chromium: both)
+        #expect(changed1)
+        let made = book.printsMade
+        let ledger = book.ledger
+        for _ in 0..<5 {
+            let changed = book.record(scope, webKit: both, chromium: both)
+            #expect(!changed)
+        }
+        #expect(book.printsMade == made && book.ledger == ledger)
+        // One cookie rotated in Chromium: that one is hashed, and it is a change.
+        var rotated = both
+        let key = cookie("c7", "v7", domain: ".switch.test").key
+        rotated[key]?.value = "rotated"
+        let changed2 = book.record(scope, webKit: both, chromium: rotated)
+        #expect(changed2)
+        #expect(book.printsMade == made + 1)
+        #expect(book.ledger.chromium[key] != ledger.chromium[key] && book.ledger.webKit == ledger.webKit)
+        // A deletion is a change too, and what the book holds matches a book made afresh.
+        rotated[key] = nil
+        let changed3 = book.record(scope, webKit: both, chromium: rotated)
+        #expect(changed3)
+        var fresh = ChromiumCookieBook()
+        fresh.record(scope, webKit: both, chromium: rotated)
+        #expect(book.ledger == fresh.ledger)
+    }
+
+    @Test func aSessionCookieEndingIsAChange() {
+        var book = ChromiumCookieBook()
+        let scope = book.scope(host: "switch.test", seen: [])
+        let session = cookie("sid", domain: "switch.test", session: true)
+        let changed4 = book.record(scope, webKit: [session.key: session], chromium: [session.key: session])
+        #expect(changed4)
+        #expect(book.ledger.session == [session.key])
+        let changed5 = book.record(scope, webKit: [session.key: session], chromium: [:])
+        #expect(changed5)
+        #expect(book.ledger.session == nil)
+    }
+
+    @Test func aPlanHashesOnlyTheKeysTheJarsDisagreeOn() {
+        let both = jar(40)
+        var other = both
+        let key = cookie("c3", "v3", domain: ".switch.test").key
+        other[key]?.value = "edited"
+        let previous = ChromiumSwitchCookieLedger(webKit: ChromiumSwitchCookieLedger.fingerprint(both),
+                                                  chromium: ChromiumSwitchCookieLedger.fingerprint(both))
+        var hashed: [String] = []
+        let plan = ChromiumDRMCookieMerge.plan(webKit: both, chromium: other, previous: previous, fingerprint: {
+            hashed.append($0.key)
+            return ChromiumSwitchCookieLedger.fingerprint($0)
+        })
+        #expect(hashed == [key, key])
+        #expect(plan.toWebKit.count == 1 && plan.toWebKit[0].cookie?.value == "edited" && plan.toChromium.isEmpty)
+        hashed = []
+        _ = ChromiumDRMCookieMerge.plan(webKit: both, chromium: both, previous: previous, fingerprint: {
+            hashed.append($0.key)
+            return ChromiumSwitchCookieLedger.fingerprint($0)
+        })
+        #expect(hashed.isEmpty)
+    }
+
+    @Test func theStepKeepsPaceOnlyWhileSomeoneIsLooking() {
+        typealias Step = ChromiumDRMCookies
+        // A host open on both engines keeps the 3 seconds whatever else holds:
+        // a longer wait is a longer window for both jars to change at once,
+        // which the merge then settles by who used the host last, not by
+        // which change came last.
+        for active in [true, false] {
+            for shown in [true, false] {
+                for saving in [true, false] {
+                    #expect(Step.stepEvery(shared: true, active: active, shown: shown, saving: saving) == 3)
+                }
+            }
+        }
+        // Only Chromium's hosts: quick while someone looks, slower otherwise,
+        // slower still while saving power, never stopped.
+        #expect(Step.stepEvery(shared: false, active: true, shown: true, saving: false) == 3)
+        #expect(Step.stepEvery(shared: false, active: false, shown: true, saving: false) == 30)
+        #expect(Step.stepEvery(shared: false, active: true, shown: false, saving: false) == 30)
+        #expect(Step.stepEvery(shared: false, active: true, shown: true, saving: true) == 60)
+        #expect(Step.stepEvery(shared: false, active: false, shown: false, saving: true) == 60)
+    }
+
+    @Test func aLedgerSaveThatFailedIsOwedUntilOneLands() {
+        var saves = ChromiumLedgerSaves()
+        #expect(!saves.owed)
+        saves.edited()
+        // The write failed (a full disk): still owed, so the next read saves again.
+        #expect(saves.owed)
+        let older = saves.edits
+        saves.edited()
+        // A save of the ledger as it was before the last edit landed: the last edit is still owed.
+        saves.wrote(older)
+        #expect(saves.owed)
+        saves.wrote(saves.edits)
+        #expect(!saves.owed)
+        // Nothing new: nothing is written again.
+        #expect(!saves.owed)
+    }
+
+    @Test func aHostAboutToOpenOnTheOtherEngineCountsAsShared() {
+        typealias Step = ChromiumDRMCookies
+        #expect(!Step.shares(chromium: ["a.test"], webKit: ["b.test"], adding: []))
+        #expect(Step.shares(chromium: ["a.test"], webKit: ["a.test"], adding: []))
+        // A WebKit tab's first request to a host Chromium has open: its page has no address yet.
+        #expect(Step.shares(chromium: ["a.test"], webKit: [], adding: [("a.test", .webKit)]))
+        #expect(Step.shares(chromium: [], webKit: ["a.test"], adding: [("a.test", .chromium)]))
+        #expect(!Step.shares(chromium: ["a.test"], webKit: [], adding: [("a.test", .chromium)]))
+        // Several on their way: any one of them shared is enough.
+        #expect(Step.shares(chromium: ["a.test"], webKit: [], adding: [("b.test", .webKit), ("a.test", .webKit)]))
+        // Both engines' first requests to one new host, neither page there yet.
+        #expect(Step.shares(chromium: [], webKit: [], adding: [("n.test", .webKit), ("n.test", .chromium)]))
+        #expect(!Step.shares(chromium: [], webKit: [], adding: [("n.test", .webKit), ("m.test", .chromium)]))
+    }
+
+    @MainActor @Test func ledgerSavesLandInTheOrderTheyStartAndTheLastIsTheNewest() async throws {
+        final class Box: @unchecked Sendable {
+            var ledger = ChromiumSwitchCookieLedger(webKit: ["a": "1"], chromium: [:])
+            var written: [Int] = []
+            var started = false
+        }
+        let box = Box()
+        let writer = ChromiumLedgerWriter(ledger: { box.ledger }) { ledger in
+            await MainActor.run { box.started = true }
+            // The first save is the slow one: if saves overlapped, it would land last.
+            if ledger.webKit.count == 1 { try await Task.sleep(for: .milliseconds(300)) }
+            await MainActor.run { box.written.append(ledger.webKit.count) }
+        }
+        writer.edited()
+        let first = Task { @MainActor in try await writer.save() }
+        while !box.started { await Task.yield() }
+        box.ledger.webKit["b"] = "2"
+        writer.edited()
+        try await writer.save()
+        try await first.value
+        #expect(box.written.last == 2)
+        #expect(!writer.owed)
+    }
+
+    @MainActor @Test func aFailedLedgerSaveIsOwed() async {
+        struct Full: Error {}
+        let writer = ChromiumLedgerWriter(ledger: { ChromiumSwitchCookieLedger(webKit: [:], chromium: [:]) }) { _ in throw Full() }
+        writer.edited()
+        await #expect(throws: Full.self) { try await writer.save() }
+        #expect(writer.owed)
+    }
+
+    @MainActor @Test func aSaveWhoseBridgeIsGoneWritesNothing() async throws {
+        var writes = 0
+        let writer = ChromiumLedgerWriter(ledger: { nil }) { _ in writes += 1 }
+        writer.edited()
+        try await writer.save()
+        #expect(writes == 0)
+    }
+
+    @MainActor @Test func aFailedSaveIsTriedAgainOnlyAfterARest() async {
+        struct Full: Error {}
+        var now = Date(timeIntervalSince1970: 1000)
+        let writer = ChromiumLedgerWriter(ledger: { ChromiumSwitchCookieLedger(webKit: [:], chromium: [:]) }, clock: { now }) { _ in throw Full() }
+        writer.edited()
+        #expect(writer.due)
+        await #expect(throws: Full.self) { try await writer.save() }
+        // A full disk: not every read of a host writes the whole ledger again.
+        #expect(writer.owed && !writer.due)
+        now = now.addingTimeInterval(ChromiumLedgerWriter.rest)
+        #expect(writer.due)
+    }
+
+    @Test func chromiumsOwnHostsGetTheirTurnAsOftenAsTheStepAllows() {
+        typealias Step = ChromiumDRMCookies
+        // At the quick pace, every fifth pass, 15 seconds, as on main.
+        #expect((1...10).filter { Step.roundDue(pass: $0, wait: 3) } == [5, 10])
+        // At a slower pace every pass takes them: 30 or 60 seconds, not five times that.
+        #expect((1...3).allSatisfy { Step.roundDue(pass: $0, wait: 30) })
+        #expect((1...3).allSatisfy { Step.roundDue(pass: $0, wait: 60) })
+    }
+
+    @MainActor @Test func aLedgerAlreadyWrittenIsNotWrittenAgain() async throws {
+        final class Count: @unchecked Sendable { var writes = 0 }
+        let count = Count()
+        let writer = ChromiumLedgerWriter(ledger: { ChromiumSwitchCookieLedger(webKit: [:], chromium: [:]) }) { _ in
+            await MainActor.run { count.writes += 1 }
+        }
+        writer.edited()
+        try await writer.save()
+        // A read that changed nothing, its save asked for while the last one was in flight.
+        try await writer.save()
+        #expect(count.writes == 1)
+    }
 }

@@ -432,8 +432,8 @@ enum GrayMark {
 
     /// How light the ink of a gray mark stands, on light ground and dark,
     /// once it is too near the ground's to see at half strength.
-    static let onLight = 0.45
-    static let onDark = 0.6
+    nonisolated static let onLight = 0.45
+    nonisolated static let onDark = 0.6
 
     static func image(_ icon: String, size: CGFloat, dark: Bool = false) -> NSImage {
         let key = "\(size)|\(dark)|\(icon)"
@@ -641,7 +641,7 @@ final class SpaceShown: ObservableObject {
         // The strip's rows and capsule turn in this pass (StripTurns).
         if id != next, !now, let id { StripTurns.shared.begin(from: id, start: handoff) }
         handoff = 0
-        let move = { [self] in
+        let move: @MainActor @Sendable () -> Void = { [self] in
             if id != next {
                 id = next
                 if arrives { arrivals += 1 }
@@ -1025,7 +1025,7 @@ private struct StripCarousel<Label: View>: View {
     let to: Space
     let way: Int
     let progress: CGFloat
-    let label: (Space) -> Label
+    let label: @MainActor (Space) -> Label
 
     var body: some View {
         let p = min(1, max(0, progress))

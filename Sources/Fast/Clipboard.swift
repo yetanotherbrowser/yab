@@ -111,7 +111,7 @@ final class Clips: ObservableObject {
             worstMs = max(worstMs, lastMs)
         }
     }
-    private var timer: Timer?
+    private var pace: ClipPace?
     /// The count the clipboard had after Fast itself put a clip back on it:
     /// that change is not a new copy.
     private var ours: Int?
@@ -142,12 +142,14 @@ final class Clips: ObservableObject {
 
     func start(for browser: Browser) {
         self.browser = browser
-        guard timer == nil else { return }
+        guard pace == nil else { return }
         load()
         // A test run may look far more often, YAB_CLIPS_EVERY seconds, so a
         // look meets a page's copy (evals/clipboard/copy_crash.sh).
         let every = Store.testing ? ProcessInfo.processInfo.environment["YAB_CLIPS_EVERY"].flatMap(Double.init) ?? 1 : 1
-        timer = Self.makeTimer(every: every) { Clips.shared.look() }
+        let pace = ClipPace(steady: Store.testing ? every : nil) { Clips.shared.look() }
+        pace.start()
+        self.pace = pace
     }
 
     /// Keep the real Foundation callback testable without starting clipboard

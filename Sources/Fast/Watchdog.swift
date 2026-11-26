@@ -138,13 +138,17 @@ enum Watchdog {
     /// A line of the browser's own beside the stalls: something it did
     /// about pages that stopped (Stuck.swift), for the next report.
     static func note(_ line: String) {
-        let text = "\(stamp())  \(line)\n"
+        let at = Date()
         NSLog("yab: %@", line)
-        queue.async { write(text) }
+        queue.async { write("\(stamp(at))  \(line)\n") }
     }
 
-    private static func stamp() -> String {
-        ISO8601DateFormatter().string(from: Date())
+    /// One formatter, used on the queue alone: making one for every line,
+    /// its time zone read afresh each time, was most of what writing a stall cost.
+    private nonisolated(unsafe) static let stamps = ISO8601DateFormatter()
+
+    private static func stamp(_ at: Date = Date()) -> String {
+        stamps.string(from: at)
     }
 
     /// Appended, the file kept to its last 32 KB once past 64. The throwing

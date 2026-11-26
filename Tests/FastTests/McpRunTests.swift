@@ -84,3 +84,52 @@ extension McpToolsTests {
         #expect(Self.words(approval).contains("status: needs_user"))
     }
 }
+
+extension McpToolsTests {
+    @Test func nativeToolsAreFunctionsReturningParsedJSON() {
+        var calls: [(String, [String: Any])] = []
+        let result = McpRun.run("""
+        const theme = native_context('theme').settings[0].value;
+        native_actions('engine');
+        native_apply({ action: 'settings.set.theme', target: { kind: 'application', id: 'app' }, arguments: { value: 'dark' }, requestId: 'r1' });
+        native_undo('c1');
+        return theme;
+        """) { name, input in
+            calls.append((name, input))
+            let text = name == "native_context" ? #"{"settings":[{"id":"theme","value":"system"}]}"# : "{}"
+            return ["content": [["type": "text", "text": text]], "isError": false]
+        }
+        #expect(result["isError"] as? Bool == false)
+        #expect(Self.words(result).hasPrefix("system"))
+        #expect(calls.map(\.0) == ["native_context", "native_actions", "native_apply", "native_undo"])
+        #expect(calls[0].1["query"] as? String == "theme")
+        #expect(calls[1].1["query"] as? String == "engine")
+        #expect(calls[2].1["requestId"] as? String == "r1")
+        #expect(calls[3].1["changeId"] as? String == "c1")
+    }
+
+    @Test func nativeApplyFollowsItsOperationUntilTheYes() {
+        var calls: [String] = []
+        let result = McpRun.run("return native_apply({ action: 'a', requestId: 'r' }).status") { name, input in
+            calls.append(name)
+            let status = calls.count < 3 ? "needs_user" : "verified"
+            return ["content": [["type": "text", "text": #"{"status":"\#(status)","operationId":"OP1"}"#]], "isError": false]
+        }
+        #expect(Self.words(result).hasPrefix("verified"))
+        #expect(calls == ["native_apply", "native_operation", "native_operation"])
+        #expect((result["structuredContent"] as? [String: Any])?["waitingOperation"] == nil)
+    }
+
+    /// `yab exec` exited 0 on a change still waiting, and the yes that came later did nothing.
+    @Test func nativeApplyStillWaitingIsANeedsUserErrorThatKeepsItsOperation() {
+        var operations: [[String: Any]] = []
+        let result = McpRun.run("native_apply({ action: 'mail.connect', requestId: 'r' })") { name, input in
+            if name == "native_operation" { operations.append(input) }
+            return ["content": [["type": "text", "text": #"{"status":"running","operationId":"OP1"}"#]], "isError": false]
+        }
+        #expect(CliExec.status(result) == 3)
+        #expect(Self.words(result).contains("operationId: OP1"))
+        #expect(operations.count == 3 && operations.allSatisfy { $0["operationId"] as? String == "OP1" && $0["seconds"] as? Int == 10 })
+        #expect((result["structuredContent"] as? [String: Any])?["waitingOperation"] as? String == "OP1")
+    }
+}

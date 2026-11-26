@@ -131,6 +131,7 @@ extension Mcp {
                 var said: String?
                 while Date() < limit, said == nil {
                     let heard = ask(["do": "handoff-wait", "id": asked["id"] as? String ?? id ?? "", "seconds": 20])
+                    if let error = heard["error"] as? String { return text(error, error: true) }
                     if heard["state"] as? String == "stopped" { return text("The user stopped this task. Stop now.", error: true) }
                     if heard["state"] as? String == "taken" { return text(Agents.takenWords + " Nothing was filled.", error: true) }
                     if heard["state"] as? String == "done" { said = heard["answer"] as? String ?? "" }

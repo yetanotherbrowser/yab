@@ -926,7 +926,7 @@ private fun BrowserPane(
         if (focused) {
             if (!fullscreen) {
                 if (state.find != null) key(inputOwner) { PageFindBar(state.find!!, controller, state.surfaceEpoch, inputCurrent, Modifier.align(Alignment.BottomCenter)) }
-                else if (!tabletToolbarMounted && !state.emptyHomeBar) key(inputOwner) { BottomChrome(state, controller, onMenu, onChats, onVoice, onScan, onChromeOverlay, onStackFrame, onPlateFrame, onLiftMove, onLiftEnd, chromeAlpha, stackSceneGeneration, stackActionsCurrent, menuWindowGeneration, menuLayout, pagingHost, thumbnail, inputCurrent) }
+                else if (!tabletToolbarMounted && !state.emptyHomeBar) key(inputOwner) { BottomChrome(state, controller, onMenu, onChats, onVoice, onScan, onChromeOverlay, onStackFrame, onPlateFrame, onLiftMove, onLiftEnd, chromeAlpha, stackSceneGeneration, stackActionsCurrent, menuWindowGeneration, menuLayout, pagingHost, thumbnail, inputCurrent, paneOwner = tab?.id) }
             }
         } else if (tab != null) {
             key(inputOwner) { Box(Modifier.fillMaxSize().clickable { if (inputCurrent()) controller.selectTab(tab.id) }
@@ -1031,7 +1031,8 @@ private fun BottomChrome(state: BrowserState, controller: BrowserController, onM
     chromeAlpha: Float, stackSceneGeneration: Long, stackActionsCurrent: () -> Boolean,
     menuWindowGeneration: Long,
     menuLayout: BrowserTabletWorkspacePresentation?,
-    pagingHost: BrowserPageSwipeHostState?, thumbnail: (@Composable (BrowserTab, Modifier) -> Unit)?, inputCurrent: () -> Boolean) {
+    pagingHost: BrowserPageSwipeHostState?, thumbnail: (@Composable (BrowserTab, Modifier) -> Unit)?, inputCurrent: () -> Boolean,
+    paneOwner: String?) {
     var plusMenu by remember(state.tab?.id, state.tab?.url, state.surface, state.privateContentBlocked) { mutableStateOf(false) }
     var backMenu by remember(state.tab?.id, state.tab?.url, state.surface, state.privateContentBlocked) { mutableStateOf<Pair<String, List<BrowserBackItem>>?>(null) }
     val overlay by rememberUpdatedState(onOverlay)
@@ -1131,6 +1132,7 @@ private fun BottomChrome(state: BrowserState, controller: BrowserController, onM
         }
     }
     val chromeObserver = LocalBrowserChromeObserver.current
+    val chromeClip = LocalBrowserChromeClipping.current
     val tappableBottom = WindowInsets.tappableElement.getBottom(density) / density.density
     val foldedWords = remember(words, textMeasurer, density, labelStyle) {
         with(density) { textMeasurer.measure(words, style = browserChromeLabelStyle(labelStyle, 13f),
@@ -1141,6 +1143,24 @@ private fun BottomChrome(state: BrowserState, controller: BrowserController, onM
         val pose = BrowserChromePose(progress, maxWidth.value, foldedWords)
         val plateBottom = browserChromeBottom(pose.bottom, pose.plateHeight, tappableBottom)
         val controlsBottom = browserChromeBottom(28f, 48f, tappableBottom)
+        // The engine reserves space for the fully unfolded chrome and clips
+        // only the currently covered part; the fold moves the covered part,
+        // never the reservation. The covered part is the plate's 48 dp touch
+        // target, not the drawn capsule: the target stays mounted through the
+        // fold, and a page element raised above the capsule would still lose
+        // taps in the touch box's strip above it. from() reports the target's
+        // top edge with the layout's own integer outset.
+        val paneHeightPx = with(density) { maxHeight.roundToPx() }
+        val clip = BrowserChromeClipping.from(plateBottom, pose.plateHeight, controlsBottom, 48f,
+            density.density, paneHeightPx)
+        // Keyed on the pane too: a front-tab switch with an unchanged pose must
+        // still stamp the new pane, not wait for the next fold frame.
+        LaunchedEffect(chromeClip, clip, paneOwner) { chromeClip?.invoke(paneOwner, clip) }
+        val currentChromeClip by rememberUpdatedState(chromeClip)
+        // The clear goes to the owner this effect ran for, the key captured at
+        // start: on a front-tab switch the old pane's view is cleared before
+        // the new pane is stamped, and on unmount the last owner is cleared.
+        DisposableEffect(paneOwner) { onDispose { currentChromeClip?.invoke(paneOwner, BrowserChromeClipping.none) } }
         Box(Modifier.padding(start = 26.dp, end = 26.dp, top = 28.dp, bottom = controlsBottom.dp).fillMaxWidth().height(48.dp)) {
             Box(Modifier.align(Alignment.CenterStart).offset(x = pose.sideSlide.dp).size(48.dp).graphicsLayer {
                 scaleX = pose.sideScale; scaleY = pose.sideScale

@@ -59,9 +59,11 @@ static NSView* AccessibilityPageView(Tab& tab) {
 }
 @end
 namespace yc {
+static void AccessibilityTypeIntoFocus();
 static bool AccessibilityRequest(Tab& tab, NSString* method, NSDictionary* p, NSString* request) {
   if (![method isEqual:@"tab.accessibility"]) return false;
   if (!tab.browser) { Reply(request, nil, @"Page not ready"); return true; }
+  AccessibilityTypeIntoFocus();
   [NSAccessibilityRemoteUIElement registerRemoteUIProcessIdentifier:[p[@"client"] intValue]];
   YabPageAccessibility* element = tab.accessibilityElement;
   if (!element) {
@@ -104,6 +106,18 @@ static void PageViews(NSView* view, NSMutableArray* found) {
   if ([NSStringFromClass(view.class) isEqual:@"RenderWidgetHostViewCocoa"]) { [found addObject:view]; return; }
   for (NSView* child in view.subviews) PageViews(child, found);
 }
+// The page views of a tab that can hold its focus.
+static NSArray<NSView*>* AccessibilityFocusViews(Tab& tab) {
+  NSWindow* window = tab.native;
+  NSMutableArray* views = [NSMutableArray new];
+  // The view Yab was given first: Chrome's window may be showing another
+  // tab's (a popup's) for the moment.
+  // A hidden one is a document kept for going back.
+  NSView* given = tab.accessibilityView;
+  if (given && !given.isHiddenOrHasHiddenAncestor) [views addObject:given];
+  PageViews(window.contentView.superview ?: window.contentView, views);
+  return views;
+}
 static ::id AccessibilityFocus() {
   std::vector<Tab*> order;
   for (auto& entry : tabs) if (entry.second.focused) order.push_back(&entry.second);
@@ -112,14 +126,7 @@ static ::id AccessibilityFocus() {
   const bool trace = getenv("YAB_PROBE") && *getenv("YAB_PROBE");
   for (Tab* tab : order) {
     if (tab->closing || !tab->visible || !tab->native || !tab->browser) continue;
-    NSWindow* window = tab->native;
-    NSMutableArray* views = [NSMutableArray new];
-    // The view Yab was given first: Chrome's window may be showing another
-    // tab's (a popup's) for the moment.
-    // A hidden one is a document kept for going back.
-    NSView* given = tab->accessibilityView;
-    if (given && !given.isHiddenOrHasHiddenAncestor) [views addObject:given];
-    PageViews(window.contentView.superview ?: window.contentView, views);
+    NSArray<NSView*>* views = AccessibilityFocusViews(*tab);
     for (NSView* view in views) {
       if (::id focused = [view accessibilityFocusedUIElement]) {
         if (trace) fprintf(stderr, "YabCore AX focus: %s of %lu views: %s\n", tab->id.c_str(), (unsigned long)views.count, NSStringFromClass([focused class]).UTF8String);
@@ -136,6 +143,54 @@ static ::id AccessibilityFocus() {
   return nil;
 }
 ::id AccessibilityFocusedElement() { return AccessibilityFocus(); }
+// The page view whose focused element this is, if it is the focus of a page.
+// Every page is asked, not only those Yab has focused: the element is the one
+// a client was handed as the focus, and only its own page answers with it.
+static NSView* AccessibilityFocusView(::id element) {
+  for (auto& entry : tabs) {
+    Tab& tab = entry.second;
+    if (tab.closing || !tab.native || !tab.browser) continue;
+    for (NSView* view in AccessibilityFocusViews(tab)) {
+      if ([view accessibilityFocusedUIElement] == element) return view;
+    }
+  }
+  return nil;
+}
+// Apps that type into the focused field by setting its AXSelectedText
+// (dictation and text tools) got nothing typed on a Chromium tab. Chromium
+// turns that write into kReplaceSelectedText, which its renderer drops and
+// Blink has no handler for (cef-patches/proposed/P003): the write answered
+// success and the field stayed as it was. The field's page view is the
+// text input client Yab commits typed text through (Input, kind "text"), so
+// the selection is replaced there, as typing replaces it, and the page gets
+// the beforeinput and input events of typed text. Any element that is not a
+// page's focus keeps Chromium's own path.
+static void AccessibilityTypeIntoFocus() {
+  static bool installed = false;
+  if (installed) return;
+  installed = true;
+  Class page = NSClassFromString(@"BrowserAccessibilityCocoa");
+  SEL set = @selector(setAccessibilitySelectedText:);
+  Method inherited = page ? class_getInstanceMethod(page, set) : nullptr;
+  if (!inherited) return;
+  using Setter = void (*)(::id, SEL, NSString*);
+  const Setter chromium = (Setter)method_getImplementation(inherited);
+  IMP typed = imp_implementationWithBlock(^(::id element, NSString* text) {
+    // A client can write any value: only a string is typed, or measured.
+    const bool string = [text isKindOfClass:NSString.class];
+    NSView* view = string ? AccessibilityFocusView(element) : nil;
+    const bool types = [view respondsToSelector:@selector(insertText:replacementRange:)];
+    if (getenv("YAB_PROBE") && *getenv("YAB_PROBE")) fprintf(stderr, "YabCore AX selected text: %lu characters, %s\n", string ? (unsigned long)text.length : 0ul, types ? "typed into the page's focus" : "not a page's focus, Chromium's path");
+    if (types) {
+      [(id<NSTextInputClient>)view insertText:text replacementRange:NSMakeRange(NSNotFound, 0)];
+      return;
+    }
+    chromium(element, set, text);
+  });
+  // Chromium defines the setter on the base class every element shares: the
+  // page's elements get their own, and the base keeps Chromium's.
+  if (!class_addMethod(page, set, typed, method_getTypeEncoding(inherited))) method_setImplementation(inherited, typed);
+}
 static void AccessibilityFocused(Tab& tab, bool focused) {
   if (focused) lastFocusedTab = tab.id;
 }

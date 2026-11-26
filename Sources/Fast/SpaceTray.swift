@@ -1269,7 +1269,7 @@ final class SpaceTray: NSView {
 
     /// Runs once the motion is over, whether or not the render server said
     /// so: its completion can wait on a busy window server; the tray doesn't.
-    private func done(after seconds: CFTimeInterval, _ then: @escaping () -> Void) {
+    private func done(after seconds: CFTimeInterval, _ then: @escaping @MainActor @Sendable () -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: then)
     }
 

@@ -80,6 +80,53 @@ struct SelectionVisualTests {
         try saveSettings(commands, to: folder.appendingPathComponent("settings-dark.png"), scheme: .dark)
     }
 
+    @Test @MainActor func saveSelectionDockMarkdownScreenshotWhenRequested() throws {
+        guard let dir = ProcessInfo.processInfo.environment["YAB_SELECTION_DOCK_SHOT_DIR"] else { return }
+        let tab = Fast.Tab(bench: true)
+        defer { tab.close() }
+        let commands = SelectionCommands()
+        let snap = SelectionSnapshot(asking: tab)
+        let markdown = """
+        Someone just spent **$665,000** buying stock options that gain value if the stock **$ANT** drops significantly over the next few years.
+
+        Here is what each part means:
+
+        * **$ANT:** The stock symbol (ticker) for a specific company.
+        * **$10 puts:** A **put option** is a contract that gives the buyer the right to sell a stock at a locked-in price, in this case **$10 per share**, even if the stock falls much lower on the open market.
+        * **At $0.70:** This is the cost of the contract per share. Because each standard option contract covers 100 shares, each contract costs **$70** ($0.70 x 100).
+        """
+        let explain = try #require(SelectionCommand.builtIn.first { $0.id == "explain" })
+        commands.show(explain, on: tab, snapshot: snap, stage: .preview, output: markdown)
+        let folder = URL(fileURLWithPath: dir)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let canvas = ZStack(alignment: .bottom) {
+            Color(nsColor: NSColor(white: 0.08, alpha: 1))
+            PageFoot(availableWidth: 620, tab: tab, selection: commands)
+        }
+        .frame(width: 620, height: 340)
+        .environment(\.colorScheme, .dark)
+        let host = NSHostingView(rootView: canvas)
+        host.frame = NSRect(x: 0, y: 0, width: 620, height: 340)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try png.write(to: folder.appendingPathComponent("selection-dock-markdown-dark.png"), options: .atomic)
+    }
+
     @MainActor
     private func save(_ commands: SelectionCommands, _ tab: Fast.Tab, to url: URL,
                       scheme: ColorScheme, canvasWidth: CGFloat = 820) throws {

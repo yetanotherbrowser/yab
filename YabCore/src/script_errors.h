@@ -16,6 +16,18 @@ static inline bool ScriptRemovalAlreadyGone(NSString* method, NSString* error) {
          [message isKindOfClass:NSString.class] && [message isEqualToString:@"Script not found"];
 }
 
+// The target behind a CDP session is gone: Chromium's answer to a command
+// sent on a session whose frame or worker has detached.
+static inline bool ScriptSessionGone(NSString* error) {
+  if (!error) return false;
+  NSData* data = [error dataUsingEncoding:NSUTF8StringEncoding];
+  id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+  if (![value isKindOfClass:NSDictionary.class]) return false;
+  id code = value[@"code"], message = value[@"message"];
+  return [code isKindOfClass:NSNumber.class] && [code intValue] == -32001 &&
+         [message isKindOfClass:NSString.class] && [message isEqualToString:@"Session with given id not found."];
+}
+
 // A multi-target install/appearance update must not fail the main document
 // when an iframe disappears during its outstanding CDP commands. Definitions
 // remain on the tab and ScriptAttach installs them in replacement targets.
@@ -24,13 +36,8 @@ static inline bool ScriptSessionErrorMatters(NSString* session, bool attached, N
   if (!error) return false;
   if (!session.length) return true;
   if (!attached) return false;
-  NSData* data = [error dataUsingEncoding:NSUTF8StringEncoding];
-  id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-  if (![value isKindOfClass:NSDictionary.class]) return true;
-  id code = value[@"code"], message = value[@"message"];
   // The error can arrive before Target.detachedFromTarget.
-  return !([code isKindOfClass:NSNumber.class] && [code intValue] == -32001 &&
-           [message isKindOfClass:NSString.class] && [message isEqualToString:@"Session with given id not found."]);
+  return !ScriptSessionGone(error);
 }
 
 // Runtime.enable, which Yab's agent needs for its worlds and bindings, also

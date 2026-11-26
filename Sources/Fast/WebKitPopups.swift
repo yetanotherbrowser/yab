@@ -287,7 +287,8 @@ extension Browser {
         // row, as Arc opens one from a pinned tab. A script's window, a
         // sign-in, still gets its tab: it talks to the page that opened it.
         if action.navigationType == .linkActivated, !popup, modifiedForeground == nil, let parent, parent.pin != nil || parent.kept,
-           tabs.contains(where: { $0 === parent }), let url = action.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+           tabs.contains(where: { $0 === parent }), let url = action.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+           !Self.isOAuthOrSignIn(url) {
             peek(url, from: parent)
             return nil
         }

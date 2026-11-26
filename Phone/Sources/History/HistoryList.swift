@@ -11,7 +11,8 @@ import SyncKit
 /// A place sync holds: a page a device went to in the last two weeks (the
 /// Mac's visit records), with the device whose visit it last was.
 struct SyncedPlace: Equatable, Sendable {
-    /// Sync's key for the place (SyncVisit.key): host and path, lowercased.
+    /// Sync's key for the place (SyncVisit.key): host, a port of its own and
+    /// path, lowercased.
     var key: String
     var url: String
     var title: String
@@ -99,8 +100,11 @@ struct HistoryForgetting: Codable, Equatable, Sendable {
         var to: Double
     }
 
+    /// A place taken out before ports were part of its key was saved
+    /// without the port (`localhost/blog`), and stays out under its key now
+    /// (`localhost:3000/blog`): that key was its row then, every port's.
     func hides(_ place: SyncedPlace) -> Bool {
-        if let seen = places[place.key], place.last <= seen { return true }
+        if let seen = places[place.key] ?? SyncVisit.portless(place.key).flatMap({ places[$0] }), place.last <= seen { return true }
         return spans.contains { place.last >= $0.from && place.last <= $0.to }
     }
 

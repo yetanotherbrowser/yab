@@ -375,7 +375,7 @@ struct MailEventPop: View {
                     .scaleEffect(MailEventPop.tile / CardFrame.well)
                     .frame(width: MailEventPop.tile, height: MailEventPop.tile)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(verbatim: event.when())
+                    Text(verbatim: event.when(locale: AppDates.locale))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Palette.ink)
                     if let second {
@@ -443,6 +443,7 @@ struct MailEventPop: View {
                 DatePicker("Ends", selection: edit.event.end, in: event.start..., displayedComponents: event.allDay ? [.date] : [.date, .hourAndMinute])
                     .labelsHidden()
             }
+            .environment(\.locale, AppDates.locale)
             TextField("People, by name or address", text: edit.who)
             TextField("Place or a call\u{2019}s link", text: edit.event.place)
         }

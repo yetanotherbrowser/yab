@@ -95,7 +95,7 @@ struct ChromiumMenuContext {
 struct ChromiumMenuRow: Equatable {
     enum Action: Equatable {
         case chrome(Int)
-        case openTab(URL), openSplit(URL), openHere(URL), download(URL), copy(String)
+        case openTab(URL), openSplit(URL), openPrivate(URL), openHere(URL), download(URL), copy(String)
         case image(ImageAct, URL)
         case search(String), goTo(URL), lookUp(String), replace(String)
         case back, forward, reload
@@ -115,7 +115,8 @@ struct ChromiumMenuRow: Equatable {
     /// The rows, nil for a separator, in WebKit's order for the same press.
     /// `web`: a page of a site, where Capture and Hide Element mean something.
     @MainActor static func rows(for c: ChromiumMenuContext, searchName: String, canGoBack: Bool, canGoForward: Bool,
-                     askable: Bool, commands: [SelectionCommand] = [], website: Bool = false) -> [ChromiumMenuRow?] {
+                     askable: Bool, commands: [SelectionCommand] = [], website: Bool = false,
+                     privateLink: Bool = true) -> [ChromiumMenuRow?] {
         var out: [ChromiumMenuRow?] = []
         let section = { (rows: [ChromiumMenuRow]) in
             guard !rows.isEmpty else { return }
@@ -139,6 +140,9 @@ struct ChromiumMenuRow: Equatable {
                 // What ⌥-click on the link does (Browser.splitLink), as Arc's menu had it (feedback #1900).
                 if ["http", "https"].contains(scheme) {
                     rows.append(ChromiumMenuRow(title: PageView.splitLinkTitle, id: PageView.splitLinkID, action: .openSplit(link)))
+                    if privateLink {
+                        rows.append(ChromiumMenuRow(title: PageView.privateLinkTitle, id: PageView.privateLinkID, action: .openPrivate(link)))
+                    }
                 }
                 rows.append(ChromiumMenuRow(title: "Open Link", id: "WKMenuItemIdentifierOpenLink", action: .openHere(link)))
                 if ["http", "https", "data", "blob"].contains(scheme) {
@@ -342,7 +346,8 @@ extension ChromiumPage {
         let rows = ChromiumMenuRow.rows(for: context, searchName: tab.onSearchName?(tab) ?? Engine.name,
                                         canGoBack: canGoBack, canGoForward: canGoForward, askable: !tab.shy,
                                         commands: tab.onSelectionMenu?(tab) ?? [],
-                                        website: ["http", "https"].contains(url?.scheme?.lowercased() ?? ""))
+                                        website: ["http", "https"].contains(url?.scheme?.lowercased() ?? ""),
+                                        privateLink: !tab.shy)
         guard !rows.isEmpty else { session.answer(nil); return }
         let menu = Self.pageMenu(rows, session: session)
         let translation = tab.onTranslationMenu?(tab) ?? []
@@ -431,6 +436,7 @@ extension ChromiumPage {
                 browser.open(url, foreground: foreground, from: tab, linked: true)
             }
         case .openSplit(let url): browser?.splitLink(url, from: tab)
+        case .openPrivate(let url): browser?.newPrivateWindow(opening: url)
         case .openHere(let url): tab.go(to: url)
         case .download(let url): startDownload(url)
         case .copy(let text):

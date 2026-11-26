@@ -75,6 +75,10 @@ extension Mcp {
             guard !urls.isEmpty else { return text("open needs a url, or urls", error: true) }
             for url in urls { if let refused = carrying(url) { return refused } }
             var opened: [(String, String?)] = []
+            // What Yab said for each that didn't open: said back, never only
+            // "could not open", which read as the site failing when Yab had
+            // refused the call or wasn't there.
+            var said: [String: String] = [:]
             // Where each went when no space was named and the site is signed
             // in elsewhere (SignIns).
             var notes: [String: String] = [:]
@@ -95,8 +99,9 @@ extension Mcp {
                     if error.hasPrefix("no answer within") {
                         return text("Yab is busy and didn't open \(url) in time; wait a moment, then call tabs to see whether it opened before trying again.", error: true)
                     }
-                    // Retry a failed open without reusing an agent leftover.
-                    if got["id"] == nil, !error.hasPrefix("could not") {
+                    // Retry a failed open without reusing an agent leftover;
+                    // one Yab refused or never heard would only be refused again.
+                    if got["id"] == nil, !error.hasPrefix("could not"), !Self.unreached(error) {
                         request["fresh"] = true
                         got = ask(request)
                     }
@@ -106,6 +111,7 @@ extension Mcp {
                     if ask(["do": "agent-file", "id": tab])["unnamed"] as? Bool == true { unnamed = true }
                     opened.append((url, tab))
                 } else {
+                    if let error = got["error"] as? String { said[url] = error }
                     opened.append((url, nil))
                 }
             }
@@ -115,7 +121,7 @@ extension Mcp {
                 : ""
             if !naming.isEmpty { named = true }
             if urls.count == 1 {
-                guard let tab = opened.first?.1 else { return text("could not open \(urls[0])", error: true) }
+                guard let tab = opened.first?.1 else { return text(Self.notOpened(urls[0], said: said[urls[0]]), error: true) }
                 if cancelled { return text("Stopped. Opened 1 tab: \(tab) · \(urls[0]). Read tabs before retrying.", error: true) }
                 _ = ask(["do": "wait", "id": tab, "seconds": 20])
                 return adding(naming, to: notes[tab].map { prefixing($0, to: snap(tab)) } ?? snap(tab))
@@ -125,7 +131,7 @@ extension Mcp {
             // while these went on opening (feedback #131).
             let deadline = Date().addingTimeInterval(20)
             let lines = opened.map { url, tab -> String in
-                guard let tab else { return "could not open \(url)" }
+                guard let tab else { return Self.notOpened(url, said: said[url]) }
                 let got = ask(["do": "wait", "id": tab, "seconds": max(0.5, deadline.timeIntervalSinceNow)])
                 let loading = got["loading"] as? Bool == true ? " · still loading" : ""
                 return "\(tab) · \(got["title"] ?? "") · \(got["url"] ?? url)\(loading)" + (notes[tab].map { " · " + $0 } ?? "")
@@ -239,6 +245,7 @@ extension Mcp {
             var result = McpRun.run(input["code"] as? String ?? "", outputLimit: input["outputLimit"] as? Int ?? 8000) { name, input in
                 name == "run" ? text("run can't call run", error: true) : call(name, input)
             }
+            if let waiting = (result["structuredContent"] as? [String: Any])?["waitingOperation"] as? String { leaveWaiting(waiting) }
             // A client that finds structuredContent gives the model that in
             // place of the text: Claude Code's saw the step count, never
             // what the script printed.
@@ -255,13 +262,22 @@ extension Mcp {
             return done(got) { text("\(got["title"] ?? "") · \(got["url"] ?? "")" + (hidden > 0 ? "\n(\(hidden) piece\(hidden == 1 ? "" : "s") of text a person can't see left out)" : "") + "\n\n\(got["text"] ?? "")") }
         },
         McpTool("screenshot", .read("Take Screenshot"),
-                "A picture of a tab as it is now, for when the snapshot is not enough. Unavailable after card details have been entered in that tab; use snapshot instead.",
-                ["tab": tab],
+                "A picture of a tab as it is now, for when the snapshot is not enough. Unavailable after card details have been entered in that tab; use snapshot instead. retina: true for a PNG at the screen's own pixels, up to 2560 on its long side, to read small type or check a design (about four times the tokens).",
+                ["tab": tab, "retina": ["type": "boolean"]],
                 required: ["tab"]) { name, input, id in
-            let got = ask(["do": "shot", "id": id ?? "", "width": 1024, "inline": true])
+            let retina = input["retina"] as? Bool == true
+            var request: [String: Any] = ["do": "shot", "id": id ?? "", "inline": true]
+            if retina { request["png"] = true } else { request["width"] = 1024 }
+            let got = ask(request)
             if let error = got["error"] as? String { return text(error, error: true) }
-            return ["content": [["type": "image", "data": got["data"] as? String ?? "", "mimeType": "image/jpeg"],
-                                ["type": "text", "text": "\(got["width"] ?? 1024)×\(got["height"] ?? "?") pixels; click(tab, x, y) takes a point in these."]], "isError": false]
+            let wide = got["width"] as? Int ?? 1024
+            // click and drag always take points of the 1024-wide picture
+            // (AgentCoordinates), so a retina one says how to get there.
+            let points = retina && wide > 0
+                ? "\(wide)×\(got["height"] ?? "?") pixels, PNG; click(tab, x, y) takes points of the 1024-wide screenshot: these × \(String(format: "%.4g", 1024 / Double(wide)))."
+                : "\(wide)×\(got["height"] ?? "?") pixels; click(tab, x, y) takes a point in these."
+            return ["content": [["type": "image", "data": got["data"] as? String ?? "", "mimeType": retina ? "image/png" : "image/jpeg"],
+                                ["type": "text", "text": points]], "isError": false]
         },
         McpTool("wait", .read("Wait for Page"),
                 "Wait for a tab to finish loading, or until its text contains `for`.",
@@ -462,4 +478,18 @@ extension Mcp {
             }
         },
     ]
+
+    /// Errors that are about reaching Yab, not about the page: the same
+    /// call again gets the same answer.
+    static func unreached(_ error: String) -> Bool {
+        error == BenchCaller.refusal || error == ContextConsent.unavailable
+            || error.hasPrefix("This task's permission expired.")
+            || ["Yab isn't running", "Yab is open, but agents are off", "Agents are off in Yab"].contains { error.hasPrefix($0) }
+    }
+
+    /// An open that came to nothing, with what Yab said about it.
+    static func notOpened(_ url: String, said: String?) -> String {
+        guard let said, !said.isEmpty else { return "could not open \(url)" }
+        return said.hasPrefix("could not") ? said : "could not open \(url): \(said)"
+    }
 }

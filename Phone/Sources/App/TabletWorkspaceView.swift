@@ -96,8 +96,9 @@ struct TabletWorkspaceView: View {
                     .environment(\.colorScheme, app.pageIsPrivate ? .dark : AppAppearance.current)
                     .allowsHitTesting(!covered).accessibilityHidden(covered)
             }
+            // No phone chrome under All Tabs: the sidebar is the iPad's, and the
+            // phone's plate faded in over the page as All Tabs closed.
             TabGalleryLayer()
-            if gallery { ChromeLayer() }
             if app.field.shown { TabletOmnibox(geometry: g) }
             WorkspaceChatsLayer()
             TasksLayer()

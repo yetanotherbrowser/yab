@@ -94,6 +94,7 @@ extension ChromiumPage {
         // becomeFirstResponder's deferred notification can still be pending.
         // Put any needed focus handoff ahead of the editor command now.
         syncRemoteFocus()
+        finishComposition()
         lastInput = ProcessInfo.processInfo.systemUptime
         RelayGuard.felt(self)
         AgentFeed.shared.person(self)

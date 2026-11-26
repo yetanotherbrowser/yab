@@ -346,11 +346,13 @@ struct Notice: View {
         .opacity(up || !(still || landed) ? 1 : 0)
         // Where it stands when up: mail's Send flies here (MailMorph).
         .background { if browsers { MailPlace(kind: .notice) } }
-        .allowsHitTesting(up)
         .onHover { on in
             guard say.tail == .undo || say.act else { return }
             if toaster.shown, toaster.undo != nil { toaster.hold(on) } else { tidier.hold(on) }
         }
+        // After onHover: on macOS 15 a hover region outside this still took
+        // clicks at the tucked-away notice's resting place, the page's top right.
+        .allowsHitTesting(up)
         .accessibilityHidden(!up)
         .padding(.top, top)
         .padding([.leading, .trailing, .bottom], Self.air)

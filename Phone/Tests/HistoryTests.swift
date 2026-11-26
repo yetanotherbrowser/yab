@@ -1,3 +1,4 @@
+import SyncKit
 import XCTest
 @testable import YabPhone
 
@@ -143,6 +144,35 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(app.history.entries.map(\.title), ["One"], "the same visit stays out")
         app.history.syncedChanged([place("https://mac.test/", "Mac page", at(0, 11))])
         XCTAssertEqual(app.history.entries.map(\.title), ["Mac page", "One"], "a new one is History again")
+    }
+
+    /// A Mac on an older Yab keys a server's page without its port; a newer
+    /// one with it. Both records are one row, the newer visit's, whichever
+    /// comes last.
+    func testAnOlderMacsRecordDoesNotReplaceTheNewerRow() throws {
+        let app = AppModel(world: try World.load(named: "mira"))
+        app.history.fixtureVisits = []
+        app.history.adoptSynced([], own: "iphone")
+        let newer = SyncVisit(url: "http://localhost:3000/blog", title: "Blog", last: at(0, 11).timeIntervalSince1970)
+        let older = SyncVisit(id: "localhost/blog", url: "http://localhost:3000/blog", title: "Blog (older)",
+                              last: at(0, 9).timeIntervalSince1970)
+        XCTAssertEqual(SyncBridge.place((older, "mac-old")).key, "localhost:3000/blog")
+        app.history.syncedChanged([SyncBridge.place((newer, "mac-new"))])
+        app.history.syncedChanged([SyncBridge.place((older, "mac-old"))])
+        XCTAssertEqual(app.history.entries.map(\.title), ["Blog"])
+        XCTAssertEqual(app.history.entries.first?.visitedAt, at(0, 11))
+    }
+
+    /// A page taken out before ports were part of the key was saved without
+    /// the port, and stays out under its key now until visited again.
+    func testAPageTakenOutBeforePortsStaysOut() {
+        var forgetting = HistoryForgetting()
+        forgetting.forget("localhost/blog", last: at(0, 10).timeIntervalSince1970)
+        XCTAssertTrue(forgetting.hides(place("http://localhost:3000/blog", "Blog", at(0, 10))))
+        XCTAssertFalse(forgetting.hides(place("http://localhost:3000/blog", "Blog", at(0, 12))), "visited again")
+        XCTAssertFalse(forgetting.hides(place("http://localhost:3000/other", "Other", at(0, 9))))
+        let entries = HistoryList.entries(local: [], synced: [place("http://localhost:3000/blog", "Blog", at(0, 10))], forgetting: forgetting)
+        XCTAssertTrue(entries.isEmpty)
     }
 
     func testForgettingIsKeptInTheProfileAndPrunedPastTwoWeeks() async throws {

@@ -78,15 +78,17 @@ extension AgentLaunch {
     /// How a task on `cli` starts in `found`: its copy, the first account
     /// with room in your order (PlanAccounts.pick), and that account's
     /// environment with its secrets. Nil when the agent isn't on this Mac.
-    static func resolve(_ cli: String, in found: Shell.Found, plans: PlanAccounts = .shared,
+    static func resolve(_ cli: String, in found: Shell.Found, plans: PlanAccounts? = nil,
                         skipping: Set<String> = []) -> AgentLaunch? {
+        let plans = plans ?? .shared
         guard let binary = binary(cli, in: found) else { return nil }
         return on(account(cli, plans: plans, skipping: skipping), cli: cli, binary: binary, in: found, plans: plans)
     }
 
     /// The same resolution as a look sees it: the same copy, account and
     /// environment, less a keyed account's secret, which a look never loads.
-    static func look(_ cli: String, in found: Shell.Found, plans: PlanAccounts = .shared) -> AgentLaunch? {
+    static func look(_ cli: String, in found: Shell.Found, plans: PlanAccounts? = nil) -> AgentLaunch? {
+        let plans = plans ?? .shared
         guard let binary = binary(cli, in: found) else { return nil }
         let account = account(cli, plans: plans, skipping: [])
         return AgentLaunch(cli: cli, binary: binary, account: account,
@@ -110,8 +112,9 @@ extension AgentLaunch {
     /// yes: a connected agent they don't show may be on the login shell's
     /// PATH, and its task resolves it, so it counts as here (a chat set to
     /// Claude fell to another plan, as #1687 did). Nil: nothing looked for.
-    static func here(_ cli: String, consent: ProviderConsent = .shared) -> Bool? {
-        here(cli, terminal: Shell.cachedTerminal, files: Shell.cached, consent: consent)
+    static func here(_ cli: String, consent: ProviderConsent? = nil) -> Bool? {
+        let consent = consent ?? .shared
+        return here(cli, terminal: Shell.cachedTerminal, files: Shell.cached, consent: consent)
     }
 
     static func here(_ cli: String, terminal: Shell.Found?, files: Shell.Found?, consent: ProviderConsent) -> Bool? {
@@ -123,8 +126,9 @@ extension AgentLaunch {
     /// The same, on an account already chosen (a sign-in's, the next one
     /// with room).
     static func on(_ account: PlanAccount?, cli: String, binary: String, in found: Shell.Found,
-                   plans: PlanAccounts = .shared) -> AgentLaunch {
-        AgentLaunch(cli: cli, binary: binary, account: account, env: plans.env(account, base: found.env))
+                   plans: PlanAccounts? = nil) -> AgentLaunch {
+        let plans = plans ?? .shared
+        return AgentLaunch(cli: cli, binary: binary, account: account, env: plans.env(account, base: found.env))
     }
 
     /// The environment a look reads an account's sign-in in: the one its

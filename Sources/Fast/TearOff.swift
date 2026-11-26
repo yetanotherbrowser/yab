@@ -808,6 +808,7 @@ struct TearGround: View {
     var body: some View {
         Anchor(sky: sky)
             .allowsHitTesting(false)
+            .accessibilityHidden(true)
             .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { [sky] in sky.ground = $0 }
     }
 

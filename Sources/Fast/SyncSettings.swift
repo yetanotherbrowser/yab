@@ -742,7 +742,7 @@ private struct RecoveryKitPage: View {
             heading("Your key")
             CodePlates(code: key, size: 20)
             heading("Made")
-            Text("On \(device), \(made.formatted(date: .long, time: .omitted))")
+            Text("On \(device), \(made.englishFormatted(date: .long, time: .omitted))")
             heading("To get back in")
             VStack(alignment: .leading, spacing: 4) {
                 Text("1. Install Yab from yetanotherbrowser.com.")

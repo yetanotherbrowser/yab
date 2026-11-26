@@ -205,4 +205,26 @@ struct StageOpeningOwnershipTests {
             #expect(existing.layer?.opacity == 0)
         }
     }
+
+    /// A page whose video fills the screen, lent to WebKit's own window.
+    private final class FillingScreen: WKWebView {
+        override var fullscreenState: WKWebView.FullscreenState { .inFullscreen }
+    }
+
+    /// Back on the tab whose video is in its own full-screen Space, from
+    /// another tab: the other tab's page goes, not left showing under this
+    /// tab's name (#937).
+    @Test func pickingATabWhoseVideoFillsTheScreenTakesTheOtherPageOff() {
+        let surface = Surface(), other = web()
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let filling = FillingScreen(frame: surface.stage.bounds, configuration: configuration)
+        defer { surface.close(); other.stopLoading() }
+        surface.stage.show(other, of: UUID())
+        #expect(other.superview === surface.stage)
+        surface.stage.show(filling, of: UUID())
+        surface.stage.layout()
+        #expect(other.superview == nil)
+        #expect(filling.superview == nil)
+    }
 }

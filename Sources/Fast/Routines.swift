@@ -331,7 +331,7 @@ final class Routines: ObservableObject {
         with one item: kind "reply", title "\(who) replied", detail the reply's first line, url the thread; then \
         call `watch` with stop "\(id)". If nothing came, finish with one word.
         """
-        let day = DateFormatter.localizedString(from: until, dateStyle: .medium, timeStyle: .none)
+        let day = AppDates.string(from: until, dateStyle: .medium, timeStyle: .none)
         let made = Routine(id: id, when: "every 2h", prompt: prompt, last: Date(), until: until, quiet: true,
                            title: "Reply from \(who), until \(day)")
         all.append(made)
@@ -560,7 +560,7 @@ final class Routines: ObservableObject {
     /// When, as the list says it: "Weekdays at 9:00 AM", "Every 2 hours",
     /// "Monthly on the 1st at 9:00 AM". Words it can't read are said as
     /// they were given.
-    nonisolated static func say(_ when: String, locale: Locale = .current) -> String {
+    nonisolated static func say(_ when: String, locale: Locale = AppDates.locale) -> String {
         switch schedule(when) {
         case .every(let seconds):
             if seconds == 3600 { return "Every hour" }
@@ -617,7 +617,7 @@ final class Routines: ObservableObject {
     }
 
     /// A minute of the day as this Mac writes a time: "9:00 AM", "18:30".
-    nonisolated static func clock(_ minute: Int, locale: Locale = .current) -> String {
+    nonisolated static func clock(_ minute: Int, locale: Locale = AppDates.locale) -> String {
         let format = DateFormatter()
         format.locale = locale
         format.dateStyle = .none
@@ -922,10 +922,10 @@ final class Routines: ObservableObject {
         let since = (routine.ended ?? routine.last).map { "since " + Self.stamp($0) } ?? "since yesterday"
         func fill(_ text: String) -> String {
             text.replacingOccurrences(of: "{since}", with: since)
-                .replacingOccurrences(of: "{date}", with: DateFormatter.localizedString(from: Date(), dateStyle: .full, timeStyle: .none))
+                .replacingOccurrences(of: "{date}", with: AppDates.string(from: Date(), dateStyle: .full, timeStyle: .none))
                 .replacingOccurrences(of: "{tabs}", with: tabs.joined(separator: ", "))
                 .replacingOccurrences(of: "{memory}", with: String(((Memory.read("USER") ?? "") + "\n" + (Memory.read("memory") ?? "")).prefix(6_000)))
-                .replacingOccurrences(of: "{language}", with: Locale.current.localizedString(forLanguageCode: Locale.current.language.languageCode?.identifier ?? "en") ?? "English")
+                .replacingOccurrences(of: "{language}", with: "English")
         }
         var lines: [String] = []
         if let command {
@@ -1298,7 +1298,7 @@ final class Routines: ObservableObject {
     /// away: when, as a run's line says it.
     nonisolated static func stamp(_ date: Date, now: Date = Date()) -> String {
         let format = DateFormatter()
-        format.locale = .current
+        format.locale = AppDates.locale
         let near = abs(date.timeIntervalSince(now)) < 6 * 86_400
         let thisYear = Calendar.current.isDate(date, equalTo: now, toGranularity: .year)
         format.setLocalizedDateFormatFromTemplate(Calendar.current.isDate(date, inSameDayAs: now) ? "jmm" : near ? "EEEjmm" : thisYear ? "MMMdjmm" : "yMMMdjmm")
@@ -1310,7 +1310,7 @@ final class Routines: ObservableObject {
         if routine.off == true { return "Off" }
         if live { return "Running now" }
         if let until = routine.until {
-            return "Watching the thread until " + DateFormatter.localizedString(from: until, dateStyle: .medium, timeStyle: .none)
+            return "Watching the thread until " + AppDates.string(from: until, dateStyle: .medium, timeStyle: .none)
         }
         if let ended = routine.ended {
             let what: String
@@ -1355,7 +1355,7 @@ final class Routines: ObservableObject {
     }
 
     /// "Next: Nov 1, 9:00 AM", for the editor's line under when.
-    nonisolated static func nextWords(_ routine: Routine, after now: Date = Date(), locale: Locale = .current) -> String? {
+    nonisolated static func nextWords(_ routine: Routine, after now: Date = Date(), locale: Locale = AppDates.locale) -> String? {
         guard let next = next(routine, after: now) else { return nil }
         let format = DateFormatter()
         format.locale = locale
@@ -1365,7 +1365,7 @@ final class Routines: ObservableObject {
 
     /// "Weekdays 9:00", "On the 1st 9:00", "Last Fri 17:00 +1": the words
     /// of a table's cell, its first time and how many more.
-    nonisolated static func short(_ when: String, locale: Locale = .current) -> String {
+    nonisolated static func short(_ when: String, locale: Locale = AppDates.locale) -> String {
         guard case .days(let days, let at)? = schedule(when) else { return say(when, locale: locale).replacingOccurrences(of: " at ", with: " ") }
         let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

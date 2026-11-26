@@ -159,9 +159,8 @@ enum Wire {
     /// is started by its test), only with agents let in, and only as long
     /// as it takes a browser to launch. Whether it is listening now.
     private static func wake(_ path: String) -> Bool {
-        guard !woken, allowed, !Store.testing, path == socket([]),
+        guard allowed, !Store.testing, path == socket([]),
               Bundle.main.bundlePath.hasSuffix(".app") else { return false }
-        woken = true
         // Open but not listening: starting up, or a hidden yab on its way
         // out (it closes the socket first). Its socket, or its end.
         if running {
@@ -173,6 +172,8 @@ enum Wire {
             }
             if running { return false }
         }
+        guard !woken else { return false }
+        woken = true
         return launch(path, ["--headless"])
     }
 
@@ -227,6 +228,13 @@ enum Mcp {
     /// The agent session this server speaks for: given by the browser when
     /// it started the agent, or handed out when a client connects on its own.
     static var session: String?
+    /// The session id `attach()` obtained, so a long-lived outside server only
+    /// re-acquires a handle it created itself after Yab restarts.
+    private static var attachedSession: String?
+    /// Monotonic taint for outside servers: once this conversation has read mail
+    /// (or mail-backed files/purchases), a replacement session after a restart
+    /// keeps `mail = true` so `Bench.mailLeaves` still asks before new sites.
+    private static var readMail = false
     static var inner = false
     /// `--assistant ID`: an assistant in the cloud's server (McpToolsAssistant),
     /// started by the browser for the calls the host's socket brings.
@@ -260,13 +268,19 @@ enum Mcp {
     /// What the user let agents have beyond the browser, as the browser
     /// says it (`agent-caps`): read when the tools are listed, and again
     /// now and then, since Settings can change while a session runs.
-    private static var caps: [String: Any] {
+    static var caps: [String: Any] {
         if let known = capsKnown { return known }
         var asked: [String: Any] = ["do": "agent-caps"]
         if let session { asked["session"] = session }
-        let got = wire(asked)
-        capsKnown = got
-        capsAt = Date()
+        var got = wire(asked)
+        if shouldReattach(got, for: asked), reattach() {
+            if let session { asked["session"] = session }
+            got = wire(asked)
+        }
+        if got["error"] == nil {
+            capsKnown = got
+            capsAt = Date()
+        }
         return got
     }
     private static var capsKnown: [String: Any]?
@@ -299,6 +313,7 @@ enum Mcp {
     private static func recheck() {
         guard let listed, Date().timeIntervalSince(capsAt) > 60 else { return }
         capsKnown = nil
+        guard caps["error"] == nil else { return }
         let names = tools.compactMap { $0["name"] as? String }
         guard names != listed else { return }
         say(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
@@ -310,6 +325,8 @@ enum Mcp {
         signal(SIGPIPE, SIG_IGN)
         socket = Wire.socket(args)
         session = Wire.value(args, "--session")
+        attachedSession = nil
+        readMail = false
         inner = args.contains("--inner")
         assistant = Wire.value(args, "--assistant")
         phoneReadOnly = inner && args.contains("--phone-read-only")
@@ -536,15 +553,16 @@ enum Mcp {
 
     private static var audience: Audience {
         var a = mode
-        a.knowing = knowing
-        a.keepsFolder = keepsFolder
-        a.mailbox = mailbox
-        a.mailAgents = mailAgents
-        a.recall = recall
-        a.mailCodes = mailCodes
-        a.messages = messages
-        a.boost = caps["boost"] as? Bool == true
-        if let mine = caps["assistant"] as? [String: Any] {
+        let got = caps
+        a.knowing = got["knowing"] as? Bool ?? false
+        a.keepsFolder = got["folder"] as? Bool ?? false
+        a.mailbox = got["mailbox"] as? Bool ?? false
+        a.mailAgents = got["mailAgents"] as? Bool ?? false
+        a.recall = got["recall"] as? Bool ?? false
+        a.mailCodes = got["mail"] as? Bool ?? false
+        a.messages = got["messages"] as? Bool ?? false
+        a.boost = got["boost"] as? Bool == true
+        if let mine = got["assistant"] as? [String: Any] {
             a.assistant = true
             a.assistantTasks = mine["tasks"] as? Bool == true
             a.assistantMail = mine["mail"] as? Bool == true
@@ -691,11 +709,21 @@ enum Mcp {
         Wire.ask(socket, RemoteTaskBoundary.bindMCP(request, inner: inner || assistant != nil, session: session))
     }
 
+    private static func marksMail(_ verb: String) -> Bool {
+        verb.hasPrefix("agent-mail-") || ["agent-files-search", "agent-files-read", "agent-purchases"].contains(verb)
+    }
+
     static func ask(_ request: [String: Any]) -> [String: Any] {
         guard !cancelled else { return ["error": "The user stopped this call. Stop now."] }
         var request = request
         if let session { request["session"] = session }
-        return wire(request)
+        var got = wire(request)
+        if shouldReattach(got, for: request), reattach() {
+            if let session { request["session"] = session }
+            got = wire(request)
+        }
+        if got["error"] == nil, let verb = request["do"] as? String, marksMail(verb) { readMail = true }
+        return got
     }
 
     /// The agent session this connection belongs to, as the client says it
@@ -709,13 +737,57 @@ enum Mcp {
     /// This server's session, made on first use by a client that came on its
     /// own, so a client that only lists tools never shows up in the window.
     private static func attach() {
-        guard session == nil, !inner else { return }
+        guard session == nil, outside else { return }
         var request: [String: Any] = ["do": "agent-attach", "name": client]
         // The client's own session, so a yes to reading mail covers every
         // connection it opens (Agents.mailGrants).
         if let own = clientSession { request["client"] = own }
+        if readMail { request["mail"] = true }
         let got = wire(request)
-        session = got["session"] as? String
+        if let id = got["session"] as? String {
+            session = id
+            attachedSession = id
+            capsKnown = nil
+            capsAt = .distantPast
+        }
+    }
+
+    private static func shouldReattach(_ got: [String: Any], for request: [String: Any]) -> Bool {
+        guard outside, let session, attachedSession == session else { return false }
+        // Never swap sessions mid-wait: a restarted Yab has no record of the
+        // pending prompt and would answer `state: "done"` for the missing chat/tab.
+        guard request["do"] as? String != "handoff-wait" else { return false }
+        return got["error"] as? String == ContextConsent.unavailable
+    }
+
+    /// Drop a stale self-attached session (e.g. after Yab restarted) and
+    /// acquire a fresh one so the caller can retry once. Keeps the old id
+    /// if reattaching fails so later calls in the same tool don't go out
+    /// sessionless and can still retry reattach once Yab is back.
+    private static func reattach() -> Bool {
+        guard outside, let current = session, attachedSession == current else { return false }
+        session = nil
+        attachedSession = nil
+        attach()
+        guard session != nil else {
+            session = current
+            attachedSession = current
+            return false
+        }
+        named = false
+        return true
+    }
+
+    static func resetSessionStateForTesting() {
+        session = nil
+        attachedSession = nil
+        readMail = false
+        inner = false
+        assistant = nil
+        named = false
+        capsKnown = nil
+        capsAt = .distantPast
+        keepSession = false
     }
 
     /// Why an iPhone task's server won't make this call, asked before the
@@ -758,12 +830,35 @@ enum Mcp {
     /// done. A shell inside Claude Code or Codex shares the session's yes
     /// with that session's `yab mcp` (clientSession).
     static func once(_ tool: String, _ input: [String: Any], args: [String]) -> [String: Any] {
+        within(args) { call(tool, input) }
+    }
+
+    /// Several calls from a terminal in one session, which leaves when `body` returns.
+    static func within<T>(_ args: [String], _ body: () -> T) -> T {
         socket = Wire.socket(args)
         client = "yab"
-        let result = call(tool, input)
-        if let session { _ = wire(["do": "agent-detach", "session": session]) }
-        return result
+        defer {
+            if let session { _ = wire(["do": "agent-detach", "session": session].merging(keepSession ? ["after": keptFor] : [:]) { $1 }) }
+            if attachedSession == session {
+                session = nil
+                attachedSession = nil
+                readMail = false
+            }
+            keepSession = false
+        }
+        return body()
     }
+    /// Set by a call that leaves its session for later (a change still waiting for the person).
+    static var keepSession = false
+
+    /// A terminal's change still waiting in Yab keeps its session, and the person is told how to ask again.
+    static func leaveWaiting(_ operation: String) {
+        guard client == "yab", let session else { return }
+        keepSession = true
+        FileHandle.standardError.write(Data("Still waiting for you in Yab. Ask again within \(Int(keptFor / 60)) minutes: \(AgentSetup.command) settings operation \(operation) --session \(session)\n".utf8))
+    }
+    /// How long a session left for later lasts without a call before Yab ends it.
+    static let keptFor: TimeInterval = 5 * 60
 
     static func snap(_ tab: String?) -> [String: Any] {
         let got = ask(["do": "snapshot", "id": tab ?? "", "interactive": true])
@@ -803,6 +898,7 @@ enum Mcp {
             while Date() < limit, !cancelled {
                 wait["seconds"] = told ? min(20, max(1, limit.timeIntervalSinceNow)) : 0.3
                 let heard = ask(wait)
+                if let error = heard["error"] as? String { return ["error": error] }
                 state = heard["state"] as? String ?? "done"
                 mailResult = heard["result"] as? [String: Any]
                 if let asked = heard["question"] as? String, !asked.isEmpty { question = asked }
@@ -819,7 +915,10 @@ enum Mcp {
             got = mailResult ?? ask(request)
             // Asked and allowed, and done: said, so the agent doesn't think
             // it is still waiting.
-            if got["error"] == nil { got["allowed"] = true }
+            if got["error"] == nil {
+                got["allowed"] = true
+                if let verb = request["do"] as? String, marksMail(verb) { readMail = true }
+            }
         }
         return got
     }
@@ -920,6 +1019,7 @@ enum Mcp {
         let limit = Date().addingTimeInterval(personWait)
         while Date() < limit {
             let heard = ask(["do": "handoff-wait", "id": asked, "seconds": min(20, max(1, limit.timeIntervalSinceNow))])
+            if let error = heard["error"] as? String { return text(error, error: true) }
             if heard["state"] as? String == "done" {
                 return heard["answer"] as? String == "Open it" ? nil
                     : text("The user said no to sending \(found) to \(host). Don't send it another way; say so in your answer.", error: true)
