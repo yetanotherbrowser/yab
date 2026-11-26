@@ -106,7 +106,16 @@ enum AgentModels {
         // Cursor with no model of its own runs on Auto, its plan's default.
         if cli == "cursor" { return CursorRunner.models.first { $0.model == (model.flatMap { $0.isEmpty ? nil : $0 } ?? "auto") } }
         guard let model else { return nil }
-        return AgentPlan.of(cli)?.models.first { $0.model == model }
+        let list = AgentPlan.of(cli)?.models ?? []
+        if let exact = list.first(where: { $0.model == model }) { return exact }
+        // Legacy Gemini choices saved effort-pinned IDs (e.g. "gemini-4-neon-high")
+        // before ACP split models from thinking levels. Match their base family.
+        if cli == "gemini",
+           let pinned = ["low", "medium", "high", "xhigh", "max"].first(where: { model.hasSuffix("-" + $0) }) {
+            let base = String(model.dropLast(pinned.count + 1))
+            if let family = list.first(where: { $0.model == base }) { return family }
+        }
+        return nil
     }
 
     /// Whether this Mac has the agent; not looked for yet counts as yes.

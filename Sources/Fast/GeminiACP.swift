@@ -314,3 +314,185 @@ final class GeminiSignInLog {
         return Data(lines.utf8)
     }
 }
+
+/// Probes `agy acp` for the structured model catalog (`model` and per-model
+/// `thought_level` config options). Returns nil when the CLI doesn't speak ACP
+/// configOptions so `GeminiAccount.look` can fall back to `agy models`.
+enum GeminiACPModels {
+    struct Entry: Equatable, Sendable {
+        let id: String
+        let name: String
+        let efforts: [String]
+    }
+
+    nonisolated static func flattenSelectOptions(_ raw: Any?) -> [[String: Any]] {
+        guard let list = raw as? [[String: Any]] else { return [] }
+        return list.flatMap { entry -> [[String: Any]] in
+            if entry["value"] is String { return [entry] }
+            return entry["options"] as? [[String: Any]] ?? []
+        }
+    }
+
+    nonisolated static func modelConfig(in options: [[String: Any]]) -> [String: Any]? {
+        options.first { ($0["category"] as? String == "model" || $0["id"] as? String == "model") && $0["type"] as? String == "select" }
+    }
+
+    nonisolated static func thoughtLevels(in options: [[String: Any]]) -> [String] {
+        guard let option = options.first(where: {
+            ($0["category"] as? String == "thought_level" || $0["id"] as? String == "thought_level") && $0["type"] as? String == "select"
+        }) else { return [] }
+        var seen = Set<String>()
+        return flattenSelectOptions(option["options"]).compactMap { entry in
+            guard let value = entry["value"] as? String, !value.isEmpty, seen.insert(value).inserted else { return nil }
+            return value
+        }
+    }
+
+    nonisolated static func geminiOptions(in modelConfig: [String: Any]) -> [(id: String, name: String)] {
+        var seen = Set<String>()
+        return flattenSelectOptions(modelConfig["options"]).compactMap { entry in
+            guard let id = entry["value"] as? String, id.hasPrefix("gemini-"), id.count > 7,
+                  seen.insert(id).inserted else { return nil }
+            let rawName = (entry["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return (id, rawName.isEmpty ? GeminiSupport.title(id) : rawName)
+        }
+    }
+
+    static func probe(binary: String, env: [String: String], cwd: URL, limit: TimeInterval,
+                      permit: ProviderLaunchPermit) async -> [Entry]? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: run(binary: binary, env: env, cwd: cwd, limit: limit, permit: permit))
+            }
+        }
+    }
+
+    private nonisolated static func run(binary: String, env: [String: String], cwd: URL, limit: TimeInterval,
+                                        permit: ProviderLaunchPermit) -> [Entry]? {
+        let process = Process()
+        let input = Pipe(), output = Pipe(), errors = Pipe()
+        process.executableURL = ProcessLaunch.executableURL(binary)
+        process.arguments = ["acp"]
+        process.environment = env
+        process.currentDirectoryURL = cwd
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = errors
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        guard (try? permit.start(process)) == true else { return nil }
+        try? output.fileHandleForWriting.close()
+        try? errors.fileHandleForWriting.close()
+        defer {
+            try? input.fileHandleForWriting.close()
+            try? output.fileHandleForReading.close()
+            try? errors.fileHandleForReading.close()
+            if process.isRunning { Shell.end(process, grace: 1) }
+        }
+
+        // Drain stderr so the child can never block on a full pipe.
+        DispatchQueue.global(qos: .utility).async {
+            let handle = errors.fileHandleForReading
+            while (try? handle.read(upToCount: 4096))?.isEmpty == false {}
+        }
+
+        let deadline = Date().addingTimeInterval(max(1, limit))
+        var requestID = 0
+        var buffer = Data()
+        let outFD = output.fileHandleForReading.fileDescriptor
+
+        func writeJSON(_ object: [String: Any]) -> Bool {
+            guard var data = try? JSONSerialization.data(withJSONObject: object) else { return false }
+            data.append(10)
+            do { try input.fileHandleForWriting.write(contentsOf: data); return true }
+            catch { return false }
+        }
+
+        func readLine() -> Data? {
+            while true {
+                if let end = buffer.firstIndex(of: 10) {
+                    let line = Data(buffer[..<end])
+                    buffer.removeSubrange(...end)
+                    if line.isEmpty { continue }
+                    return line
+                }
+                let remaining = deadline.timeIntervalSinceNow
+                if remaining <= 0 || !permit.valid { return nil }
+                var pfd = pollfd(fd: outFD, events: Int16(POLLIN), revents: 0)
+                let ready = poll(&pfd, 1, Int32(min(remaining * 1000, 500)))
+                if ready < 0 { if errno == EINTR { continue }; return nil }
+                if ready == 0 { continue }
+                var chunk = [UInt8](repeating: 0, count: 16_384)
+                let count = chunk.withUnsafeMutableBytes { Darwin.read(outFD, $0.baseAddress, $0.count) }
+                if count <= 0 {
+                    if count < 0 && errno == EINTR { continue }
+                    return nil
+                }
+                buffer.append(contentsOf: chunk.prefix(count))
+                if buffer.count > 1_048_576 { return nil }
+            }
+        }
+
+        func call(_ method: String, params: [String: Any]) -> (result: [String: Any], updatedConfig: [[String: Any]]?)? {
+            requestID += 1
+            let wanted = requestID
+            guard writeJSON(["jsonrpc": "2.0", "id": wanted, "method": method, "params": params]) else { return nil }
+            var updatedConfig: [[String: Any]]?
+            while let line = readLine() {
+                guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      message["jsonrpc"] as? String == "2.0" else { return nil }
+                if let requested = message["method"] as? String {
+                    if let id = message["id"] {
+                        _ = writeJSON(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Not available during model probe: " + requested]])
+                    } else if requested == "session/update",
+                              let params = message["params"] as? [String: Any],
+                              let update = params["update"] as? [String: Any],
+                              update["sessionUpdate"] as? String == "config_option_update",
+                              let opts = update["configOptions"] as? [[String: Any]] {
+                        updatedConfig = opts
+                    }
+                    continue
+                }
+                guard message["id"] as? Int == wanted else { continue }
+                if message["error"] != nil { return nil }
+                guard let result = message["result"] as? [String: Any] else { return nil }
+                return (result, updatedConfig)
+            }
+            return nil
+        }
+
+        guard let initReply = call("initialize", params: [
+            "protocolVersion": 1,
+            "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false]],
+        ]), initReply.result["protocolVersion"] as? Int == 1 else { return nil }
+
+        guard let sessionReply = call("session/new", params: ["cwd": cwd.path, "mcpServers": [Any]()]),
+              let sessionId = sessionReply.result["sessionId"] as? String, !sessionId.isEmpty,
+              let configOptions = sessionReply.result["configOptions"] as? [[String: Any]],
+              let modelOpt = modelConfig(in: configOptions) else { return nil }
+
+        let listed = geminiOptions(in: modelOpt)
+        guard !listed.isEmpty else { return nil }
+
+        let modelConfigId = modelOpt["id"] as? String ?? "model"
+        let currentModel = modelOpt["currentValue"] as? String
+        var entries: [Entry] = []
+        for item in listed {
+            if item.id == currentModel {
+                entries.append(Entry(id: item.id, name: item.name, efforts: thoughtLevels(in: configOptions)))
+                continue
+            }
+            guard let switched = call("session/set_config_option", params: [
+                "sessionId": sessionId,
+                "configId": modelConfigId,
+                "value": item.id,
+            ]) else {
+                guard permit.valid, deadline.timeIntervalSinceNow > 0 else { return nil }
+                entries.append(Entry(id: item.id, name: item.name, efforts: GeminiModels.efforts))
+                continue
+            }
+            let updated = switched.result["configOptions"] as? [[String: Any]] ?? switched.updatedConfig ?? []
+            entries.append(Entry(id: item.id, name: item.name, efforts: thoughtLevels(in: updated)))
+        }
+        return entries
+    }
+}

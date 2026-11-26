@@ -1494,7 +1494,9 @@ final class Agents: ObservableObject {
         }
         let config = GeminiRunner.Configuration(binary: session.binary, workspace: GeminiSupport.profile
                                                     .appendingPathComponent("chats/" + session.id, isDirectory: true),
-                                                model: session.model, effort: session.effort, conversation: session.thread,
+                                                model: session.model, effort: session.effort,
+                                                supportedEfforts: AgentModels.find("gemini", session.model)?.efforts,
+                                                conversation: session.thread,
                                                 command: me, mcpArgs: session.textOnly ? nil : mcpArgs(session),
                                                 brief: brief, environment: session.env)
         do {

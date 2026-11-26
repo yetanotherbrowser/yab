@@ -25,8 +25,26 @@ enum GeminiModels {
 
     /// A row with its line under the name and its context, which `agy`
     /// doesn't say: "Gemini 3.8 Flash (High)" thinks longest.
-    nonisolated static func model(_ id: String, name: String) -> AgentModel {
+    nonisolated static func model(_ id: String, name: String, efforts: [String] = efforts) -> AgentModel {
         AgentModel(cli: "gemini", model: id, name: name, about: about(name), efforts: efforts, context: context)
+    }
+
+    nonisolated static func rows(from entries: [GeminiACPModels.Entry]) -> [AgentModel] {
+        entries.map { model($0.id, name: $0.name, efforts: $0.efforts) }
+    }
+
+    nonisolated static func encode(_ models: [AgentModel]) -> [[String]] {
+        models.map { [$0.model, $0.name, $0.efforts.joined(separator: ",")] }
+    }
+
+    nonisolated static func decode(_ saved: [[String]]) -> [AgentModel] {
+        saved.compactMap { row in
+            guard row.count >= 2 else { return nil }
+            let levels = row.count >= 3
+                ? (row[2].isEmpty ? [] : row[2].split(separator: ",").map(String.init))
+                : efforts
+            return model(row[0], name: row[1], efforts: levels)
+        }
     }
 
     nonisolated static func about(_ name: String) -> String {
@@ -120,10 +138,7 @@ final class GeminiAccount: ObservableObject {
     init(binary: String?) {
         signedIn = nil // A saved model catalog is not a verified login on this launch.
         let kept = Store.settings.array(forKey: "gemini.models") as? [[String]] ?? []
-        models = kept.compactMap { pair in
-            guard pair.count == 2 else { return nil }
-            return GeminiModels.model(pair[0], name: pair[1])
-        }
+        models = GeminiModels.decode(kept)
         self.binary = binary
     }
 
@@ -149,23 +164,40 @@ final class GeminiAccount: ObservableObject {
         do { prepared = try config.prepare() }
         catch { lastSaid = error.localizedDescription; keep(signedIn: false); return }
         let deadline = Date().addingTimeInterval(min(25, max(1, within)))
-        let ran = await Shell.timed(binary, ["models"], env: prepared.env, limit: max(1, deadline.timeIntervalSinceNow),
-                                   in: prepared.cwd, permit: permit, captureErrors: true)
-        guard permit.valid, attempt == mine else { return }
-        guard !ran.late else {
-            lastSaid = "No answer from Antigravity CLI within \(Int(min(25, max(1, within)))) seconds."
-            keep(signedIn: false); return
-        }
-        if ran.code != 0 {
-            lastSaid = (ran.output + "\n" + ran.diagnostic).split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-                .last { !$0.isEmpty && !$0.hasPrefix("Fetching") && !$0.contains("@") }.map { String($0.prefix(200)) }
-        } else { lastSaid = nil }
-        let listed = GeminiModels.rows(ran.output)
-        if ran.code == 0, !listed.isEmpty {
+        // Prefer ACP's structured `model` + `thought_level` configOptions so each
+        // model family appears once with its real supported efforts; fall back to
+        // `agy models` on older CLIs that don't expose ACP configOptions.
+        var modelsOK = false
+        if let acpEntries = await GeminiACPModels.probe(binary: binary, env: prepared.env, cwd: prepared.cwd,
+                                                        limit: min(10, max(1, deadline.timeIntervalSinceNow)), permit: permit),
+           !acpEntries.isEmpty {
+            guard permit.valid, attempt == mine else { return }
+            let listed = GeminiModels.rows(from: acpEntries)
             models = listed
-            Store.settings.set(listed.map { [$0.model, $0.name] }, forKey: "gemini.models")
+            Store.settings.set(GeminiModels.encode(listed), forKey: "gemini.models")
+            lastSaid = nil
+            modelsOK = true
+        } else {
+            guard permit.valid, attempt == mine else { return }
+            let ran = await Shell.timed(binary, ["models"], env: prepared.env, limit: max(1, deadline.timeIntervalSinceNow),
+                                       in: prepared.cwd, permit: permit, captureErrors: true)
+            guard permit.valid, attempt == mine else { return }
+            guard !ran.late else {
+                lastSaid = "No answer from Antigravity CLI within \(Int(min(25, max(1, within)))) seconds."
+                keep(signedIn: false); return
+            }
+            if ran.code != 0 {
+                lastSaid = (ran.output + "\n" + ran.diagnostic).split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                    .last { !$0.isEmpty && !$0.hasPrefix("Fetching") && !$0.contains("@") }.map { String($0.prefix(200)) }
+            } else { lastSaid = nil }
+            let listed = GeminiModels.rows(ran.output)
+            if ran.code == 0, !listed.isEmpty {
+                models = listed
+                Store.settings.set(GeminiModels.encode(listed), forKey: "gemini.models")
+            }
+            modelsOK = ran.code == 0
         }
-        guard ran.code == 0, deadline.timeIntervalSinceNow > 0 else { keep(signedIn: false); return }
+        guard modelsOK, deadline.timeIntervalSinceNow > 0 else { keep(signedIn: false); return }
         // /usage refreshes quota from Google's backend without a model turn.
         // Unlike `models`, this must be able to use the keychain credential.
         // A login it can't use makes it start a sign-in of its own: it

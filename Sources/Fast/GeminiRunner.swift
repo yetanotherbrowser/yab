@@ -537,6 +537,9 @@ final class GeminiRunner {
         let workspace: URL
         let model: String?
         var effort: String? = nil
+        /// Efforts the selected model accepts, when known from the catalog;
+        /// nil falls back to GeminiModels.efforts.
+        var supportedEfforts: [String]? = nil
         let conversation: String?
         /// Yab's own binary, the MCP server's command.
         let command: String
@@ -647,8 +650,14 @@ final class GeminiRunner {
         /// (GeminiStream.yabTools) stops a tool that slips past them.
         func prepare() throws -> (env: [String: String], cwd: URL) {
             guard model?.isEmpty != true else { throw GeminiStream.Failure("Gemini needs a model name.") }
-            if let effort, !GeminiModels.efforts.contains(effort) {
-                throw GeminiStream.Failure("This Gemini model supports Low, Medium or High effort. Choose one in the model picker and try again.")
+            let allowedEfforts = supportedEfforts ?? GeminiModels.efforts
+            if let effort, !allowedEfforts.contains(effort) {
+                if allowedEfforts.isEmpty {
+                    throw GeminiStream.Failure("This Gemini model doesn't support custom effort. Choose Auto in the effort picker and try again.")
+                }
+                let names = allowedEfforts.map(AgentModels.effortTitle)
+                let list = names.count > 1 ? names.dropLast().joined(separator: ", ") + " or " + names.last! : names[0]
+                throw GeminiStream.Failure("This Gemini model supports \(list) effort. Choose one in the model picker and try again.")
             }
             if let mcpArgs {
                 guard GeminiSupport.toolsProven else { throw GeminiStream.Failure(GeminiSupport.noTools) }
