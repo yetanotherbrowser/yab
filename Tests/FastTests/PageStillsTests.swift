@@ -337,4 +337,22 @@ struct PageStillsTests {
         #expect(!scene.stage.showsStill)
         #expect(b.superview === scene.stage)
     }
+
+    @Test func stillsNearScopesLargeSpaceToActiveNeighborsAndRecent() {
+        let browser = Browser(windowID: UUID(), purpose: .privateOnly)
+        defer { browser.letGo() }
+        for i in 0..<20 {
+            _ = browser.open(URL(string: "https://example.test/\(i)")!, foreground: false)
+        }
+        #expect(browser.tabs.count == 20)
+        let target = browser.tabs[10].id
+        let near = browser.stillsNear(focusing: target)
+        #expect(near.contains(target))
+        #expect(near.contains(browser.tabs[8].id))
+        #expect(near.contains(browser.tabs[9].id))
+        #expect(near.contains(browser.tabs[11].id))
+        #expect(near.contains(browser.tabs[12].id))
+        #expect(!near.contains(browser.tabs[0].id))
+        #expect(!near.contains(browser.tabs[19].id))
+    }
 }

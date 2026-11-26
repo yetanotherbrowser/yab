@@ -250,7 +250,7 @@ final class FullscreenPiPDeparture {
     }
 
     private func policy(_ frame: Frame, in browser: Browser) -> Bool {
-        (Browser.benchAway ?? browser.prefs.floatsOnLeave) && browser.active === frame.tab
+        (Browser.benchAway ?? (!Thrift.on && browser.prefs.floatsOnLeave)) && browser.active === frame.tab
             && !frame.tab.gone && !frame.tab.asleep && !frame.tab.onCall
             && frame.tab.built === frame.web && frame.tab.delegate === browser
             && browser.everyTab.contains(where: { $0 === frame.tab })

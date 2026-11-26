@@ -538,7 +538,7 @@ private struct MenuLine: View {
 /// its mind, a site that turns dark after it loads, a theme-color that
 /// arrives late, and eased from one tab's color to the next.
 struct Toned<Content: View>: View {
-    @ObservedObject var tab: Tab
+    let tab: Tab
     /// Worn as a backdrop, with the live tab a chip lifted off it.
     var lifted = false
     @ViewBuilder let content: (Tone?) -> Content
@@ -702,7 +702,7 @@ private struct BackdropDrag: View {
 /// Whatever is drawn in the page's own light or dark, kept up with it as
 /// the page is seen again.
 struct Shaded<Content: View>: View {
-    @ObservedObject var tab: Tab
+    let tab: Tab
     @ViewBuilder let content: (ColorScheme?) -> Content
 
     var body: some View {
@@ -713,7 +713,7 @@ struct Shaded<Content: View>: View {
 /// What stands over a page and wears its light (Tab.under): Peek's
 /// buttons, the meeting card.
 struct Under<Content: View>: View {
-    @ObservedObject var tab: Tab
+    let tab: Tab
     @ViewBuilder let content: (ColorScheme?) -> Content
 
     var body: some View {
@@ -829,7 +829,7 @@ struct GroundFill<S: Shape>: View {
 /// page had the screen and stayed black after it came back, the tab no
 /// longer immersed, until another tab was chosen (register 2669, 0.47.0).
 private struct PageGround: View {
-    @ObservedObject var tab: Tab
+    let tab: Tab
     let away: Bool
 
     var body: some View {

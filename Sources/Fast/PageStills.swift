@@ -98,8 +98,36 @@ final class PageStills {
     /// Owners whose still stands for a page built again in its place
     /// (`rehome(loose:)`), matched by `Key.looseRefusal`.
     private var loose: Set<UUID> = []
-    /// Bumped by `forget`: a picture asked for before it is dropped on arrival.
+    /// Monotonic nonzero epoch per owner: a picture asked for before `forget`
+    /// is dropped on arrival, and entries for closed/forgotten owners with no
+    /// in-flight capture can be pruned safely since 0 never matches.
     private var epochs: [UUID: Int] = [:]
+    private var inFlight: [UUID: Int] = [:]
+    private var epochClock = 0
+    /// Shared immutable CIContext: avoids recreating Metal context state on
+    /// every thumbnail or tile picture.
+    nonisolated(unsafe) private static let context = CIContext(options: [.cacheIntermediates: false])
+
+    private func nextEpoch() -> Int {
+        epochClock &+= 1
+        if epochClock == Int.min || epochClock == 0 { epochClock = 1 }
+        return epochClock
+    }
+
+    private func currentEpoch(for owner: UUID) -> Int {
+        if let existing = epochs[owner] { return existing }
+        let made = nextEpoch()
+        epochs[owner] = made
+        return made
+    }
+
+    private func endCapture(for owner: UUID) {
+        let remaining = (inFlight[owner] ?? 1) - 1
+        inFlight[owner] = remaining > 0 ? remaining : nil
+        if remaining <= 0, stills[owner] == nil, asked[owner] == nil {
+            epochs[owner] = nil
+        }
+    }
     /// Pictures asked for and not yet back, by owner.
     private var asked: [UUID: CFTimeInterval] = [:]
     /// The tabs a switch is likely to go to next: the space on screen and
@@ -201,7 +229,7 @@ final class PageStills {
         // Kept volatile while unseen: the kernel may have taken it back.
         guard still.showing > 0 || keep(still.surface) else {
             misses["purged", default: 0] += 1
-            stills[owner] = nil
+            drop(owner)
             return nil
         }
         hits += 1
@@ -244,7 +272,8 @@ final class PageStills {
         // two tabs pictures each once, not on every switch.
         if let kept = stills[owner], kept.key.refusal(for: key) == nil, now - kept.drawn < 2 { return }
         asked[owner] = now
-        let epoch = epochs[owner, default: 0]
+        let epoch = currentEpoch(for: owner)
+        inFlight[owner, default: 0] += 1
         let configuration = WKSnapshotConfiguration()
         // What it shows now: a page leaving the window draws no more.
         configuration.afterScreenUpdates = false
@@ -254,12 +283,17 @@ final class PageStills {
                 guard let self else { return }
                 let heard = CACurrentMediaTime()
                 defer { self.mainMs.append((CACurrentMediaTime() - heard) * 1000) }
+                guard self.epochs[owner, default: 0] == epoch else {
+                    self.endCapture(for: owner)
+                    self.failed += 1
+                    return
+                }
                 self.asked[owner] = nil
                 // WebKit's own bitmap, never redrawn here (NSImage.cgImage
                 // would draw it again on this thread).
                 guard let image, let rep = image.representations.first,
-                      let picture = rep.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                      self.epochs[owner, default: 0] == epoch else {
+                      let picture = rep.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    self.endCapture(for: owner)
                     self.failed += 1
                     return
                 }
@@ -268,6 +302,7 @@ final class PageStills {
                     let surface = PageStills.surface(from: picture, pixels: pixels)
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
+                            defer { self.endCapture(for: owner) }
                             guard let surface, self.epochs[owner, default: 0] == epoch else {
                                 self.failed += 1
                                 return
@@ -303,7 +338,8 @@ final class PageStills {
         // again with the same view of the same page takes no new one.
         if let kept = stills[owner], kept.key.refusal(for: key) == nil, now - kept.drawn < 30 { return }
         asked[owner] = now
-        let epoch = epochs[owner, default: 0]
+        let epoch = currentEpoch(for: owner)
+        inFlight[owner, default: 0] += 1
         let pixels = CGSize(width: (key.size.width * key.scale).rounded(), height: (key.size.height * key.scale).rounded())
         // The page was just pictured whole as it is now, for the tone's look
         // after the scroll that brought this still (ChromiumPage.RecentWhole):
@@ -315,6 +351,7 @@ final class PageStills {
                     .cgImage(forProposedRect: nil, context: nil, hints: nil)
                 let surface = picture.flatMap { Self.surface(from: $0, pixels: pixels) }
                 DispatchQueue.main.async {
+                    defer { self.endCapture(for: owner) }
                     guard self.epochs[owner, default: 0] == epoch else { return }
                     self.asked[owner] = nil
                     guard let surface, matches() else { self.failed += 1; return }
@@ -330,15 +367,21 @@ final class PageStills {
         // Asked now, ahead of the page's hide (the stage calls this before the
         // page leaves it): Chromium pictures a page only while it is shown.
         page.snapshotInOrder(PageShot(afterUpdates: false, brief: true)) { [weak self] image, _ in
-            guard let self, self.epochs[owner, default: 0] == epoch, matches() else { return }
+            guard let self else { return }
+            guard self.epochs[owner, default: 0] == epoch, matches() else {
+                self.endCapture(for: owner)
+                return
+            }
             self.asked[owner] = nil
             guard let picture = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                self.endCapture(for: owner)
                 self.failed += 1
                 return
             }
             self.queue.async {
                 let surface = Self.surface(from: picture, pixels: pixels)
                 DispatchQueue.main.async {
+                    defer { self.endCapture(for: owner) }
                     guard let surface, self.epochs[owner, default: 0] == epoch, matches() else { return }
                     self.captures += 1
                     self.captureMs.append((CACurrentMediaTime() - now) * 1000)
@@ -381,7 +424,7 @@ final class PageStills {
     func picture(of owner: UUID) -> NSImage? {
         guard PageStills.on, let still = stills[owner], still.showing > 0 || keep(still.surface) else { return nil }
         let image = CIImage(ioSurface: still.surface)
-        guard let copy = CIContext(options: [.cacheIntermediates: false]).createCGImage(image, from: image.extent) else { return nil }
+        guard let copy = PageStills.context.createCGImage(image, from: image.extent) else { return nil }
         return NSImage(cgImage: copy, size: still.key.size)
     }
 
@@ -394,7 +437,7 @@ final class PageStills {
             let source = CIImage(ioSurface: surface)
             let scale = min(1, 2 * width / max(source.extent.width, 1))
             let image = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            let copy = CIContext(options: [.cacheIntermediates: false]).createCGImage(image, from: image.extent)
+            let copy = PageStills.context.createCGImage(image, from: image.extent)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { done(copy.map { NSImage(cgImage: $0, size: size) }) }
             }
@@ -406,7 +449,7 @@ final class PageStills {
     func kept(_ owner: UUID) -> Still? {
         guard PageStills.on, let still = stills[owner] else { return nil }
         guard still.showing > 0 || keep(still.surface) else {
-            stills[owner] = nil
+            drop(owner)
             return nil
         }
         still.used = CACurrentMediaTime()
@@ -424,18 +467,19 @@ final class PageStills {
     /// The page went somewhere else, slept or closed: its still is no
     /// longer it, and a picture still on its way is not either.
     func forget(_ owner: UUID) {
-        epochs[owner, default: 0] += 1
+        epochs[owner] = nil
         asked[owner] = nil
         drop(owner)
     }
 
     func forgetAll() {
-        for owner in Array(stills.keys) { forget(owner) }
+        for owner in Set(stills.keys).union(epochs.keys).union(asked.keys) { forget(owner) }
     }
 
     private func drop(_ owner: UUID) {
         stills[owner] = nil
         loose.remove(owner)
+        if asked[owner] == nil, inFlight[owner, default: 0] == 0 { epochs[owner] = nil }
     }
 
     /// The tabs a switch is likely to go to next (`Browser.stillsNear`).
@@ -448,7 +492,7 @@ final class PageStills {
     func relieve(critical: Bool) {
         let order = stills.values.sorted { $0.used > $1.used }
         for (index, still) in order.enumerated() where still.showing == 0 && (critical || index >= 2) {
-            stills[still.owner] = nil
+            drop(still.owner)
         }
         fit()
     }
@@ -459,7 +503,7 @@ final class PageStills {
         let plan = PageStills.plan(stills.values.map {
             Entry(owner: $0.owner, used: $0.used, bytes: $0.bytes, reduced: $0.reduced, near: near.contains($0.owner), showing: $0.showing > 0)
         }, budget: PageStills.budget, whole: PageStills.whole)
-        for owner in plan.drop { stills[owner] = nil }
+        for owner in plan.drop { drop(owner) }
         for owner in plan.reduce { reduce(owner) }
         firm()
     }
@@ -481,7 +525,7 @@ final class PageStills {
             where still.showing == 0 && !still.halving {
             if index < PageStills.kept || held + still.bytes <= PageStills.budget / 2 {
                 held += still.bytes
-                if !keep(still.surface) { stills[still.owner] = nil }
+                if !keep(still.surface) { drop(still.owner) }
             } else {
                 loosen(still.surface)
             }
@@ -528,7 +572,7 @@ final class PageStills {
         // Marked now, so a second fit doesn't halve it again while this runs.
         still.reduced = true
         guard keep(still.surface) else {
-            stills[owner] = nil
+            drop(owner)
             return
         }
         let source = still.surface
@@ -683,18 +727,33 @@ extension Browser {
         let shown = StageView.early(from: active, to: coming,
                         single: stagePair == nil && !splitBook.frozen && stages.compactMap { $0 }.count == 1 && pair(of: coming.id) == nil)
         // Which stills to keep whole, once the switch is done.
+        let comingID = coming.id
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            PageStills.shared.keepNear(self.stillsNear)
+            PageStills.shared.keepNear(self.stillsNear(focusing: comingID))
         }
         return shown
     }
 
-    /// The tabs a switch is likely to go to next: the row on screen and the
-    /// page left in front of each space either side of this one, which two
-    /// fingers or ⌃N reach next (PageStills.keepNear).
-    var stillsNear: Set<Tab.ID> {
-        var near = Set(tabs.map(\.id))
+    /// The tabs a switch is likely to go to next: the active/coming tab,
+    /// its immediate neighbors in the row, the few most recently used tabs,
+    /// and the page left in front of each space either side of this one.
+    /// Older tabs in a large space halve to a quarter of the memory so more
+    /// tabs stay cached instead of being evicted.
+    var stillsNear: Set<Tab.ID> { stillsNear(focusing: activeID) }
+
+    func stillsNear(focusing focused: Tab.ID?) -> Set<Tab.ID> {
+        var near = Set(recentlyUsed())
+        let visible = tabs.map(\.id)
+        if let focused, visible.contains(focused) { near.insert(focused) }
+        if let activeID { near.insert(activeID) }
+        if let index = focused.flatMap(visible.firstIndex(of:)) ?? activeID.flatMap(visible.firstIndex(of:)) {
+            let low = max(0, index - 2)
+            let high = min(visible.count - 1, index + 2)
+            if low <= high {
+                for id in visible[low...high] { near.insert(id) }
+            }
+        }
         let order = turnOrder.map(\.id)
         if let here = order.firstIndex(of: spaceID), order.count > 1 {
             for step in [-1, 1] {

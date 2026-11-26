@@ -2961,6 +2961,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// the icon to fly out of once the yes is given. See StoreRelay.swift.
     @ObservationIgnored var storeAskers: [String: WeakTab] = [:]
     @ObservationIgnored private var zoomShown = 100
+    @ObservationIgnored private var gone = false
     @ObservationIgnored private var remembering = false
     /// The first window's row as last written: tabs, their order, kept and
     /// pinned. A row that changed there (a tab opened, closed, moved, kept)
@@ -3669,6 +3670,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
     }
 
     func writeSession(now: Bool = false) {
+        guard !gone else { return }
         if windowID == nil { writtenShape = rowShape }
         // One in from another space with you (a call, an agent at work in
         // it) is written in its own space's row, never this one's, where it
@@ -3797,11 +3799,11 @@ final class Browser: NSObject, ObservableObject, Relaying {
     }
 
     func rememberSession() {
-        guard windowPurpose == .normal else { return }
+        guard !gone, windowPurpose == .normal else { return }
         if windowID == nil, !rushing, MainBudget.chunk("session.shape", { rowShape != writtenShape }) {
             rushing = true
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
+                guard let self, !self.gone else { return }
                 rushing = false
                 if rowShape != writtenShape { writeSession() }
             }
@@ -3809,7 +3811,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         guard !remembering else { return }
         remembering = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let self else { return }
+            guard let self, !self.gone else { return }
             remembering = false
             writeSession()
         }
@@ -3819,14 +3821,14 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// stops waiting: this writes straight to disk, on the thread asking to
     /// quit, before there is a process left to finish the wait on its behalf.
     func flushSession() {
-        guard windowPurpose == .normal else { return }
+        guard !gone, windowPurpose == .normal else { return }
         Session.land { writeRows() }
     }
 
     /// Every row as it is now, asked to be written without waiting for the
     /// disk: what Session.read answers from at once (sync's delivery).
     func writeRows() {
-        guard windowPurpose == .normal else { return }
+        guard !gone, windowPurpose == .normal else { return }
         writeSession(now: true)
         // The spaces not on screen, whose pages may have moved on since. The
         // shared pins all together: one a call took along is in the row on
@@ -6346,7 +6348,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
                 return
             }
             if quietly {
-                guard native.media.permitsAutomaticPiP,
+                guard !(Thrift.on && Browser.benchAway != true), native.media.permitsAutomaticPiP,
                       tabLeft || !automaticPiPFullscreen(native), AutomaticPiPSites.shared.allows(tab.address),
                       Players.follows(tab), !tabs.contains(where: \.pictureInPicture),
                       !floater.showing || floater.homing else { return }
@@ -6367,7 +6369,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         guard let tab, !tab.gone, !tab.isBlank, !tab.asleep, let web = tab.webKitOnly("WebKit native page lifecycle", build: false),
               tab.delegate === self, everyTab.contains(where: { $0 === tab }) else { return }
         if quietly {
-            guard tabLeft || !automaticPiPFullscreen(web), AutomaticPiPSites.shared.allows(tab.address),
+            guard !(Thrift.on && Browser.benchAway != true), tabLeft || !automaticPiPFullscreen(web), AutomaticPiPSites.shared.allows(tab.address),
                   Players.follows(tab), !tabs.contains(where: \.pictureInPicture),
                   !floater.showing || floater.homing else { return }
         }
@@ -9412,9 +9414,21 @@ extension Browser {
     /// went on running out of sight, sound, timers and extensions' scripts.
     /// Reopened, the window comes back from its session file.
     func letGo() {
+        gone = true
         fullscreenDeparture.stop()
         stopWatching()
-        for tab in tabs + parkedTabs + outside { tab.close() }
+        bag.removeAll()
+        peeking = nil
+        peekFrom = nil
+        floater.drop()
+        for tab in tabs + parkedTabs + outside {
+            dropAsks(tab)
+            tab.close()
+        }
+        tabs = []
+        parked = [:]
+        outside = []
+        activeID = nil
     }
 
     /// A small window's page, closed without being kept.

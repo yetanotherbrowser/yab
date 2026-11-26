@@ -95,6 +95,11 @@ enum ExtensionCapture {
         browser.answer(tab, .no)
     }
 
+    static func forget(_ browser: Browser) {
+        let requests = picking.filter { $0.value.browser === browser }.map(\.key)
+        for request in requests { cancel(request) }
+    }
+
     /// tabCapture.getMediaStreamId: a tab the extension was invoked on, its
     /// button or menu pressed there (activeTab), as Chromium asks.
     static func tabStream(tabIndex: Int, context: WKWebExtensionContext, owner: Extensions) throws -> String {

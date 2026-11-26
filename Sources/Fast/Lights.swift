@@ -630,6 +630,15 @@ extension Lights {
     }
     @MainActor private static var titleBars: [ObjectIdentifier: Held] = [:]
 
+    /// A closed secondary window drops its cached title bar buttons.
+    @MainActor
+    static func forgetTitleBar(_ window: NSWindow) {
+        let key = ObjectIdentifier(window)
+        if let held = titleBars[key], held.window == nil || held.window === window {
+            titleBars[key] = nil
+        }
+    }
+
     /// The rows in a window, for the bench.
     @MainActor
     static func rows(in view: NSView?) -> [LightsRow] {
@@ -859,8 +868,30 @@ final class Brim {
     private static var kept: [ObjectIdentifier: Brim] = [:]
 
     static func keep(_ window: NSWindow, for browser: Browser) {
-        guard kept[ObjectIdentifier(window)] == nil else { return }
-        kept[ObjectIdentifier(window)] = Brim(window, browser: browser)
+        let key = ObjectIdentifier(window)
+        if let existing = kept[key] {
+            if existing.window === window { return }
+            existing.drop()
+            kept[key] = nil
+        }
+        kept[key] = Brim(window, browser: browser)
+    }
+
+    /// A closed secondary window drops its observers, subscriptions and timers.
+    static func forget(_ window: NSWindow) {
+        let key = ObjectIdentifier(window)
+        guard let existing = kept[key], existing.window == nil || existing.window === window else { return }
+        existing.drop()
+        kept[key] = nil
+    }
+
+    /// A closed primary window stays kept for reopen, but stops its edge timer
+    /// and mouse monitors while hidden.
+    static func pause(_ window: NSWindow) {
+        let key = ObjectIdentifier(window)
+        guard let existing = kept[key], existing.window === window else { return }
+        existing.paused = true
+        existing.stopWatching()
     }
 
     /// The window is in macOS's move into full screen or out of it, from
@@ -873,8 +904,8 @@ final class Brim {
     /// empty screen, and went on showing it until the page had drawn again
     /// (register 1089).
     static func inFullScreenMove(_ window: NSWindow?) -> Bool {
-        guard let window else { return false }
-        return kept[ObjectIdentifier(window)]?.moving == true
+        guard let window, let existing = kept[ObjectIdentifier(window)], existing.window === window else { return false }
+        return existing.moving
     }
 
     private var moving = false {
@@ -938,6 +969,8 @@ final class Brim {
     /// Where the pointer was at the last look, from the window's top left.
     private var lastPointer: CGPoint?
     private var keeping: Set<AnyCancellable> = []
+    private var tokens: [NSObjectProtocol] = []
+    private var paused = false
     /// Where the bench says the pointer is, in screen space, in place of
     /// the real one: a probe drives the edge without taking the Mac's
     /// pointer (Bench, "edge").
@@ -954,13 +987,22 @@ final class Brim {
 
     /// A press where the bench's pointer is, as a click there would be.
     static func benchPress(in window: NSWindow) {
-        guard let pointer = benchPointer else { return }
-        kept[ObjectIdentifier(window)]?.pressed(at: pointer)
+        guard let pointer = benchPointer, let existing = kept[ObjectIdentifier(window)], existing.window === window else { return }
+        existing.pressed(at: pointer)
     }
 
     /// A look at the bench's pointer now, as a move or a tick would take.
     static func benchLook(in window: NSWindow) {
-        kept[ObjectIdentifier(window)]?.moved()
+        guard let existing = kept[ObjectIdentifier(window)], existing.window === window else { return }
+        existing.moved()
+    }
+
+    private func drop() {
+        stopWatching()
+        keeping.removeAll()
+        let center = NotificationCenter.default
+        for token in tokens { center.removeObserver(token) }
+        tokens = []
     }
 
     private init(_ window: NSWindow, browser: Browser) {
@@ -975,36 +1017,53 @@ final class Brim {
             .store(in: &keeping)
         // Menus are heard as they open and close, on the spot: while one is
         // open the main queue is the menu's.
-        center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] _ in
-            AppKitMainThread.sync { self?.menuOpen = true }
-        }
-        center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { [weak self] _ in
-            AppKitMainThread.sync { self?.menuOpen = false }
-        }
-        center.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            AppKitMainThread.sync { self?.entering() }
-        }
-        center.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            AppKitMainThread.sync { self?.settled() }
-        }
-        center.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            AppKitMainThread.sync { self?.leaving() }
-        }
-        center.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            AppKitMainThread.sync { self?.settled() }
-        }
-        // macOS gives the window its new size inside the move, where the
-        // picture at that size is taken, and SwiftUI would lay the window
-        // out at its next turn, after it: the page was given its size too
-        // late to hold the picture back, and the move showed it at the old.
-        // Laid out on the spot, the page has its size while macOS waits.
-        // Posted synchronously, so `queue: nil`.
-        center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: nil) { [weak self] note in
-            AppKitMainThread.sync {
-                guard let self, self.moving, let window = note.object as? NSWindow else { return }
-                window.contentView?.layoutSubtreeIfNeeded()
-            }
-        }
+        tokens = [
+            center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] _ in
+                AppKitMainThread.sync { self?.menuOpen = true }
+            },
+            center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { [weak self] _ in
+                AppKitMainThread.sync { self?.menuOpen = false }
+            },
+            center.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+                AppKitMainThread.sync { self?.entering() }
+            },
+            center.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+                AppKitMainThread.sync { self?.settled() }
+            },
+            center.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+                AppKitMainThread.sync { self?.leaving() }
+            },
+            center.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+                AppKitMainThread.sync { self?.settled() }
+            },
+            // A primary window reopened after pause resumes watching if needed.
+            center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                AppKitMainThread.sync {
+                    self?.paused = false
+                    self?.rewatch()
+                }
+            },
+            center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] note in
+                AppKitMainThread.sync {
+                    guard let self, self.paused, let window = note.object as? NSWindow,
+                          window.isVisible, window.occlusionState.contains(.visible) else { return }
+                    self.paused = false
+                    self.rewatch()
+                }
+            },
+            // macOS gives the window its new size inside the move, where the
+            // picture at that size is taken, and SwiftUI would lay the window
+            // out at its next turn, after it: the page was given its size too
+            // late to hold the picture back, and the move showed it at the old.
+            // Laid out on the spot, the page has its size while macOS waits.
+            // Posted synchronously, so `queue: nil`.
+            center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: nil) { [weak self] note in
+                AppKitMainThread.sync {
+                    guard let self, self.moving, let window = note.object as? NSWindow else { return }
+                    window.contentView?.layoutSubtreeIfNeeded()
+                }
+            },
+        ]
         if window.styleMask.contains(.fullScreen) { entering(); settled() }
     }
 
@@ -1031,6 +1090,10 @@ final class Brim {
     /// Watching, or not, for the state the window is in now.
     private func rewatch() {
         guard let browser else { return }
+        if paused || window?.isVisible == false {
+            stopWatching()
+            return
+        }
         // The strip out over the page goes with the strip put away, whatever
         // else is watched: the tabs down the side for Mail, with the
         // column put away, left it out, and it came back over the page
@@ -1040,7 +1103,10 @@ final class Brim {
             stripLetting = nil
             browser.quietly { browser.stripPeek = false }
         }
-        guard !browser.fullScreen else { return }
+        if browser.fullScreen {
+            watch()
+            return
+        }
         if browser.prefs.sidebar && (browser.prefs.sideShut || browser.prefs.sideFlank == .right) || browser.stripAway {
             watch()
         } else {

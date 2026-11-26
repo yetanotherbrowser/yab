@@ -279,12 +279,18 @@ final class Bench {
         unlink(socketFile.path)
         clients.values.forEach { $0.drop() }
         clients = [:]
+        acceptGeneration &+= 1
+        for fd in pendingFDs { close(fd) }
+        pendingFDs.removeAll()
         running = false
         // The tabs a script left open go with it.
         if let browser {
             for tab in browser.tabs where tab.bench { browser.close(tab) }
         }
     }
+
+    private var pendingFDs: Set<Int32> = []
+    private var acceptGeneration = 0
 
     /// Every caller waiting, not one per wake: the queue empties at once.
     private func accept() {
@@ -312,7 +318,24 @@ final class Bench {
         // Whose code it is, asked of the kernel before a word is read: a
         // test run and yab Dev answer every program, as the bench's scripts
         // speak to them straight.
-        let yab = Store.testing || Store.development || BenchCaller.yab(fd)
+        if Store.testing || Store.development {
+            admit(fd: fd, yab: true)
+            return true
+        }
+        guard pendingFDs.count < 64 else {
+            close(fd)
+            return true
+        }
+        pendingFDs.insert(fd)
+        let generation = acceptGeneration
+        BenchCaller.check(fd) { [weak self] yab in
+            guard let self, self.acceptGeneration == generation, self.pendingFDs.remove(fd) != nil else { return }
+            self.admit(fd: fd, yab: yab)
+        }
+        return true
+    }
+
+    private func admit(fd: Int32, yab: Bool) {
         let client = Client(fd: fd) { [weak self] request, answer in
             self?.handle(request, yab: yab, answer)
         } gone: { [weak self] client in
@@ -320,7 +343,6 @@ final class Bench {
             if self?.clients[client.fd] === client { self?.clients[client.fd] = nil }
         }
         clients[fd] = client
-        return true
     }
 
     // MARK: - one connection
@@ -596,7 +618,9 @@ final class Bench {
         }
         // Named in the watchdog's log, so a stall reads as what the script
         // had just asked for, and in stalls.log (Watchdog).
-        Hangs.phase("bench " + verb)
+        let benchPhase = "bench " + verb
+        Hangs.phase(benchPhase)
+        defer { Hangs.clear(if: benchPhase) }
 
         if verb == "boost-probe" { boostProbe(request, browser: browser, answer: answer); return }
         if verb == "action-menu" { answer(ActionMenu.state()); return }

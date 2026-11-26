@@ -133,6 +133,27 @@ final class NativeControl {
         catch { answer(NativeFailure("invalid_arguments", "The native request could not be read").reply) }
     }
 
+    func forget(_ browser: Browser) {
+        observed.removeValue(forKey: ObjectIdentifier(browser))
+        let goneTabs = Set((browser.tabs + browser.parkedTabs).map(\.id))
+        for id in goneTabs {
+            observedTabs.remove(id)
+            tabWatches.removeValue(forKey: id)
+        }
+        pruneNests(among: BrowserWindows.shared.browsers.filter { $0 !== browser })
+    }
+
+    private func pruneNests(among windows: [Browser]) {
+        var liveNests = Set<UUID>()
+        for window in windows {
+            for tab in window.tabs + window.parkedTabs { if let id = tab.nest?.id { liveNests.insert(id) } }
+            for nest in LiveFolders.nests(in: window) { liveNests.insert(nest.id) }
+        }
+        for group in groups.values { for (_, state) in group { if let id = state.1?.id { liveNests.insert(id) } } }
+        for moved in folderParents.values { for (nest, parent) in moved { liveNests.insert(nest.id); if let id = parent?.id { liveNests.insert(id) } } }
+        for id in Set(nestWatches.keys).subtracting(liveNests) { nestWatches.removeValue(forKey: id) }
+    }
+
     func observe(_ browser: Browser) {
         for (id, watch) in observed where watch.browser == nil { observed.removeValue(forKey: id) }
         let identity = ObjectIdentifier(browser)
@@ -189,15 +210,7 @@ final class NativeControl {
                                    nest.$color.dropFirst().sink { [weak self] _ in self?.changes.changed(resource) },
                                    nest.$live.dropFirst().sink { [weak self] _ in self?.changes.changed(live) }]
         }
-        let windows = BrowserWindows.shared.browsers + [browser]
-        var liveNests = Set<UUID>()
-        for window in windows {
-            for tab in window.tabs + window.parkedTabs { if let id = tab.nest?.id { liveNests.insert(id) } }
-            for nest in LiveFolders.nests(in: window) { liveNests.insert(nest.id) }
-        }
-        for group in groups.values { for (_, state) in group { if let id = state.1?.id { liveNests.insert(id) } } }
-        for moved in folderParents.values { for (nest, parent) in moved { liveNests.insert(nest.id); if let id = parent?.id { liveNests.insert(id) } } }
-        for id in Set(nestWatches.keys).subtracting(liveNests) { nestWatches.removeValue(forKey: id) }
+        pruneNests(among: BrowserWindows.shared.browsers + [browser])
         let live = Set((BrowserWindows.shared.browsers + [browser]).flatMap { $0.tabs + $0.parkedTabs }.map(\.id))
         for id in observedTabs.subtracting(live) { observedTabs.remove(id); tabWatches.removeValue(forKey: id) }
     }

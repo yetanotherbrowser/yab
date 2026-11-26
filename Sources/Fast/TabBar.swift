@@ -113,12 +113,17 @@ struct TabBar: View {
         var gap: Folders.TodayLanding?
     }
 
+    @MainActor
     private final class Clocks {
         var spring: DispatchWorkItem?
         var springFor: UUID?
         var dwell: DispatchWorkItem?
         var hold: DispatchWorkItem?
         var escape: Any?
+
+        isolated deinit {
+            if let escape { NSEvent.removeMonitor(escape) }
+        }
 
         func stop() {
             spring?.cancel()
@@ -608,13 +613,14 @@ struct TabBar: View {
             // everything back where it was, nothing moved.
             if still {
                 dragCancelled = false
-                clocks.escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if let escape = clocks.escape { NSEvent.removeMonitor(escape); clocks.escape = nil }
+                clocks.escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak clocks, weak browser] event in
                     guard event.keyCode == 53 else { return event }
                     return MainActor.assumeIsolated {
-                        guard dragging != nil, event.window === BrowserWindows.shared.window(for: browser) else { return event }
+                        guard let browser, dragging != nil, event.window === BrowserWindows.shared.window(for: browser) else { return event }
                         dragCancelled = true
                         clearChoice()
-                        clocks.stop()
+                        clocks?.stop()
                         if decked != nil { SplitDeck.shared.leave(); decked = nil }
                         SpaceDrop.shared.cancel()
                         TearOff.shared.cancel()

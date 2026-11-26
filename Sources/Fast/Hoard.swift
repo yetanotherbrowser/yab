@@ -392,6 +392,7 @@ final class Hoard: ObservableObject {
 
     /// A window closed with downloads going: they leave the Dock's bar.
     isolated deinit {
+        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         DockProgress.shared.report(ObjectIdentifier(self), [])
     }
 

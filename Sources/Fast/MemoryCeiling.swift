@@ -18,6 +18,7 @@ import Foundation
 
 enum MemoryCeiling {
     private static let lock = NSLock()
+    private static let queue = DispatchQueue(label: "memory.ceiling", qos: .utility)
     nonisolated(unsafe) private static var pages: [Int32: UInt64] = [:]
     nonisolated(unsafe) private static var timer: DispatchSourceTimer?
     nonisolated(unsafe) private static var naming: DispatchSourceTimer?
@@ -77,7 +78,7 @@ enum MemoryCeiling {
         guard timer == nil else { return }
         let set = Store.settings.double(forKey: "memory.ceiling")
         if set > 0 { override = UInt64(set) << 20 }
-        let source = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "memory.ceiling", qos: .utility))
+        let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now() + quick, repeating: quick, leeway: .seconds(1))
         source.setEventHandler { look() }
         source.resume()
@@ -88,32 +89,35 @@ enum MemoryCeiling {
         names.setEventHandler {
             MainActor.assumeIsolated {
                 let agents = BrowserWindows.shared.browsers.contains { $0.everyTab.contains { $0.worker != nil } }
-                publish(PageProcesses.census()?.map(\.pid), agents: agents)
+                publish(PageProcesses.pids(), agents: agents)
             }
         }
         names.resume()
         naming = names
     }
 
-    /// The page processes running now, from the main thread.
+    /// The page processes running now, handed off from the main thread so
+    /// process birth-time syscalls stay off MainActor.
     static func publish(_ pids: [Int32]?, agents: Bool = false) {
-        var next: [Int32: UInt64] = [:]
-        for pid in pids ?? [] { if let born = started(pid) { next[pid] = born } }
-        lock.lock()
-        pages = next
-        pageCount = pids.map { Set($0).count }
-        let was = agentsWorking
-        agentsWorking = agents
-        // An agent seen starting is weighed now, not a slow look on. An
-        // agent's page starts small: a slow look to the census is far
-        // short of what it takes to grow to a quarter of the ceiling.
-        // Under the lock, so a look finishing meanwhile can't put it back.
-        if agents, !was {
-            pace = quick
-            timer?.schedule(deadline: .now(), repeating: quick, leeway: .seconds(1))
-            naming?.schedule(deadline: .now() + quick - 1, repeating: quick, leeway: .milliseconds(500))
+        queue.async {
+            var next: [Int32: UInt64] = [:]
+            for pid in pids ?? [] { if let born = started(pid) { next[pid] = born } }
+            lock.lock()
+            pages = next
+            pageCount = pids.map { Set($0).count }
+            let was = agentsWorking
+            agentsWorking = agents
+            // An agent seen starting is weighed now, not a slow look on. An
+            // agent's page starts small: a slow look to the census is far
+            // short of what it takes to grow to a quarter of the ceiling.
+            // Under the lock, so a look finishing meanwhile can't put it back.
+            if agents, !was {
+                pace = quick
+                timer?.schedule(deadline: .now(), repeating: quick, leeway: .seconds(1))
+                naming?.schedule(deadline: .now() + quick - 1, repeating: quick, leeway: .milliseconds(500))
+            }
+            lock.unlock()
         }
-        lock.unlock()
     }
 
     private static func look() {

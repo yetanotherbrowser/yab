@@ -413,7 +413,10 @@ final class BrowserWindows: ObservableObject {
         let added = !shown.open.contains(id)
         let reopened = shown.closed.contains(id)
         if added, purpose == .normal { shown.open.append(id) }
-        if reopened { shown.closed.removeAll { $0 == id } }
+        if reopened {
+            shown.closed.removeAll { $0 == id }
+            closedAt[id] = nil
+        }
         if purpose == .normal, added || reopened { save() }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -448,18 +451,31 @@ final class BrowserWindows: ObservableObject {
                 shown.closed.append(id)
                 closedAt[id] = Date()
             }
-            if shown.closed.count > 10 { shown.closed.removeFirst(shown.closed.count - 10) }
+            if shown.closed.count > 10 {
+                let dropped = shown.closed.prefix(shown.closed.count - 10)
+                shown.closed.removeFirst(shown.closed.count - 10)
+                for old in dropped { closedAt[old] = nil }
+            }
             entries[id] = nil
             order.removeAll { $0 == id }
             ChromiumTabGroups.shared.changed()
             if #available(macOS 15.4, *) { Extensions.all.forEach { $0.unfollow(entry.browser) } }
-            entry.browser.letGo()
-            for token in watches.removeValue(forKey: id) ?? [] { NotificationCenter.default.removeObserver(token) }
+            NativeControl.shared.forget(entry.browser)
+            ExtensionCapture.forget(entry.browser)
+            Brim.forget(entry.window)
+            Lights.forgetTitleBar(entry.window)
             menuWatches[id] = nil
+            for token in watches.removeValue(forKey: id) ?? [] { NotificationCenter.default.removeObserver(token) }
             fullscreen[id] = nil
+            entry.browser.letGo()
+            let closedWindow = entry.window
+            DispatchQueue.main.async {
+                closedWindow.contentView = nil
+            }
         } else {
             // Kept, and watched still: shown again, its window is the same
             // one, and the second close went unseen once these were let go.
+            Brim.pause(entry.window)
             WelcomeStage.shared.dismissReplay(in: entry.browser)
             closedAt[id] = Date()
         }
@@ -473,6 +489,12 @@ final class BrowserWindows: ObservableObject {
     /// sharing its rows (KeptEverywhere.first).
     func forgetForTests(_ browser: Browser) {
         guard Store.unitTests, let id = entries.first(where: { $0.value.browser === browser })?.key else { return }
+        if let window = entries[id]?.window {
+            Brim.forget(window)
+            Lights.forgetTitleBar(window)
+        }
+        NativeControl.shared.forget(browser)
+        ExtensionCapture.forget(browser)
         entries[id] = nil
         order.removeAll { $0 == id }
         ChromiumTabGroups.shared.changed()

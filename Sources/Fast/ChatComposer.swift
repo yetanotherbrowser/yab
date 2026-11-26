@@ -191,6 +191,13 @@ struct ChatComposer: View {
             attach.typing = false
             if attach.finishableChatID == chat?.id { attach.finishableChatID = nil }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            guard let window = note.object as? NSWindow,
+                  window === browser.chatColumnView?.window,
+                  (browser.windowID ?? BrowserWindows.primaryID) != BrowserWindows.primaryID else { return }
+            if let presses { NSEvent.removeMonitor(presses) }
+            presses = nil
+        }
         .onChange(of: attach.fill) { _, _ in
             words = attach.filling
             if browser.chatOpen, browser.chatMovement.target != false { focused = true }
@@ -290,7 +297,8 @@ struct ChatComposer: View {
     /// did (register 1116). So the press is watched as AppKit sees it.
     private func watchPresses() {
         guard presses == nil else { return }
-        presses = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [browser, attach, returnKey] event in
+        presses = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak browser, weak attach, weak returnKey] event in
+            guard let browser, let attach, let returnKey else { return event }
             if event.type == .keyDown {
                 guard let column = browser.chatColumnView, column.shown, let window = column.window,
                       event.window === window, !attach.menu,

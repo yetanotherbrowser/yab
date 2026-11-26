@@ -674,7 +674,7 @@ private struct QuestionBoxes: View {
 
 /// Over the browser's window: in its middle, over the dimming or not.
 struct QuestionLayer: View {
-    @ObservedObject var browser: Browser
+    let browser: Browser
 
     var body: some View {
         QuestionStand { question in question.place == .page || (!browser.editing && browser.active?.typing != true) }

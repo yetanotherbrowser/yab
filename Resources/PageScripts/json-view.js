@@ -12,6 +12,21 @@
 (function () {
   'use strict';
 
+  // Fast exit for non-JSON documents before instantiating Core.
+  // JavaScriptCore unit tests run with no `document` and export `__yabJSONCore`.
+  var isPage = typeof document !== 'undefined';
+  var type = '', path = '', file = false, ndjson = false, jsonType = false, plainType = false;
+  if (isPage) {
+    if (window.top !== window || window.__yabJSON) return;
+    type = String(document.contentType || '').toLowerCase();
+    path = location.pathname.toLowerCase();
+    file = location.protocol === 'file:';
+    ndjson = /^application\/(x-ndjson|jsonl|x-jsonlines|jsonlines)$/.test(type) || /\.(ndjson|jsonl)$/.test(path);
+    jsonType = /^(application|text)\/(x-)?json$/.test(type) || /\+json$/.test(type) || (file && /\.json$/.test(path));
+    plainType = type === 'text/plain';
+    if (!ndjson && !jsonType && !plainType) return;
+  }
+
   // ======================================================================
   // The data: read, laid out and written back. Nothing here needs a page,
   // so the tests run it in JavaScriptCore alone (JSONViewTests).
@@ -389,22 +404,14 @@
              swatch: swatch, prefix: prefix };
   })();
 
-  if (typeof document === 'undefined') { globalThis.__yabJSONCore = Core; return; }
-  if (window.top !== window || window.__yabJSON) return;
+  if (!isPage) { globalThis.__yabJSONCore = Core; return; }
 
   // ======================================================================
-  // Whether this document is JSON at all. Most pages leave here.
+  // Whether this document is JSON at all. Most pages already left above.
   // ======================================================================
   var PREF = '__YAB_MODE__';
   var KEEPS = __YAB_KEEPS__;
   var BIG = 25e6;
-  var type = String(document.contentType || '').toLowerCase();
-  var path = location.pathname.toLowerCase();
-  var file = location.protocol === 'file:';
-  var ndjson = /^application\/(x-ndjson|jsonl|x-jsonlines|jsonlines)$/.test(type) || /\.(ndjson|jsonl)$/.test(path);
-  var jsonType = /^(application|text)\/(x-)?json$/.test(type) || /\+json$/.test(type) || (file && /\.json$/.test(path));
-  var plainType = type === 'text/plain';
-  if (!ndjson && !jsonType && !plainType) return;
   var body = document.body;
   if (!body) return;
   // Chromium puts its own pretty-print control beside the <pre>, in a

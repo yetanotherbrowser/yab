@@ -51,16 +51,57 @@ enum BenchCaller {
 
     /// Answers already given, by audit token: every tool call is a connection
     /// of its own, and one `yab mcp` makes hundreds.
-    @MainActor private static var known: [Data: Bool] = [:]
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var known: [Data: Bool] = [:]
+    private static let queue = DispatchQueue(label: "bench.caller", qos: .userInitiated)
 
-    /// Whether the caller on `fd` is Yab's own code.
-    @MainActor static func yab(_ fd: Int32) -> Bool {
-        guard let requirement = own, let token = token(fd) else { return false }
-        if let said = known[token] { return said }
-        let said = satisfies(token, requirement)
+    private nonisolated static func cached(_ token: Data) -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return known[token]
+    }
+
+    private nonisolated static func remember(_ token: Data, _ said: Bool) {
+        lock.lock()
         if known.count > 512 { known = [:] }
         known[token] = said
+        lock.unlock()
+    }
+
+    /// Whether the caller on `fd` is Yab's own code.
+    nonisolated static func yab(_ fd: Int32) -> Bool {
+        guard let requirement = own, let token = token(fd) else { return false }
+        if let said = cached(token) { return said }
+        let said = satisfies(token, requirement)
+        remember(token, said)
         return said
+    }
+
+    /// Checks whether the caller on `fd` is Yab's own code without blocking
+    /// the main thread on Security.framework code-signing validation.
+    @MainActor
+    static func check(_ fd: Int32, done: @escaping @MainActor (Bool) -> Void) {
+        guard let token = token(fd) else {
+            done(false)
+            return
+        }
+        if let said = cached(token) {
+            done(said)
+            return
+        }
+        queue.async {
+            let said: Bool
+            if let cached = cached(token) {
+                said = cached
+            } else if let requirement = own {
+                let verified = satisfies(token, requirement)
+                remember(token, verified)
+                said = verified
+            } else {
+                said = false
+            }
+            DispatchQueue.main.async { done(said) }
+        }
     }
 
     /// What a caller that isn't Yab is told.

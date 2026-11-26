@@ -636,6 +636,13 @@ final class ChromiumDRMCookies: NSObject, WKHTTPCookieStoreObserver {
             } else { webKit.formUnion(hosts) }
         }
         if frames.keys.contains(where: { !open.contains($0) }) { frames = frames.filter { open.contains($0.key) } }
+        let kept = chromium.union(webKit).union(visited).union(framed).union(dirty)
+        if paths.count > Self.remembered * 2 { paths = paths.filter { kept.contains($0.key) } }
+        if settled.count > 512 { settled = settled.filter { kept.contains($0.key) } }
+        if settledBy.count > 512 { settledBy = settledBy.filter { kept.contains($0.key) } }
+        for engine in Array(usedSince.keys) where (usedSince[engine]?.count ?? 0) > 512 {
+            usedSince[engine]?.formIntersection(kept)
+        }
         return (chromium, webKit, pages)
     }
 

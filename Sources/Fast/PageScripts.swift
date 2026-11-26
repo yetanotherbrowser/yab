@@ -45,10 +45,10 @@ enum PageScripts {
 
     /// Every script the tab's next document gets, in the order they run.
     /// Boosts come after, from Boosts.attach.
-    static func list(for tab: Tab, _ arming: Arming) -> [WKUserScript] {
+    static func list(for tab: Tab, _ arming: Arming, chosenFonts: PageFonts? = nil) -> [WKUserScript] {
         // Fonts of one's own only when there are some: no script in every
         // frame for nothing (#1889).
-        let chosenFonts = PageFonts.read()
+        let chosenFonts = chosenFonts ?? PageFonts.read()
         var list = (chosenFonts.css.isEmpty ? [] : [fonts(chosenFonts)]) + [
             // A page's own Document Picture-in-Picture (DocumentPiP.swift).
             pip,
@@ -371,15 +371,19 @@ extension PageScripts {
         return text
     }
 
+    private static let chromiumTips = PageScriptRegistration(source: PageScript.load("chromium-tips"), world: .yab, atEnd: false, mainOnly: false)
+
     static func chromium(for tab: Tab, _ arming: Arming, hiddenCSS: [String: String]? = nil) -> [PageScriptRegistration] {
-        let list = list(for: tab, arming)
+        let chosenFonts = PageFonts.read()
+        let list = list(for: tab, arming, chosenFonts: chosenFonts)
         // call: Meet's, Zoom's and Slack's own switches, read from the DOM.
         // linkCards and the peek origin: scripts the hover card and the peek
         // ask through PageHandle.run, with no message handler of their own.
-        var selected = [TopDragRelay.script, fonts(PageFonts.read()), navigationHold, scroll, drawn, picker, peekOrigin(force: tab.forcePeeks?() ?? false), linkCards,
+        var selected = [TopDragRelay.script, navigationHold, scroll, drawn, picker, peekOrigin(force: tab.forcePeeks?() ?? false), linkCards,
                         icons, forms, formFrames, call, wallet, walletSoon, agentFrames,
                         swipe, images, sent, watched, badge, badgeBridge, windowBridge, share, shareBridge, pushBridge, withoutPasskeys, passkeyBridge, isolate, dev, devBridge, eyeDropper, eyeDropperBridge,
                         json(JSONShow.current, keeps: !tab.shy)]
+        if !chosenFonts.css.isEmpty { selected.append(fonts(chosenFonts)) }
         if let site = ChatBusy.site(arming.host) { selected.append(busy(site)) }
         if tab.skipsAds { selected.append(YouTube.user) }
         if let items = memo["items"] { selected += items.values }
@@ -391,8 +395,9 @@ extension PageScripts {
         let ids = Set(selected.map(ObjectIdentifier.init))
         // Yab's own site is told it is open in Yab (Dress), a mark in the DOM, made afresh each time.
         let dressed = Dress.ours(arming.host) ? Dress.script(Links.browser).source : nil
-        let tips = PageScriptRegistration(source: PageScript.load("chromium-tips"), world: .yab, atEnd: false, mainOnly: false)
-        let chosen: [PageScriptRegistration] = list.filter { ids.contains(ObjectIdentifier($0)) || $0.source == dressed || $0 === tab.engineSwitchDocument?.script }.map {
+        let chosen: [PageScriptRegistration] = list.filter {
+            ids.contains(ObjectIdentifier($0)) || (dressed != nil && $0.source == dressed) || $0 === tab.engineSwitchDocument?.script
+        }.map {
             let world: PageWorld = $0 === agentFrames ? .agent
                 : $0 === tab.engineSwitchDocument?.script ? .client
                 : ($0 === badge || $0 === navigationHold || $0 === DarkPages.proxy || $0 === share || $0 === YouTube.user
@@ -409,7 +414,7 @@ extension PageScripts {
         let hidden = hiddenCSS ?? Curtain.shared.styles
         let veils = left.contains("all") || hidden.isEmpty ? [] : [PageScriptRegistration(
             source: Veiling.styles(hidden), world: .yab, atEnd: false, mainOnly: true)]
-        return (omits("chromium-tips") ? [] : [tips]) + chosen
+        return (omits("chromium-tips") ? [] : [chromiumTips]) + chosen
             + veils
             + (omits("window") ? [] : [windows])
             + (tab.shy || omits("chromium-push") ? [] : [PageScriptRegistration(source: PushRelay.chromiumPage, world: .page, atEnd: false, mainOnly: false)])

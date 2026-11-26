@@ -42,6 +42,13 @@ enum Hangs {
         note("phase \(name)")
     }
 
+    /// Resets the phase to idle only when nothing else replaced it since.
+    static func clear(if expected: String) {
+        lock.lock()
+        if current == expected { current = "idle" }
+        lock.unlock()
+    }
+
     /// The phase named last.
     static var now: String {
         lock.lock(); defer { lock.unlock() }

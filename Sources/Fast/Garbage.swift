@@ -42,6 +42,7 @@ enum Garbage {
 
     private static var timer: Timer?
     private static var last = Date()
+    private static var lastCachePurge = Date()
     /// Main-frame navigations armed when it last collected (PageScripts).
     private static var navigated = 0
     /// How many times it has collected, for the bench.
@@ -84,11 +85,22 @@ enum Garbage {
         collect()
     }
 
-    /// Every page process collects its garbage now.
+    /// Every page process collects its garbage now, and periodically trims
+    /// WebKit's in-memory resource cache while idle (cookies and disk cache
+    /// stay untouched).
     static func collect() {
-        guard Web.pool.responds(to: selector) else { return }
-        last = Date()
-        count += 1
-        Web.pool.perform(selector)
+        let now = Date()
+        if Web.pool.responds(to: selector) {
+            last = now
+            count += 1
+            Web.pool.perform(selector)
+        }
+        guard now.timeIntervalSince(lastCachePurge) >= 30 * 60 else { return }
+        lastCachePurge = now
+        var stores: [WKWebsiteDataStore] = [Store.websites]
+        for store in Spaces.madeStores.values where !stores.contains(where: { $0 === store }) { stores.append(store) }
+        for store in stores {
+            store.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache], modifiedSince: .distantPast) {}
+        }
     }
 }

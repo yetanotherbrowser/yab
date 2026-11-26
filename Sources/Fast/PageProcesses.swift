@@ -29,6 +29,27 @@ enum PageProcesses {
         let footprint: UInt64?
     }
 
+    /// Lightweight page process pids only: skips per-process footprint syscalls
+    /// and webViews KVC on the main thread (MemoryCeiling).
+    static func pids() -> [Int32]? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let remote = ChromiumProcess.shared.livePages.compactMap(\.contentProcess).filter { $0 > 0 }
+        let selector = NSSelectorFromString("_webContentProcessInfo")
+        guard WKProcessPool.responds(to: selector) else { return remote.isEmpty ? nil : Array(Set(remote)) }
+        return autoreleasepool {
+            guard let list = WKProcessPool.perform(selector)?.takeUnretainedValue() as? [NSObject] else {
+                return remote.isEmpty ? nil : Array(Set(remote))
+            }
+            let pid = NSSelectorFromString("pid")
+            let webKit = list.compactMap { info -> Int32? in
+                guard info.responds(to: pid), let number = (info.value(forKey: "pid") as? NSNumber)?.int32Value, number > 0
+                else { return nil }
+                return number
+            }
+            return Array(Set(webKit + remote))
+        }
+    }
+
     /// WebKit's list of every page process it runs (the private class
     /// method `+[WKProcessPool _webContentProcessInfo]`). Main thread
     /// only: WebKit frees what it is read from on the main thread, and

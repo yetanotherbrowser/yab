@@ -58,7 +58,7 @@ final class Favicons {
     /// session: a Sheet's on docs.google.com, a pull request's state on
     /// github.com, Calendar's new day. Worn by that page's tab only, never
     /// kept, never put on the site's other tabs.
-    private var own: [String: NSImage] = [:]
+    private var own = Held(limit: 300)
     private var ownFailed: Set<String> = []
     /// The icon each tab wears that its page named for itself (`wearOwn`),
     /// one per tab: an icon arriving for the site
@@ -662,8 +662,13 @@ final class Favicons {
             let image = await Favicons.first(of: candidates, page: web, refresh: refresh)
             guard let self else { return }
             if !shy {
-                if own.count > 300 { own = [:] }
-                if let image { own[address] = image; ownFailed.remove(address) } else { ownFailed.insert(address) }
+                if let image {
+                    own[address] = image
+                    ownFailed.remove(address)
+                } else {
+                    if ownFailed.count >= 1_000 { ownFailed.removeAll(keepingCapacity: true) }
+                    ownFailed.insert(address)
+                }
             }
             // Still on that page, and nothing newer asked for since.
             guard let tab, latest(ticket, of: tab), let now = tab.address,
