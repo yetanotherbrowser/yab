@@ -188,12 +188,15 @@ enum Watchdog {
     /// Also used by the opt-in test watchdog. Each caller owns its storage;
     /// allocate it before suspending a thread that may hold allocator locks.
     static func captureMainStack(port: thread_act_t) -> String {
-        #if arch(arm64)
+        #if arch(arm64) || arch(x86_64)
         guard port != 0, port != pthread_mach_thread_np(pthread_self()) else { return "" }
         let frames = UnsafeMutablePointer<UInt>.allocate(capacity: 64)
         defer { frames.deallocate() }
         var count = 0
         guard thread_suspend(port) == KERN_SUCCESS else { return "" }
+        let strip: UInt = 0x0000_7FFF_FFFF_FFFF
+        var fp: UInt = 0
+        #if arch(arm64)
         var registers = arm_thread_state64_t()
         var size = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
         let got = withUnsafeMutablePointer(to: &registers) {
@@ -202,11 +205,29 @@ enum Watchdog {
             }
         }
         if got == KERN_SUCCESS {
-            let strip: UInt = 0x0000_7FFF_FFFF_FFFF
             frames[0] = UInt(registers.__pc) & strip
             frames[1] = UInt(registers.__lr) & strip
             count = 2
-            var fp = UInt(registers.__fp)
+            fp = UInt(registers.__fp)
+        }
+        #else
+        // An Intel Mac: no link register, so after the instruction pointer
+        // every caller comes from the frame records, laid out as on arm64
+        // (the caller's frame pointer, then the address to return to).
+        var registers = x86_thread_state64_t()
+        var size = mach_msg_type_number_t(MemoryLayout<x86_thread_state64_t>.size / MemoryLayout<natural_t>.size)
+        let got = withUnsafeMutablePointer(to: &registers) {
+            $0.withMemoryRebound(to: natural_t.self, capacity: Int(size)) {
+                thread_get_state(port, thread_state_flavor_t(x86_THREAD_STATE64), $0, &size)
+            }
+        }
+        if got == KERN_SUCCESS {
+            frames[0] = UInt(registers.__rip) & strip
+            count = 1
+            fp = UInt(registers.__rbp)
+        }
+        #endif
+        if got == KERN_SUCCESS {
             var pair: (UInt, UInt) = (0, 0)
             while count < 64, fp != 0, fp & 7 == 0 {
                 var read: mach_vm_size_t = 0
