@@ -115,6 +115,15 @@ final class GeminiAccount: ObservableObject {
     /// Here and signed in: its models can be picked and its chats run.
     var ready: Bool { enabled && signedIn == true && (binary ?? Shell.cached?.gemini) != nil }
 
+    /// Ready, or connected and not yet found signed out on this launch:
+    /// keeps Auto and `Agents.preferred` on Gemini across restarts instead
+    /// of falling back to Claude before `look()` has checked the CLI.
+    var available: Bool {
+        if ready { return true }
+        guard enabled, signedIn == nil, AgentSetup.connected("gemini") else { return false }
+        return binary != nil || (AgentLaunch.here("gemini") ?? true)
+    }
+
     private convenience init() { self.init(binary: Shell.cached?.gemini) }
 
     init(binary: String?) {

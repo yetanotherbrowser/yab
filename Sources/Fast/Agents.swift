@@ -1238,7 +1238,7 @@ final class Agents: ObservableObject {
         // a connected Claude or Codex on the login shell's PATH.
         let known = Shell.cachedTerminal ?? (AgentLaunch.needsTerminal(.shared) ? nil : Shell.cached)
         return preferred(connected: AgentSetupModel.clis.filter { cli in
-            AgentPlan.of(cli)?.tools == true && (cli == "gemini" ? GeminiAccount.shared.ready : AgentSetup.connected(cli))
+            AgentPlan.of(cli)?.tools == true && (cli == "gemini" ? GeminiAccount.shared.available : AgentSetup.connected(cli))
         }, found: known, codexFirst: codexFirst)
     }
 

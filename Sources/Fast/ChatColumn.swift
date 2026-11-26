@@ -2180,6 +2180,9 @@ struct ChatModelLine: View {
     let browser: Browser
     let chat: Chat?
     @ObservedObject private var defaults = ModelDefaults.shared
+    @ObservedObject private var gemini = GeminiAccount.shared
+    @ObservedObject private var setup = AgentSetupModel.shared
+    @ObservedObject private var accounts = PlanAccounts.shared
 
     private var cli: String { chat?.cli ?? browser.chatAgent }
     private var model: String? { chat.map { Agents.shared.session($0.id)?.model ?? $0.model } ?? browser.chatChoice.model }

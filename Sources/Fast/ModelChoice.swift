@@ -112,9 +112,10 @@ enum AgentModels {
     /// Whether this Mac has the agent; not looked for yet counts as yes.
     static func here(_ cli: String) -> Bool {
         guard let plan = AgentPlan.of(cli) else { return true }
-        // Gemini is here once signed in (GeminiAccount); Cursor once
-        // connected: their models are their account's.
-        if cli == "gemini" { return GeminiAccount.shared.ready }
+        // Gemini is here once signed in (or connected before this launch has
+        // checked the CLI); Cursor once connected: their models are their
+        // account's.
+        if cli == "gemini" { return GeminiAccount.shared.available }
         // Before the login shell has been asked (just after launch), a
         // connected Cursor counts as here, as the others do: else the first
         // task after a restart fell to Claude (evals/agent-providers).
@@ -303,7 +304,7 @@ final class ModelDefaults: ObservableObject {
     func automatic(_ work: Work) -> String {
         if work == .tasks { return tasksRoute.cli }
         if work == .chats || work == .commands,
-           GeminiAccount.shared.ready,
+           GeminiAccount.shared.available,
            !AgentPlan.all.contains(where: { $0.cli != "gemini" && AgentSetupModel.shared.connected($0.cli) }) {
             return "gemini"
         }
@@ -861,6 +862,8 @@ private struct ModelRow: View {
 struct DefaultModels: View {
     @ObservedObject private var defaults = ModelDefaults.shared
     @ObservedObject private var keys = APIKeys.shared
+    @ObservedObject private var gemini = GeminiAccount.shared
+    @ObservedObject private var setup = AgentSetupModel.shared
     @State private var reader = FieldReader.chosen
 
     /// Who reads now: Jev chosen without a key on is this Mac's model.

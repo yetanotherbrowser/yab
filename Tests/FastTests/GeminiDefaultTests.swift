@@ -80,4 +80,53 @@ struct GeminiDefaultTests {
         #expect(GeminiSupport.toolsProven && GeminiSupport.toolsOffProven)
     }
 
+    @Test @MainActor func coldLaunchWithOnlyGeminiConnectedStaysOnGemini() {
+        let defaults = ModelDefaults.shared, consent = ProviderConsent.shared, account = GeminiAccount.shared
+        let oldShell = Shell.cached
+        let oldAccount = (account.binary, account.signedIn, account.enabled, account.models.map(\.model).joined(separator: "\n"))
+        let oldChoices = ModelDefaults.Work.allCases.map { defaults[$0] }
+        let modelKeys = ModelDefaults.Work.allCases.flatMap { work in
+            ["cli", "model", "effort", "source"].map { "models.\(work.rawValue).\($0)" }
+        } + ["models.chats.configured"]
+        let savedModels = modelKeys.map { Store.settings.object(forKey: $0) }
+        let consentKeys = ["agents.explicit-connections.v1", "agents.revoked-connections.v1", "agents.consent-migrated.v1"]
+            + AgentPlan.clis.map { "agents.connection-generation." + $0 }
+        let savedConsent = consentKeys.map { Store.settings.object(forKey: $0) }
+        defer {
+            for cli in AgentPlan.clis { consent.revoke(cli) }
+            for (key, value) in zip(consentKeys, savedConsent) { Store.settings.set(value, forKey: key) }
+            Shell.cached = oldShell
+            account.enabled = oldAccount.2
+            account.pretend(binary: oldAccount.0, signedIn: oldAccount.1, models: oldAccount.3)
+            for (work, choice) in zip(ModelDefaults.Work.allCases, oldChoices) { defaults[work] = choice }
+            for (key, value) in zip(modelKeys, savedModels) { Store.settings.set(value, forKey: key) }
+        }
+        for cli in AgentPlan.clis { consent.revoke(cli) }
+        consent.grant("gemini")
+        Shell.cached = nil
+        account.enabled = true
+        account.pretend(binary: nil, signedIn: nil, models: "")
+        for work in ModelDefaults.Work.allCases { defaults[work] = ModelChoice() }
+
+        #expect(account.available)
+        #expect(AgentModels.here("gemini"))
+        #expect(Agents.preferred == "gemini")
+        #expect(defaults.automatic(.chats) == "gemini")
+        #expect(defaults.pick(.chats).cli == "gemini")
+        #expect(defaults.pick(.tasks).cli == "gemini")
+
+        // A file-only shell scan that missed agy in a custom login PATH must not fall back to Claude.
+        Shell.cached = Shell.Found(claude: "/fixture/claude", gemini: nil, env: [:])
+        #expect(account.available)
+        #expect(AgentModels.here("gemini"))
+        #expect(Agents.preferred == "gemini")
+        #expect(defaults.automatic(.chats) == "gemini")
+
+        // Once a check verifies Gemini is signed out, Auto stops picking it.
+        account.pretend(binary: "/fixture/agy", signedIn: false, models: "")
+        #expect(!account.available)
+        #expect(!AgentModels.here("gemini"))
+        #expect(defaults.automatic(.chats) != "gemini")
+    }
+
 }
