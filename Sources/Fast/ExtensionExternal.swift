@@ -160,7 +160,7 @@ final class ExtensionExternal {
     /// The address a frame is judged by: its own, or for a frame whose
     /// document came from elsewhere (about:blank, srcdoc) its origin's.
     /// WebKit's word, never the page's.
-    nonisolated static func address(of frame: WKFrameInfo) -> URL? {
+    static func address(of frame: WKFrameInfo) -> URL? {
         let origin = frame.securityOrigin
         guard !origin.protocol.isEmpty, !origin.host.isEmpty else { return nil }
         let root = origin.protocol + "://" + origin.host + (origin.port != 0 ? ":\(origin.port)" : "")
@@ -171,7 +171,7 @@ final class ExtensionExternal {
         return URL(string: root + "/")
     }
 
-    nonisolated static func allows(_ matches: [String], _ url: URL) -> Bool {
+    static func allows(_ matches: [String], _ url: URL) -> Bool {
         matches.contains { pattern in
             (try? WKWebExtension.MatchPattern(string: pattern))?.matches(url) ?? false
         }
