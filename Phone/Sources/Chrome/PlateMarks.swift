@@ -58,10 +58,11 @@ struct ReloadMark: View {
 
     var body: some View {
         ZStack {
-            Glyph(.plateReload, size: size, color: color)
+            // The Mac's marks, as the iPad's and the Mac's own Reload and Stop.
+            Glyph(mac: .yabReload, size: size, color: color)
                 .scaleEffect(showingStop ? Self.shrunk : 1)
                 .opacity(showingStop ? 0 : 1)
-            Glyph(.crossMedium, size: stopSize, color: color)
+            Glyph(mac: .yabStop, size: stopSize, color: color)
                 .scaleEffect(showingStop ? 1 : Self.shrunk)
                 .opacity(showingStop ? 1 : 0)
         }

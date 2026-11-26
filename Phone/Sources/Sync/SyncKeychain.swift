@@ -91,7 +91,7 @@ public nonisolated struct SyncKeychain: Sendable {
     public enum Failure: Error, LocalizedError, Sendable {
         case deviceIdentity
         public var errorDescription: String? {
-            "This iPhone could not save its Sync identity. Unlock it and try again."
+            "This \(DeviceWord.name) could not save its Sync identity. Unlock it and try again."
         }
     }
 

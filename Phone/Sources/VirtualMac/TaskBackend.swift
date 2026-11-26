@@ -109,7 +109,7 @@ struct CodeRequest: Codable, Hashable, Sendable {
     var length: Int = 6
 
     /// "TAP sent a code to this iPhone".
-    var title: String { "\(sender) sent a code to this iPhone" }
+    var title: String { "\(sender) sent a code to this \(DeviceWord.name)" }
     /// "Your Mac is signing in to flytap.com for Lisbon flights".
     func line(task: String?) -> String {
         task.map { "Your Mac is signing in to \(site) for \($0)" } ?? "Your Mac is signing in to \(site)"

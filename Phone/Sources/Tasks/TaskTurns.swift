@@ -41,7 +41,7 @@ struct TaskTurns: View {
             }
             switch run.status {
             case .code:
-                WaitRow(glyph: .key1, text: "Waiting for the code \(codeSender ?? "the site") sent to this iPhone")
+                WaitRow(glyph: .key1, text: "Waiting for the code \(codeSender ?? "the site") sent to this \(DeviceWord.name)")
             case .yes:
                 WaitRow(glyph: .creditCard1, text: waiting ?? "Waiting for you: \(def.yes ?? "a yes")")
             case .failed:

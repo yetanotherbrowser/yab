@@ -26,9 +26,9 @@ struct SettingsDevice: Equatable, Sendable, Identifiable {
             let here = device.id == own
             let mac = macs.first { $0.id == device.id }
             let said = mac.flatMap { $0.state.isUp ? nil : MacWords.state($0.state, now: now) }
-            return SettingsDevice(id: device.id, name: device.name.isEmpty ? (device.isPhone ? "iPhone" : "Mac") : device.name,
+            return SettingsDevice(id: device.id, name: device.name.isEmpty ? (device.isPhone ? (device.model.hasPrefix("iPad") ? "iPad" : "iPhone") : "Mac") : device.name,
                                   isPhone: device.isPhone, isThis: here,
-                                  words: here ? "This iPhone" : said ?? words(lastSeen: device.lastSeen, now: now))
+                                  words: here ? "This \(DeviceWord.name)" : said ?? words(lastSeen: device.lastSeen, now: now))
         }.sorted { ($0.isThis ? 0 : 1) < ($1.isThis ? 0 : 1) }
     }
 
@@ -50,13 +50,13 @@ struct SyncOffConfirmation: ViewModifier {
 
     func body(content: Content) -> some View {
         if asks {
-            content.confirmationDialog("Turn Off Sync on This iPhone?", isPresented: Binding(
+            content.confirmationDialog("Turn Off Sync on This \(DeviceWord.name)?", isPresented: Binding(
                 get: { SettingsUI.shared.confirmSyncOff },
                 set: { SettingsUI.shared.confirmSyncOff = $0 }), titleVisibility: .visible) {
                 Button("Turn Off Sync", role: .destructive) { app.sync.turnOff() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This iPhone forgets the sync key and leaves your account. Its tabs and chats stay here; joining again takes a code from your Mac or the Recovery Key.")
+                Text("This \(DeviceWord.name) forgets the sync key and leaves your account. Its tabs and chats stay here; joining again takes a code from your Mac or the Recovery Key.")
             }
         } else {
             content

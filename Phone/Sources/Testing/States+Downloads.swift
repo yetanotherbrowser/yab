@@ -39,11 +39,11 @@ extension StateCatalog {
         },
         NamedState("downloads.now.open", "Now: done", "report-2026.pdf, Open: for about two seconds.") { app in
             let first = seed(app, running: false)
-            app.downloads.pretend(app.downloads.entries, flash: first)
+            app.downloads.pretend(app.downloads.entries, arrived: first)
         },
         NamedState("downloads.now.failed", "Now: failed", "report-2026.pdf, Failed; the row has Retry.") { app in
             let first = seed(app, running: false, failed: true)
-            app.downloads.pretend(app.downloads.entries, flash: first)
+            app.downloads.pretend(app.downloads.entries, arrived: first)
         },
         NamedState("downloads.ask", "First file from a site", "A glass card over the plate: the file, “host · 2.9 MB”, Cancel and Download; the page live.") { app in
             app.downloads.pretend(ask: DownloadAsk(id: UUID(), name: "report-2026.pdf", host: host(app), size: 2_900_000, isPrivate: false))

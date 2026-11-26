@@ -57,7 +57,7 @@ final class ChatsTests: XCTestCase {
         let head = element(app, "chat.answerHead")
         XCTAssertTrue(head.waitForExistence(timeout: 15), "no answer")
         XCTAssertTrue(head.staticTexts["Apple Intelligence"].exists)
-        XCTAssertTrue(element(app, "chat.where").label.contains("on this iPhone"))
+        XCTAssertTrue(element(app, "chat.where").label.contains("on this \(Atlas.deviceWord)"))
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Anna wants")).firstMatch.exists)
         // The answer stands 8 from the screen's edges, at its own height.
         let sheet = element(app, "chat.sheet")
@@ -100,7 +100,7 @@ final class ChatsTests: XCTestCase {
         let sheet = element(app, "chat.sheet")
         XCTAssertTrue(waitFor(abs(sheet.frame.minY) < 2 && abs(sheet.frame.minX) < 1), "chat at \(sheet.frame)")
         // Who answers is said with the name (and in Chat Info), not under it.
-        XCTAssertEqual(title.value as? String, "Apple Intelligence \u{00B7} on this iPhone")
+        XCTAssertEqual(title.value as? String, "Apple Intelligence \u{00B7} on this \(Atlas.deviceWord)")
         XCTAssertFalse(element(app, "chat.line").exists)
 
         // The text field itself: its window-frame probe shares the identifier.

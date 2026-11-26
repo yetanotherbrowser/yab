@@ -109,7 +109,7 @@ private struct AnswerHead: View {
                 .foregroundStyle(Ink.primary)
                 .lineLimit(1)
                 .fixedSize()
-            Text(chat.by == .iphone ? "on this iPhone" : "on your Mac")
+            Text(chat.by == .iphone ? "on this \(DeviceWord.name)" : "on your Mac")
                 .font(.system(size: Metrics.Chat.wherePill, weight: .medium))
                 .foregroundStyle(ChatInk.gray(0.62))
                 .padding(.vertical, 5)
@@ -778,12 +778,12 @@ enum ChatWords {
         if chat.messages.contains(where: { $0.role == .typing && $0.by != .iphone }) { return "Thinking" }
         if let wait = chat.messages.last(where: { $0.role == .wait }) { return MacWords.waitsFor(wait.mac?.name ?? "your Mac") }
         if !app.isFixture {
-            if chat.by == .iphone { return "Apple Intelligence \u{00B7} on this iPhone" }
+            if chat.by == .iphone { return "Apple Intelligence \u{00B7} on this \(DeviceWord.name)" }
             return chat.macAgentName.map { "\($0) \u{00B7} on your Mac" } ?? "On your Mac"
         }
         if fresh { return "Claude Opus \u{00B7} on your Mac" }
         let claude = chat.messages.contains { $0.by == .claude || $0.role == .pick }
-        return claude ? "Claude Opus \u{00B7} on your Mac" : "Apple Intelligence \u{00B7} on this iPhone"
+        return claude ? "Claude Opus \u{00B7} on your Mac" : "Apple Intelligence \u{00B7} on this \(DeviceWord.name)"
     }
 
     /// The row's second line, and whether it needs you.

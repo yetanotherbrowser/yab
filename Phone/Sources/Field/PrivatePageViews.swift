@@ -53,7 +53,7 @@ struct PrivateEmptyPage: View {
                 .font(.system(size: M.title, weight: .semibold))
                 .foregroundStyle(Color.white)
                 .padding(.top, M.titleGap)
-            Text("What you open here stays on this iPhone,\nwith no history or sync.")
+            Text("What you open here stays on this \(DeviceWord.name),\nwith no history or sync.")
                 .font(.system(size: M.note))
                 .foregroundStyle(Color.white.opacity(M.noteInk))
                 .multilineTextAlignment(.center)

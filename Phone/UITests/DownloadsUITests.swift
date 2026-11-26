@@ -39,6 +39,25 @@ final class DownloadsUITests: XCTestCase {
 
     private func any(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
 
+    /// An iPad keeps downloads in its own button, in the sidebar's foot,
+    /// where the phone has its Now line and the plate's Downloads page.
+    private var sidebarDownloads: XCUIElement { app.buttons["tablet.downloads.sidebar"] }
+    private var tablet: Bool { sidebarDownloads.exists }
+
+    /// A popover goes with a tap on the dimmed ground beside it.
+    private func closePopover() {
+        let ground = app.otherElements["PopoverDismissRegion"]
+        if ground.exists { ground.tap() }
+        popoverGone()
+    }
+
+    /// Until a popover's ground has gone too, a tap on the page is still
+    /// the popover's: the iPad's question goes as it is answered.
+    private func popoverGone() {
+        let ground = app.otherElements["PopoverDismissRegion"]
+        XCTAssertTrue(wait { !self.app.popovers.firstMatch.exists && !ground.exists }, "the popover stayed")
+    }
+
     private func record(_ name: String) {
         let png = XCTAttachment(screenshot: app.screenshot())
         png.name = name; png.lifetime = .keepAlways; add(png)
@@ -68,17 +87,24 @@ final class DownloadsUITests: XCTestCase {
         // Cancel asks again next time.
         app.buttons["download.ask.cancel"].tap()
         XCTAssertTrue(wait { !self.any("download.ask").exists })
+        popoverGone()
         app.webViews.firstMatch.links["Report"].tap()
         XCTAssertTrue(any("download.ask").waitForExistence(timeout: 20))
         app.buttons["download.ask.download"].tap()
-        // The line says Open, and leaves; the file stays.
-        XCTAssertTrue(wait { self.any("chrome.now").exists && self.any("chrome.now").label.contains("Open") }, "the line never said Open")
-        record("the line")
-        XCTAssertTrue(wait { !self.any("chrome.now").exists })
-
-        app.buttons["chrome.pageMenu"].tap()
-        XCTAssertTrue(app.buttons["plate.menu.downloads"].waitForExistence(timeout: 8))
-        app.buttons["plate.menu.downloads"].tap()
+        if tablet {
+            // The iPad has no Now line: its downloads button asked, and its list has the file.
+            XCTAssertTrue(wait { !self.any("download.ask").exists && self.sidebarDownloads.value as? String != "Asking" })
+            record("the button")
+            sidebarDownloads.tap()
+        } else {
+            // The line says Open, and leaves; the file stays.
+            XCTAssertTrue(wait { self.any("chrome.now").exists && self.any("chrome.now").label.contains("Open") }, "the line never said Open")
+            record("the line")
+            XCTAssertTrue(wait { !self.any("chrome.now").exists })
+            app.buttons["chrome.pageMenu"].tap()
+            XCTAssertTrue(app.buttons["plate.menu.downloads"].waitForExistence(timeout: 8))
+            app.buttons["plate.menu.downloads"].tap()
+        }
         XCTAssertTrue(any("downloads.row.report.pdf").waitForExistence(timeout: 8))
         record("the page")
         any("downloads.row.report.pdf").tap()
@@ -93,22 +119,46 @@ final class DownloadsUITests: XCTestCase {
             return false
         }, "QuickLook never closed")
 
-        app.buttons["site.back"].tap()
-        XCTAssertTrue(app.buttons["plate.menu.siteSettings"].waitForExistence(timeout: 8))
-        app.buttons["plate.menu.siteSettings"].tap()
-        XCTAssertTrue(any("site.permission.downloads").waitForExistence(timeout: 8), "remembered in Allowed Here")
-        XCTAssertTrue(app.buttons["site.downloaded"].exists)
-        app.buttons["site.downloaded"].tap()
-        XCTAssertTrue(any("downloads.row.report.pdf").waitForExistence(timeout: 8))
-        record("this site's files")
-        app.buttons["site.back"].tap()
-        XCTAssertTrue(any("site.permission.downloads").waitForExistence(timeout: 8))
-        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
-        XCTAssertTrue(wait { !self.any("plate.menu").exists })
+        if tablet {
+            // Site Controls, the iPad's Site Settings, in its own popover.
+            closePopover()
+            app.buttons["tablet.siteControls"].tap()
+            XCTAssertTrue(any("site.permission.downloads.decision").waitForExistence(timeout: 8), "remembered in Allowed Here")
+            app.buttons["site.downloads.here"].tap()
+            XCTAssertTrue(any("downloads.row.report.pdf").waitForExistence(timeout: 8))
+            record("this site's files")
+            app.buttons["site.downloads.back"].tap()
+            XCTAssertTrue(any("site.permission.downloads.decision").waitForExistence(timeout: 8))
+            closePopover()
+        } else {
+            app.buttons["site.back"].tap()
+            XCTAssertTrue(app.buttons["plate.menu.siteSettings"].waitForExistence(timeout: 8))
+            app.buttons["plate.menu.siteSettings"].tap()
+            XCTAssertTrue(any("site.permission.downloads").waitForExistence(timeout: 8), "remembered in Allowed Here")
+            XCTAssertTrue(app.buttons["site.downloaded"].exists)
+            app.buttons["site.downloaded"].tap()
+            XCTAssertTrue(any("downloads.row.report.pdf").waitForExistence(timeout: 8))
+            record("this site's files")
+            app.buttons["site.back"].tap()
+            XCTAssertTrue(any("site.permission.downloads").waitForExistence(timeout: 8))
+            app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+            XCTAssertTrue(wait { !self.any("plate.menu").exists })
+        }
 
         // An allowed site doesn't ask.
         app.webViews.firstMatch.links["Report"].tap()
-        XCTAssertTrue(wait { self.any("chrome.now").exists }, "no line")
+        if tablet {
+            // A tap as a popover finishes going can be UIKit's, not the
+            // page's: one more, as hold does for a lost press.
+            if !wait(5, { self.sidebarDownloads.value as? String == "2 files" }) { app.webViews.firstMatch.links["Report"].tap() }
+            // Its list stays shut until the file is in: a page covered by a
+            // popover sends no file (WebPool.canInteract).
+            XCTAssertTrue(wait { (self.sidebarDownloads.value as? String)?.hasSuffix("files") == true }, "the second file came without a question")
+            sidebarDownloads.tap()
+            XCTAssertTrue(any("downloads.row.report 2.pdf").waitForExistence(timeout: 8))
+        } else {
+            XCTAssertTrue(wait { self.any("chrome.now").exists }, "no line")
+        }
         XCTAssertFalse(any("download.ask").exists)
     }
 
@@ -117,7 +167,8 @@ final class DownloadsUITests: XCTestCase {
         let download = app.buttons["Download Linked File"]
         XCTAssertTrue(download.waitForExistence(timeout: 10), "no Download Linked File")
         record("link hold")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Download'")).count, 1, "one, ours")
+        // The iPad's own Downloads button is no row of the menu.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Download' AND NOT (identifier BEGINSWITH 'tablet.downloads')")).count, 1, "one, ours")
         download.tap()
         XCTAssertTrue(any("download.ask").waitForExistence(timeout: 20))
         app.buttons["download.ask.cancel"].tap()
@@ -149,13 +200,17 @@ final class DownloadsUITests: XCTestCase {
         XCTAssertTrue(wait { !self.any("chrome.toast").exists })
         hold(picture, until: app.buttons["Save to Photos"])
         app.buttons["Save to Photos"].tap()
+        // The question comes only while Yab may not add yet: once a run has
+        // answered it, the toast can come and go while a test waits on a question.
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for allow in ["Allow", "Allow Full Access", "OK"] where system.buttons[allow].waitForExistence(timeout: 3) {
+        let question = system.buttons.matching(NSPredicate(format: "label IN {'Allow', 'Allow Full Access', 'OK'}")).firstMatch
+        let toast = any("chrome.toast")
+        XCTAssertTrue(wait { toast.exists || question.exists }, "nothing after Save to Photos")
+        if !toast.exists, question.exists {
             record("photos question")
-            system.buttons[allow].tap()
-            break
+            question.tap()
         }
-        XCTAssertTrue(any("chrome.toast").waitForExistence(timeout: 15), "nothing said after Save to Photos")
+        XCTAssertTrue(toast.waitForExistence(timeout: 15), "nothing said after Save to Photos")
         record("saved")
         XCTAssertEqual(any("chrome.toast").label, "Saved to Photos")
     }

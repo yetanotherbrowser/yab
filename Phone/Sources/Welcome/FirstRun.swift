@@ -1766,7 +1766,7 @@ private struct PrivateField: View {
 /// means, in chips.
 private struct PrivateAround: View {
     private var run: FirstRun { .shared }
-    static let chips = [["Stays on this iPhone", "Gone when closed"], ["Hidden from the agent", "Never synced"]]
+    static let chips = [["Stays on this \(DeviceWord.name)", "Gone when closed"], ["Hidden from the agent", "Never synced"]]
 
     var body: some View {
         let night = run.incognito

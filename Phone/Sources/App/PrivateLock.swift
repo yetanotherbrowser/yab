@@ -193,7 +193,7 @@ final class PrivateLock {
             phase = .failed("Private is still locked.")
         case .unavailable:
             retireAttempt()
-            phase = .failed("Set a device passcode in iPhone Settings to unlock Private.")
+            phase = .failed("Set a device passcode in \(DeviceWord.name) Settings to unlock Private.")
         case .failed:
             retireAttempt()
             Haptics.play(.error, reason: Haptics.Reason.unlockFailed)

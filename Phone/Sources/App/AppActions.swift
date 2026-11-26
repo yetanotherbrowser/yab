@@ -61,7 +61,7 @@ extension AppModel {
             Motion.nowGone.run {
                 saved = self.tasks.markLiveSeen(snapshot)
                 if !saved {
-                    self.say("Couldn’t save read status on this iPhone", glyph: .macbook)
+                    self.say("Couldn’t save read status on this \(DeviceWord.name)", glyph: .macbook)
                 }
             }
             return saved

@@ -182,7 +182,7 @@ final class WordsTests: XCTestCase {
     func testSettingsComesFirst() {
         let rows = Words.rows(for: "sett", in: .newTab, tabs: tabs, sites: NewTabContent.miraSites)
         XCTAssertEqual(describe(rows), [
-            "Settings | Yab on this iPhone | go",
+            "Settings | Yab on this \(DeviceWord.name) | go",
             "sett | Search Google · new tab | search",
             "sett | Ask Claude | go",
         ])

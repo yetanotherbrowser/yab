@@ -143,7 +143,7 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertFalse(SettingsStore.wantsSettings(words), words)
         }
         XCTAssertEqual(SettingsFieldRow.title, "Settings")
-        XCTAssertEqual(SettingsFieldRow.subtitle, "Yab on this iPhone")
+        XCTAssertEqual(SettingsFieldRow.subtitle, "Yab on this \(DeviceWord.name)")
     }
 
     func testVersionIsTheBundles() {
@@ -172,10 +172,10 @@ final class SettingsContentTests: XCTestCase {
         XCTAssertEqual(rows, [
             "MacBook Pro | Online",
             "Agent | Claude · on your Mac",
-            "About a page | This iPhone",
+            "About a page | This \(DeviceWord.name)",
             "Everything else | Claude",
             "Default Browser | Yab",
-            "Today | This iPhone’s own",
+            "Today | This \(DeviceWord.name)’s own",
             "Face ID for Pay and Post | On",
             "Lock Screen Details | After Face ID",
             "Private Tabs | Not kept",
@@ -183,8 +183,8 @@ final class SettingsContentTests: XCTestCase {
             "Appearance | System",
             "About Yab | 0.0.1",
         ])
-        XCTAssertEqual(root[0].footer, "Tasks run in Yab on your Mac, with your sign-ins. The iPhone sends codes and the yes signed by Face ID.")
-        XCTAssertEqual(root[2].footer, "Spaces, pins and kept tabs are the same on your Mac; Today is this iPhone’s own. Mail stays in Yab on your Mac.")
+        XCTAssertEqual(root[0].footer, "Tasks run in Yab on your Mac, with your sign-ins. The \(DeviceWord.name) sends codes and the yes signed by Face ID.")
+        XCTAssertEqual(root[2].footer, "Spaces, pins and kept tabs are the same on your Mac; Today is this \(DeviceWord.name)’s own. Mail stays in Yab on your Mac.")
         XCTAssertNil(root[1].footer)
     }
 

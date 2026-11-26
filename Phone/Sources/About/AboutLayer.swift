@@ -17,7 +17,7 @@ final class AboutModel {
     /// Yab's community: the group chat on X the site's changelog links to (the Mac's Links.community).
     static let community = URL(string: "https://x.com/i/chat/group_join/g2108389056413618447/Tmr5OvF8Rx")!
     static let copyright = "© 2026 Serafim Korablev"
-    static let line = "Yes, another one. A small, quiet browser for your iPhone."
+    static let line = "Yes, another one. A small, quiet browser for your \(DeviceWord.name)."
     static var version: String { "Version \(SettingsStore.version()) (\(SettingsStore.build()))" }
 
     /// Shown at once, for named states and tests.

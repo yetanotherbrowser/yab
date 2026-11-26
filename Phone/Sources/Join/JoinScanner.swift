@@ -30,7 +30,7 @@ struct JoinScanArea: View {
             case .refused:
                 words("Yab can’t use the camera. Allow it in iOS Settings › Apps › Yab, or type the code below.")
             case .unsupported:
-                words("This iPhone’s camera can’t scan here. Type the code your Mac shows below.")
+                words("This \(DeviceWord.name)’s camera can’t scan here. Type the code your Mac shows below.")
             }
         }
         .task {

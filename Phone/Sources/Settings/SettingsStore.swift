@@ -415,7 +415,7 @@ final class SettingsStore {
 /// branch draws it, these are its words and glyph.
 enum SettingsFieldRow {
     static let title = "Settings"
-    static let subtitle = "Yab on this iPhone"
+    static let subtitle = "Yab on this \(DeviceWord.name)"
     static let glyph = GlyphName.settingsGear1
     static let key = "go"
 }

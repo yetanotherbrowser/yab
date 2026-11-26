@@ -255,7 +255,7 @@ final class CrashReports {
 @MainActor
 enum CrashQuestion {
     static let title = "Share saved crash reports?"
-    static let message = "iOS saved crash reports from an earlier Yab session. They include what crashed and why, the versions of Yab and iOS and the iPhone model, never pages or anything you typed. Sharing them helps fix problems. You can turn on automatic sending in Settings › About."
+    static let message = "iOS saved crash reports from an earlier Yab session. They include what crashed and why, the versions of Yab and iOS and the \(DeviceWord.name) model, never pages or anything you typed. Sharing them helps fix problems. You can turn on automatic sending in Settings › About."
     static let yes = "Send"
     static let no = "Don’t Send"
 

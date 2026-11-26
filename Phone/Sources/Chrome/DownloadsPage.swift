@@ -1,4 +1,3 @@
-import QuickLook
 import SwiftUI
 import UIKit
 
@@ -237,29 +236,5 @@ extension AnyTransition {
     static var downloadAsk: AnyTransition {
         .asymmetric(insertion: .opacity.combined(with: .offset(y: Metrics.Now.goneDrop)),
                     removal: .modifier(active: AskClosing(closed: 1), identity: AskClosing(closed: 0)))
-    }
-}
-
-/// A file in QuickLook, over everything.
-@MainActor
-final class FilePreview: NSObject, QLPreviewControllerDataSource {
-    private static var current: FilePreview?
-    private let url: URL
-
-    private init(url: URL) { self.url = url }
-
-    static func show(_ url: URL) {
-        guard let top = AppModel.topController() else { return }
-        let preview = FilePreview(url: url)
-        current = preview
-        let controller = QLPreviewController()
-        controller.dataSource = preview
-        top.present(controller, animated: !Motion.disabled)
-    }
-
-    nonisolated func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-
-    nonisolated func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
-        MainActor.assumeIsolated { url as NSURL }
     }
 }

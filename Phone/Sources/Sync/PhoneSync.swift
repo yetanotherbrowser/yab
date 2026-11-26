@@ -1087,7 +1087,7 @@ public nonisolated final class PhoneSync: @unchecked Sendable {
         public var errorDescription: String? {
             switch self {
             case .ownerUnavailable: "This chat's Mac isn't available in your Sync account. Wait for Sync or start a new chat."
-            case .accessRefused: "This iPhone no longer has access to this Sync account. Rejoin Sync before sending more."
+            case .accessRefused: "This \(DeviceWord.name) no longer has access to this Sync account. Rejoin Sync before sending more."
             }
         }
     }

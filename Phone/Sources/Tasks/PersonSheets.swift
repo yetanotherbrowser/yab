@@ -399,7 +399,7 @@ struct ConsentSheet: View {
             Group {
                 SheetHead(icon: request?.icon ?? "tap", title: request?.title ?? "Go on?", line: request?.subtitle ?? "")
                 facts(request?.facts ?? [])
-                NoteRow(glyph: .shieldCheck, text: "Asked on this iPhone: your Mac has been idle for \(idle) min. Face ID signs this exact \(request?.noun ?? "payment"); your Mac checks the signature, then presses the site’s own button. Claude can’t press it.")
+                NoteRow(glyph: .shieldCheck, text: "Asked on this \(DeviceWord.name): your Mac has been idle for \(idle) min. Face ID signs this exact \(request?.noun ?? "payment"); your Mac checks the signature, then presses the site’s own button. Claude can’t press it.")
                 Button {
                     Task { await app.taskDesk.approve(id) }
                 } label: {

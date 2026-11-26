@@ -31,8 +31,12 @@ final class Surfaces {
         if !keepingMenu { menu = nil }
         fieldOrigin = origin
         fieldWillOpen?(mode)
+        fieldOpenings &+= 1
         field = mode
     }
+    /// Counts the field's openings, so a choice made in one opening is
+    /// told apart from a later one (FieldActions.afterFieldCloses).
+    private(set) var fieldOpenings = 0
 
     func closeField() { field = nil }
 

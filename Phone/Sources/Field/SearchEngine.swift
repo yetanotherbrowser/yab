@@ -83,7 +83,7 @@ enum SearchEngine: String, CaseIterable, Identifiable, Sendable {
         var fallbackNote: String? {
             guard let requested else { return nil }
             if SearchEngine(rawValue: requested) == nil {
-                return "This search engine isn't supported on this iPhone. Searches use Google; choose an engine below."
+                return "This search engine isn't supported on this \(DeviceWord.name). Searches use Google; choose an engine below."
             }
             if requested == SearchEngine.custom.rawValue && !SearchEngine.accepts(customTemplate) {
                 return "Your Mac's custom search address isn't valid. Searches use Google; choose an engine below."

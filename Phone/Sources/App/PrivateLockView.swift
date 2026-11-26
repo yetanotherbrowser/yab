@@ -44,9 +44,9 @@ struct PrivateLockView: View {
 
     private var message: String {
         switch app.privateLock.phase {
-        case .authenticating: "Unlocking with your iPhone."
+        case .authenticating: "Unlocking with your \(DeviceWord.name)."
         case let .failed(message): message
-        default: "Unlock with Face ID, Touch ID or your device passcode. Your private tabs stay on this iPhone."
+        default: "Unlock with Face ID, Touch ID or your device passcode. Your private tabs stay on this \(DeviceWord.name)."
         }
     }
 }
