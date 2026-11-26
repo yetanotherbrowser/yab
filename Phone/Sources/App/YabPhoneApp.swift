@@ -314,6 +314,7 @@ final class RootController: UIViewController {
         privacyCover.isAccessibilityElement = true
         privacyCover.accessibilityLabel = "Private content hidden"
         privacyCover.accessibilityIdentifier = "private.curtain"
+        privacyCover.accessibilityViewIsModal = true
         view.addSubview(privacyCover)
         watchStatusBar()
     }
@@ -322,10 +323,16 @@ final class RootController: UIViewController {
 
     /// UIKit covers synchronously before the system captures this window.
     /// SwiftUI also removes private descendants, rather than just fading them.
+    /// The cover stands on the window: what UIKit presents over the page
+    /// (the share sheet, the print panel, the viewer) is above this view,
+    /// and a full-screen one (the viewer on iPhone) takes it out of the window.
     func setInactivePrivacyCover(_ hiddenContent: Bool) {
         if hiddenContent {
-            view.endEditing(true)
-            view.bringSubviewToFront(privacyCover)
+            let host: UIView = view.window ?? presentedViewController?.viewIfLoaded?.window ?? view
+            host.endEditing(true)
+            privacyCover.frame = host.bounds
+            if privacyCover.superview !== host { host.addSubview(privacyCover) }
+            host.bringSubviewToFront(privacyCover)
             view.accessibilityElementsHidden = true
             privacyCover.isHidden = false
         } else {

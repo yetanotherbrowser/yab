@@ -15,13 +15,16 @@ enum PageLinkMenu {
         case front
         /// After the tab it came from; the page stays in front.
         case background
+        /// Beside the page it came from, the two in a split (iPad).
+        case beside
     }
 
     static let newTab = "Open in New Tab"
     static let backgroundTab = "Open in Background Tab"
     static let download = "Download Linked File"
+    static let beside = "Open in Split View"
 
-    static func configuration(for url: URL, from source: WKWebView, canDownload: Bool, image: [UIMenuElement] = [],
+    static func configuration(for url: URL, from source: WKWebView, canDownload: Bool, image: [UIMenuElement] = [], beside: Bool = false,
                               open: @escaping @MainActor (Opening) -> Void,
                               download: @escaping @MainActor () -> Void) -> UIContextMenuConfiguration {
         // Formed here, both providers are the main actor's; UIKit asks there.
@@ -29,13 +32,13 @@ enum PageLinkMenu {
             guard let source else { return nil }
             return LinkPreviewController(url: url, configuration: source.configuration.copy() as! WKWebViewConfiguration)
         }, actionProvider: { suggested in
-            menu(suggested, canDownload: canDownload, image: image, open: open, download: download,
+            menu(suggested, canDownload: canDownload, image: image, beside: beside, open: open, download: download,
                  copy: { UIPasteboard.general.url = url })
         })
     }
 
     /// Ours first, as groups of their own, then the system's for the link.
-    static func menu(_ suggested: [UIMenuElement], canDownload: Bool = false, image: [UIMenuElement] = [],
+    static func menu(_ suggested: [UIMenuElement], canDownload: Bool = false, image: [UIMenuElement] = [], beside: Bool = false,
                      open: @escaping @MainActor (Opening) -> Void,
                      download: @escaping @MainActor () -> Void = {},
                      copy: @escaping @MainActor () -> Void = {}) -> UIMenu {
@@ -44,7 +47,13 @@ enum PageLinkMenu {
         let background = UIAction(title: backgroundTab,
                                   image: UIImage.menuGlyph(MacGlyph.yabTabDown)) { _ in open(.background) }
         background.accessibilityIdentifier = "link.backgroundTab"
-        var groups: [UIMenuElement] = [UIMenu(options: .displayInline, children: [front, background])]
+        var opens = [front, background]
+        if beside {
+            let split = UIAction(title: Self.beside, image: UIImage.menuGlyph(MacGlyph.yabSplitPlus)) { _ in open(.beside) }
+            split.accessibilityIdentifier = "link.beside"
+            opens.append(split)
+        }
+        var groups: [UIMenuElement] = [UIMenu(options: .displayInline, children: opens)]
         if canDownload {
             let file = UIAction(title: Self.download, image: UIImage.menuGlyph(MacGlyph.yabDownload)) { _ in download() }
             file.accessibilityIdentifier = "link.download"
@@ -103,8 +112,22 @@ extension AppModel {
             browser.openBehind(tab, after: source, in: space.id)
             Haptics.play(.soft, reason: Haptics.Reason.backgroundTab)
             say("Opened in Background", glyph: .squareBehindSquare1)
+        case .beside:
+            guard canOpenLinkBeside(source) else { return }
+            workspace.openBeside(current: source, other: tab.id)
+            browser.openBehind(tab, after: source, in: space.id)
+            browser.select(tab.id)
         }
         profile?.capture(browser)
+    }
+}
+
+extension AppModel {
+    /// The Mac's Open in Split View: a wide iPad, an ordinary page.
+    func canOpenLinkBeside(_ source: Tab.ID) -> Bool {
+        guard workspace.canSplit, let tab = browser.tab(source), !tab.isPrivate, !tab.isMail,
+              let space = browser.space(holding: source), !space.isPrivate else { return false }
+        return true
     }
 }
 

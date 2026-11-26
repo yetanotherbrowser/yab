@@ -1197,6 +1197,9 @@ private struct MacTabRow: View {
         Section {
             item("Open Here", .yabTabsPlus) { app.openFromMac(row.tab, in: space) }
             item("Copy Link", .link) { app.copyLink(of: tab) }
+            if !tab.isMail, tab.navigationURL != nil {
+                item("Duplicate Tab", .yabTabPlus) { app.duplicateFromMac(row.tab, in: space) }
+            }
             item("Share", .yabShare) { app.share(tab) }
         }
         Section {
@@ -1861,6 +1864,17 @@ extension AppModel {
             return
         }
         show(SyncMapping.tab(synced, id: PageFixtures.newID(), old: nil, fixturesEnabled: fixturesEnabled), newTab: true)
+    }
+
+    /// Duplicate Tab on one of the Mac's rows: always a new copy in that
+    /// row's space. The Mac's tab has no tab here to open it from (openHeldLink).
+    func duplicateFromMac(_ synced: SyncTab, in space: Space.ID) {
+        guard browser.space(space)?.isPrivate == false else { return }
+        field.forget()
+        closeFieldAfterChoice()
+        let copy = SyncMapping.tab(synced, id: PageFixtures.newID(), old: nil, fixturesEnabled: fixturesEnabled)
+        browser.open(copy, in: space, deduplicate: false)
+        profile?.capture(browser)
     }
 
     /// A chat's card on the Chats page zooms into the chat, a page in its

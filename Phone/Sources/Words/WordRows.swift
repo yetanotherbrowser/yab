@@ -20,6 +20,8 @@ struct WordRow: Equatable, Identifiable, Sendable {
         case findOnPage
         /// A page from History or a bookmark of the Mac's, opened as a site is.
         case place(url: String)
+        /// One of Yab's menu actions (BrowserKey's token).
+        case command(String)
     }
 
     /// What the row's icon is: a site's favicon, or one of the field's glyphs.
@@ -63,6 +65,7 @@ struct WordRow: Equatable, Identifiable, Sendable {
         case .settings: "settings"
         case .findOnPage: "find"
         case let .place(url): "place:" + url
+        case let .command(token): "command:" + token
         }
     }
 }

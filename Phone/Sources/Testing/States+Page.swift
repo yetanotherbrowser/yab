@@ -33,7 +33,7 @@ extension StateCatalog {
             app.surfaces.showToast("Link copied", glyph: .chainLink1)
         },
 
-    ] + paging + pageMenu + downloads
+    ] + paging + pageMenu + downloads + printing
 
     // MARK: - paging tabs on the plate
 

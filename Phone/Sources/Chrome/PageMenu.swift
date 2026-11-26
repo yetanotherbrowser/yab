@@ -598,7 +598,7 @@ struct PageMenuMorph: View, Animatable {
     }
 
     enum Tile: String { case ask, find, keep, share }
-    enum ListRow: String { case reader, readerLook, translate, alwaysTranslate, zoom, desktop, onMac, task, beside, fullSpread, closePage }
+    enum ListRow: String { case reader, readerLook, translate, alwaysTranslate, zoom, desktop, download, onMac, task, beside, fullSpread, closePage }
 
     private var isPrivate: Bool { app.pageIsPrivate }
     /// Ask opens a chat, and chats are the Mac's: no tile before this iPhone has joined one.
@@ -622,6 +622,8 @@ struct PageMenuMorph: View, Animatable {
             if page.phase != .offered || app.pageAlwaysTranslates { rows.append(.alwaysTranslate) }
         }
         rows += [.zoom, .desktop]
+        // A page that is a picture, a sound or text: the file itself.
+        if app.pageDownloadable { rows.append(.download) }
         // Open on Mac and tasks are the Mac's: no rows before this iPhone has joined one.
         if !isPrivate, app.hasMac { rows += [.onMac, .task] }
         return rows
@@ -779,6 +781,12 @@ struct PageMenuMorph: View, Animatable {
             }
             .buttonStyle(PageMenuPress(ink: ink, radius: 0))
             .accessibilityIdentifier("plate.menu.desktop")
+        case .download:
+            Button { closeThen { app.downloadPage() } } label: {
+                MenuRowLabel(glyph: .yabDownload, title: "Download", ink: ink)
+            }
+            .buttonStyle(PageMenuPress(ink: ink, radius: 0))
+            .accessibilityIdentifier("plate.menu.download")
         case .onMac:
             let opened = app.pageMenu.openedOnMac
             let macs = app.sync.pageMacs

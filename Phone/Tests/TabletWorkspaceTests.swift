@@ -29,6 +29,11 @@ final class TabletWorkspaceTests: XCTestCase {
         XCTAssertEqual(closed.page.width, size.width)
     }
 
+    func testEachSitePermissionHasItsOwnMark() {
+        XCTAssertEqual(SiteSettings.Permission.downloads.tabletAsset, MacGlyph.yabDownload.rawValue)
+        XCTAssertEqual(Set(SiteSettings.Permission.allCases.map(\.tabletAsset)).count, SiteSettings.Permission.allCases.count)
+    }
+
     func testTabletSearchClosesWithoutLandingInThePhonePlate() async throws {
         let app = AppModel(world: try World.load(named: "mira"))
         app.workspace.tabletControls = true

@@ -65,6 +65,8 @@ extension AppModel {
             row.subtitle = "Search \(name) · " + (field.place.replacesTab && field.pageIsToday ? "in this tab" : "new tab")
             return row
         }
+        // Yab's own menu actions, as the Mac's field finds them.
+        rows = Words.withCommands(rows, typed: field.words, commands: commandCandidates)
         // The engine's completions, under the search for the words themselves.
         let phrases = SearchSuggest.shared.phrases(for: field.words)
         if !phrases.isEmpty {
@@ -138,7 +140,10 @@ extension AppModel {
         let samePage = field.showsAddress
         // Private words have no tab, chat or agent to go to (the rows never offer them).
         let searches: Bool = if case .searchFor = row.action { true } else { false }
-        if isPrivate, !searches, ![.search, .open, .findOnPage].contains(row.action) { return }
+        // A command runs only while the field offers it, which in Private is only what Private can run.
+        if case let .command(token) = row.action, !commandCandidates.contains(where: { $0.token == token }) { return }
+        let command: Bool = if case .command = row.action { true } else { false }
+        if isPrivate, !searches, !command, ![.search, .open, .findOnPage].contains(row.action) { return }
         let place: Bool = if case .place = row.action { true } else { false }
         let site: Bool = if case .site = row.action { true } else { false }
         if searches || place || site || [.search, .open].contains(row.action) { adoptNewTabSpace() }
@@ -180,13 +185,16 @@ extension AppModel {
             startTask(for: words)
         case .settings:
             Motion.sheetGrow.run { surfaces.openSettings() }
+        case let .command(token):
+            guard let command = FieldCommand(token: token) else { return }
+            closeFieldAfterChoice()
+            // Once the field is gone: the keys stay the field's while it is up.
+            afterFieldCloses { [weak self] in self?.run(command, privately: isPrivate) }
         case .findOnPage:
             let id = browser.tab?.id
             closeFieldAfterChoice()
             // The field's keyboard goes first; iOS's find bar brings its own.
-            DispatchQueue.main.asyncAfter(deadline: .now() + (Motion.disabled ? 0 : Motion.fieldClose.duration)) { [weak self] in
-                self?.findOnPage(id, text: words)
-            }
+            afterFieldCloses { [weak self] in self?.findOnPage(id, text: words) }
         }
     }
 
@@ -312,6 +320,28 @@ extension AppModel {
         Motion.fieldClose.run { surfaces.closeField() }
     }
 
+    /// Runs `body` once the field just closed has finished closing: off
+    /// screen, landed on the plate, nothing left over the chrome. Its close
+    /// takes one of several motions (landing, the sheet, the iPad's
+    /// dialog), so it watches their shared end rather than one clock. The
+    /// choice belongs to the opening it was made in: a field opened again
+    /// before then drops it for good, even though `shown` never changed. It
+    /// watches only while the field is still closing, so a run leaves no
+    /// watch behind to run again.
+    func afterFieldCloses(_ body: @escaping @MainActor () -> Void) {
+        afterFieldCloses(opening: surfaces.fieldOpenings, body)
+    }
+
+    private func afterFieldCloses(opening: Int, _ body: @escaping @MainActor () -> Void) {
+        guard surfaces.fieldOpenings == opening, surfaces.field == nil else { return }
+        guard field.shown || surfaces.coversChrome else { body(); return }
+        withObservationTracking {
+            _ = (surfaces.fieldOpenings, field.shown, surfaces.coversChrome)
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.afterFieldCloses(opening: opening, body) }
+        }
+    }
+
     // MARK: - the page's card
 
     enum PageAction: String, CaseIterable {
@@ -385,24 +415,30 @@ extension AppModel {
         // items iOS offers Add to Home Screen, as from Safari (#2034).
         // Never a private page's: the home screen would keep it.
         let page = tab.isPrivate ? nil : pages.liveView(tab.id)
+        let isPrivate = tab.isPrivate || browser.space(holding: tab.id)?.isPrivate == true
         // A turn later, so the field or the menu is gone from under it.
-        DispatchQueue.main.async {
-            guard let root = Self.topController() else { return }
-            let items: [Any] = page.map { [url, $0] } ?? [url]
-            let sheet = UIActivityViewController(activityItems: items, applicationActivities: [OpenInSafariActivity()])
-            // On iPad it is a popover, and UIKit throws without an anchor
-            // (register 1142), as PageDownload's share does.
-            sheet.popoverPresentationController?.sourceView = root.view
-            sheet.popoverPresentationController?.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 44, width: 1, height: 1)
-            root.present(sheet, animated: !Motion.disabled)
+        DispatchQueue.main.async { [weak self] in
+            self?.presentShare(page.map { [url, $0] } ?? [url], activities: [OpenInSafariActivity()], isPrivate: isPrivate)
         }
     }
 
     static func topController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         var top = scene?.windows.first { $0.isKeyWindow }?.rootViewController ?? scene?.windows.first?.rootViewController
-        while let next = top?.presentedViewController { top = next }
+        // A popover on its way out (Site Controls closing for Share) can't present.
+        while let next = top?.presentedViewController, !next.isBeingDismissed { top = next }
         return top
+    }
+
+    /// Where a share sheet's popover points on iPad: under the toolbar, where
+    /// Site Controls and the downloads button are, or over the phone's plate.
+    static func shareAnchor(in view: UIView) -> CGRect {
+        let traits = view.traitCollection
+        if TabletWorkspaceGeometry.usesToolbar(size: view.bounds.size, regular: traits.horizontalSizeClass == .regular,
+                                               idiom: traits.userInterfaceIdiom) {
+            return CGRect(x: view.bounds.midX, y: view.safeAreaInsets.top + TabletWorkspaceGeometry.toolbar, width: 1, height: 1)
+        }
+        return CGRect(x: view.bounds.midX, y: view.bounds.maxY - 44, width: 1, height: 1)
     }
 
     /// The screen the app draws on.
