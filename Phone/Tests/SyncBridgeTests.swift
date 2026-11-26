@@ -122,6 +122,139 @@ final class SyncBridgeTests: XCTestCase {
     private func macToday(_ app: AppModel) -> [String] { app.sync.macTabs(in: work).map(\.title) }
     private let macTitles = ["Hacker News", "Tern · Calm scheduling for busy teams", "Design Systems Night · Stockholm"]
 
+    func testShareRecordImportsOnceIntoItsOriginalSpaceAfterTheAppReturns() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let app = try await phone(server, seal)
+        app.browser.showSpace(work)
+        let context = try XCTUnwrap(app.sync.shareContext())
+        XCTAssertEqual(context.space, work)
+        XCTAssertEqual(context.device, phoneID)
+        let link = try context.prepare(.init(action: .keep, address: "https://example.test/from-share", title: "Shared"), pending: [])
+        let record = try XCTUnwrap(SharedLinkSyncRecord.read(link)?.record)
+        app.browser.showSpace(first)
+        XCTAssertEqual(app.sync.importShared(link), true)
+        XCTAssertEqual(app.sync.importShared(link), true)
+        let reached = await until { mac.journal.record(record.key) != nil }
+        XCTAssertTrue(reached)
+        XCTAssertEqual(app.browser.spaceID, first, "import does not switch the space in front")
+        XCTAssertEqual(app.browser.space(work)?.keptTabs.filter { $0.id == record.id }.count, 1)
+        XCTAssertEqual(mac.journal.living(SyncCollection.tab).filter { $0["url"]?.string == "https://example.test/from-share" }.count, 1)
+        try mac.remove(record.id)
+        let removed = await until { app.browser.space(work)?.allTabs.contains(where: { $0.id == record.id }) == false }
+        XCTAssertTrue(removed)
+        XCTAssertEqual(app.sync.importShared(link), true)
+        XCTAssertFalse(app.browser.space(work)?.allTabs.contains(where: { $0.id == record.id }) ?? true)
+        let foreign = try SharedLinkSyncContext(account: Seal.make().account, device: "other", base: context.base,
+                                               space: work, tabs: [], lastOrder: nil).prepare(link, pending: [])
+        XCTAssertNil(app.sync.importShared(foreign), "an old account's record takes the local-only path")
+    }
+
+    func testSharedLinksRecoverFromADeletedSpaceAndPreserveServerEdits() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let app = try await phone(server, seal)
+        defer { app.sync.end() }
+        app.browser.showSpace(work)
+        let context = try XCTUnwrap(app.sync.shareContext())
+        let links = try ["queued", "uploaded", "deleted"].map {
+            try context.prepare(.init(action: .keep, address: "https://example.test/\($0)"), pending: [])
+        }
+        let records = try links.map { try XCTUnwrap(SharedLinkSyncRecord.read($0)?.record) }
+        try mac.journal.remove(.init(collection: SyncCollection.space, id: work))
+        mac.client.kick()
+        let removed = await until { app.browser.space(self.work) == nil }
+        XCTAssertTrue(removed)
+        // The extension can upload against its old snapshot after the space is gone.
+        _ = try mac.journal.importLocal(records[1])
+        try mac.write(SyncCollection.tab, records[1].id, ["title": "Edited on Mac"])
+        _ = try mac.journal.importLocal(records[2])
+        try mac.remove(records[2].id)
+        let caughtUp = await until {
+            app.sync.engine?.journal.record(records[1].key)?["title"]?.string == "Edited on Mac"
+                && app.sync.engine?.journal.record(records[2].key)?.alive() == false
+        }
+        XCTAssertTrue(caughtUp)
+        let queue = SharedLinkQueue(folder: folder.appendingPathComponent("shares"))
+        for link in links { XCTAssertTrue(queue.add(link)) }
+        _ = queue.take { app.sync.importShared($0) == true }
+        XCTAssertEqual(queue.count, 0)
+        let local = try XCTUnwrap(app.browser.space(first))
+        XCTAssertEqual(Set(local.keptTabs.map(\.id)), Set(records.prefix(2).map(\.id)))
+        XCTAssertEqual(local.tab(records[1].id)?.title, "Edited on Mac")
+        XCTAssertFalse(app.browser.allTabs.contains { $0.id == records[2].id }, "an explicit tab deletion still wins")
+        for link in links { XCTAssertEqual(app.sync.importShared(link), true) }
+        let arrived = await until { Set(mac.row(self.first).kept.map(\.id)) == Set(records.prefix(2).map(\.id)) }
+        XCTAssertTrue(arrived, "recovery uses the original identities on every device")
+        XCTAssertEqual(app.browser.spaceID, first)
+    }
+
+    func testSharedLinkWaitsForCatchUpBeforeDiscardingItsQueueEntry() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let app = try await phone(server, seal)
+        defer { app.sync.end() }
+        app.browser.showSpace(work)
+        let context = try XCTUnwrap(app.sync.shareContext())
+        app.sync.wentToBack()
+        let paused = await until { app.sync.line == .off }
+        XCTAssertTrue(paused)
+        try mac.journal.remove(.init(collection: SyncCollection.space, id: work))
+        mac.client.kick()
+        let sent = await until { mac.pending == 0 }
+        XCTAssertTrue(sent)
+        XCTAssertNotNil(app.browser.space(work), "the phone still has its stale space")
+        let link = try context.prepare(.init(action: .keep, address: "https://example.test/while-away"), pending: [])
+        let record = try XCTUnwrap(SharedLinkSyncRecord.read(link)?.record)
+        let queue = SharedLinkQueue(folder: folder.appendingPathComponent("shares"))
+        XCTAssertTrue(queue.add(link))
+        _ = queue.take { app.sync.importShared($0) == true }
+        XCTAssertEqual(queue.count, 1, "keep the durable fallback until remote deletions are known")
+        XCTAssertTrue(app.browser.space(work)?.keptTabs.contains { $0.id == record.id } == true,
+                      "the saved link is still available while offline")
+        app.sync.cameToFront()
+        let caughtUp = await until { app.sync.line == .live && app.browser.space(self.work) == nil }
+        XCTAssertTrue(caughtUp)
+        _ = queue.take { app.sync.importShared($0) == true }
+        XCTAssertEqual(queue.count, 0)
+        XCTAssertEqual(app.browser.space(first)?.keptTabs.map(\.id), [record.id])
+        let arrived = await until { mac.row(self.first).kept.contains { $0.id == record.id } }
+        XCTAssertTrue(arrived)
+    }
+
+    func testSharedLinkKeepsItsQueueEntryUntilALiveDestinationExists() async throws {
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let app = try await phone(server, seal)
+        defer { app.sync.end() }
+        app.browser.showSpace(work)
+        let context = try XCTUnwrap(app.sync.shareContext())
+        let link = try context.prepare(.init(action: .keep, address: "https://example.test/no-space"), pending: [])
+        let record = try XCTUnwrap(SharedLinkSyncRecord.read(link)?.record)
+        for id in [first, work] { try mac.journal.remove(.init(collection: SyncCollection.space, id: id)) }
+        mac.client.kick()
+        let removed = await until { app.sync.engine?.spaces().isEmpty == true }
+        XCTAssertTrue(removed)
+        let queue = SharedLinkQueue(folder: folder.appendingPathComponent("shares"))
+        XCTAssertTrue(queue.add(link))
+        _ = queue.take { app.sync.importShared($0) == true }
+        XCTAssertEqual(queue.count, 1)
+        let destination = UUID().uuidString
+        try mac.write(SyncCollection.space, destination, SyncSpace(id: destination, name: "New space", icon: "🌐").fields)
+        let came = await until { app.browser.space(destination) != nil }
+        XCTAssertTrue(came)
+        _ = queue.take { app.sync.importShared($0) == true }
+        XCTAssertEqual(queue.count, 0)
+        let recovered = try XCTUnwrap(app.browser.spaces.first { $0.keptTabs.contains { $0.id == record.id } })
+        let parent = try XCTUnwrap(app.sync.engine?.journal.record(record.key)?["parent"]?.string)
+        XCTAssertEqual(app.sync.syncSpace(recovered.id), parent)
+        XCTAssertTrue(app.sync.engine?.spaces().contains { $0.id == parent } == true)
+    }
+
     func testChatAndTabQuestionsSeenAndAnswersTravelThroughTheJournal() async throws {
         let server = SyncMemoryServer(), seal = Seal.make()
         let mac = try await macWithWork(server, seal)
@@ -1256,9 +1389,13 @@ final class SyncBridgeTests: XCTestCase {
         XCTAssertEqual(spaceNames(mac), ["Personal", "Reading", "Trips", "Work"])
         let before = Dictionary(uniqueKeysWithValues: mine.map { tab in (tab.url!, living(mac).first { $0.url == tab.url }!.id) })
         let oldDevice = keys.deviceID
+        let shareAccess = setup(server, ownWorld: false).shareAccess
+        let oldShareSession = try XCTUnwrap(shareAccess.session)
 
         await leave(app, server)
         XCTAssertEqual(app.sync.phase == .on, false)
+        XCTAssertNil(shareAccess.session, "turn-off and remote removal both revoke the extension")
+        XCTAssertNil(shareAccess.secrets.read("sync-session"))
         // Used while out: a page of today's opened in Trips.
         let packing = PageFixtures.liveTab(for: URL(string: "https://example.org/packing")!)
         app.browser.open(packing, in: trips)
@@ -1267,6 +1404,8 @@ final class SyncBridgeTests: XCTestCase {
         XCTAssertNotEqual(keys.deviceID, oldDevice, "joined again as a new device")
         let back = await until(8) { app.sync.line == .live && app.sync.writing && app.sync.pending == 0 }
         XCTAssertTrue(back, "\(app.sync.line)")
+        XCTAssertNotEqual(shareAccess.session?.id, oldShareSession.id)
+        XCTAssertEqual(shareAccess.session?.device, keys.deviceID)
         await settle(mac, app)
 
         XCTAssertEqual(spaceNames(mac), ["Personal", "Reading", "Trips", "Work"], "no space came back twice")
@@ -1293,6 +1432,54 @@ final class SyncBridgeTests: XCTestCase {
             app.sync.turnOff()
             XCTAssertEqual(app.sync.phase, .off)
         }
+    }
+
+    func testOfflineSignOutRevokesAnOpenShareAndPreservesTheEncryptedQueue() async throws {
+        let wasTurnedOff = SettingsStore.shared.syncTurnedOff
+        defer { SettingsStore.shared.syncTurnedOff = wasTurnedOff }
+        let server = SyncMemoryServer(), seal = Seal.make()
+        let mac = try await macWithWork(server, seal)
+        defer { mac.client.stop() }
+        let app = try await phone(server, seal, ownWorld: false, fixturesEnabled: false)
+        defer { app.sync.end() }
+        let configuration = setup(server, ownWorld: false)
+        let access = configuration.shareAccess, queue = configuration.sharedLinks
+        let ready = await until { access.session != nil && app.sync.shareContext() != nil }
+        XCTAssertTrue(ready)
+        let session = try XCTUnwrap(access.session)
+        let context = try XCTUnwrap(SharedLinkSyncContext.read(for: queue))
+        let link = try context.prepare(.init(action: .keep, address: "https://example.test/before-sign-out"), pending: [])
+        XCTAssertTrue(queue.add(link))
+        let record = try XCTUnwrap(SharedLinkSyncRecord.read(link)?.record)
+        let openedBeforeSignOut = try XCTUnwrap(SharedLinkUpload(record: record, access: access, session: session, transport: server))
+
+        server.cut()
+        app.sync.turnOff()
+        XCTAssertEqual(app.sync.phase, .off)
+        XCTAssertNil(access.session)
+        XCTAssertNil(access.secrets.read("sync-session"))
+        XCTAssertNil(configuration.keys.local)
+        XCTAssertNil(configuration.keys.token)
+        XCTAssertNil(SharedLinkSyncContext.read(for: queue))
+        app.sync.wentToBack()
+        XCTAssertNil(access.session, "a later lifecycle callback cannot restore authority")
+
+        // The old server token is still valid: local sign-out must suffice
+        // even when the server could not hear the removal request.
+        server.lock.lock(); server.down = false; server.lock.unlock()
+        let done = expectation(description: "the open share cannot upload after sign-out")
+        openedBeforeSignOut.start(base: context.base) { success in
+            XCTAssertFalse(success)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
+        server.lock.lock()
+        let remote = server.records[seal.account]?[seal.name(record.key)]
+        server.lock.unlock()
+        XCTAssertNil(remote)
+        XCTAssertEqual(queue.take().first?.address, link.address, "sign-out preserves locally saved links")
+        XCTAssertTrue(queue.add(.init(action: .keep, address: "https://example.test/after-sign-out")))
+        XCTAssertEqual(queue.take().first?.address, "https://example.test/after-sign-out")
     }
 
     func testJoinAgainAfterRemovalAddsNoSpaceAndLosesNoTab() async throws {

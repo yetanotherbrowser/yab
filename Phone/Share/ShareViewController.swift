@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 
 /// The share sheet's Yab: what was shared, Keep for Later and Open in Yab
 /// (ShareCard). Both leave the link in the App Group's queue
-/// (SharedLinkQueue): Keep for Later only that, and the app files it as a
-/// kept tab when it next comes to the front; Open in Yab then opens Yab at
+/// (SharedLinkQueue). Keep for Later also uploads its saved sync record;
+/// Open in Yab then opens Yab at
 /// yab://shared, which takes the link and shows it in Peek, as a link from
 /// another app opens today. Until Yab may be the default browser, this is
 /// how a link from another app gets in.
@@ -19,6 +19,9 @@ final class ShareViewController: UIViewController {
 
     private let model = Model()
     private let queue = SharedLinkQueue.shared
+    private let syncAccess = SharedLinkSyncAccess.standard
+    private var upload: SharedLinkUpload?
+    private var ended = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -83,14 +86,29 @@ final class ShareViewController: UIViewController {
 
     private func choose(_ action: SharedLink.Action) {
         guard let found = model.found, model.phase == .ready else { return }
-        let link = SharedLink(action: action, address: found.address, search: found.search, title: found.title)
+        var link = SharedLink(action: action, address: found.address, search: found.search, title: found.title)
+        let session = syncAccess.session
+        let context = SharedLinkSyncContext.read(for: queue)
+        if action == .keep, let context, let session, context.account == session.seal?.account,
+           context.device == session.device {
+            link = (try? context.prepare(link, pending: queue.links)) ?? link
+        }
         let queued = queue.add(link)
         switch action {
         case .keep:
             guard queued else { model.phase = .failed; return }
             // Said where the buttons were, then the sheet goes: nothing else shows it.
             model.phase = .kept
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.finish() }
+            let earliest = DispatchTime.now() + 0.8
+            if let payload = SharedLinkSyncRecord.read(link), let session, let context,
+               let upload = SharedLinkUpload(record: payload.record, access: syncAccess, session: session) {
+                self.upload = upload
+                upload.start(base: context.base) { [weak self] _ in
+                    DispatchQueue.main.asyncAfter(deadline: earliest) { self?.finish() }
+                }
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: earliest) { [weak self] in self?.finish() }
+            }
         case .open:
             // Queued, Yab takes it from the queue; else the link rides in the URL itself.
             guard let url = queued ? YabRoute.shared.url : (found.search ? nil : SharedLink.wrapped(found.address)) else {
@@ -125,10 +143,18 @@ final class ShareViewController: UIViewController {
     }
 
     private func finish() {
+        guard !ended else { return }
+        ended = true
+        upload?.cancel()
+        upload = nil
         extensionContext?.completeRequest(returningItems: nil)
     }
 
     private func cancel() {
+        guard !ended else { return }
+        ended = true
+        upload?.cancel()
+        upload = nil
         extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
     }
 }

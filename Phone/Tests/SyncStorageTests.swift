@@ -137,6 +137,10 @@ final class SyncStorageTests: XCTestCase {
         XCTAssertNotNil(app.sync.joinError); XCTAssertEqual(app.sync.typed, seal.recovery)
         XCTAssertEqual(joinedCount, count); XCTAssertNil(app.sync.engine)
         XCTAssertEqual(try Data(contentsOf: journal), sentinel)
+        let context = SharedLinkSyncContext(account: seal.account, device: id, base: URL(string: "https://sync.test")!,
+                                           space: SyncCollection.firstSpace, tabs: [], lastOrder: nil)
+        let shared = try context.prepare(.init(action: .keep, address: "https://example.test/share"), pending: [])
+        XCTAssertEqual(app.sync.importShared(shared), false, "a failed journal leaves the share queued with its original identity")
         try FileManager.default.removeItem(at: journal)
         app.sync.retryJoin()
         XCTAssertEqual(app.sync.phase, .on); XCTAssertEqual(try keys.savedDeviceID(), id)

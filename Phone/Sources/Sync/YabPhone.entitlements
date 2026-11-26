@@ -18,6 +18,8 @@
 		<string>$(AppIdentifierPrefix)dev.serafim.fast.iphone</string>
 		<string>$(AppIdentifierPrefix)dev.serafim.fast</string>
 		<string>$(AppIdentifierPrefix)dev.serafim.fast.sync</string>
+		<!-- Publish only the share session in the extension's own group. -->
+		<string>$(AppIdentifierPrefix)dev.serafim.fast.iphone.share</string>
 	</array>
 	<!-- Silent pushes from the sync server (R2): the line catches up in the
 	     back. Production builds get "production" from the profile. -->
