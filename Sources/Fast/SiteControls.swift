@@ -45,7 +45,7 @@ extension Browser {
     func sidePlated(_ row: Parked?) -> Bool {
         guard windowPurpose == .privateOnly || !prefs.addressBar else { return false }
         guard let row, let id = row.active else { return true }
-        return !row.pairs.contains { $0.first == id || $0.second == id }
+        return !row.pairs.contains { $0.contains(id) }
     }
 }
 

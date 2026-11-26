@@ -1298,7 +1298,7 @@ final class SpacePull: ObservableObject {
         // load, and a pair opening out a moment after the space came.
         if let row = browser.parked[there.id], let front = row.tabs.first(where: { $0.id == row.active }) {
             if !front.wake() { front.revive() }
-            if let pair = row.pairs.first(where: { $0.first == front.id || $0.second == front.id }),
+            if let pair = row.pairs.first(where: { $0.contains(front.id) }),
                let other = row.tabs.first(where: { $0.id == (pair.first == front.id ? pair.second : pair.first) }) {
                 if !other.wake() { other.revive() }
             }

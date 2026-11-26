@@ -465,6 +465,9 @@ final class NativeControl {
                     // The folders it is in from the top, a folder in a folder's included.
                     "folderPath": tab.nest.map { $0.chain.map(\.name).joined(separator: " \u{203A} ") } ?? "",
                     "splitPartnerId": browser.partner(of: tab).flatMap { $0.shy ? nil : $0.id.uuidString } ?? "",
+                    // Every tab of its split, this one too, in the split's
+                    // order: `splitPartnerId` names only one of three or four.
+                    "splitTabIds": (browser.pair(of: tab.id)?.ids ?? []).compactMap { id in browser.tab(id: id).flatMap { $0.shy ? nil : id.uuidString } },
                     "ownedByTask": tab.agent == session.id, "resourceVersion": changes.version("tab:" + tab.id.uuidString, tabState(tab)),
                     // When the user last looked at it: "close what I haven't used in a week".
                     "lastUsed": tab.touched.ISO8601Format(),

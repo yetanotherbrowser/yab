@@ -84,8 +84,11 @@ final class ColumnCell: NSHostingView<AnyView> {
         if let hitTab { return hitTab.id }
         // A pair still needs the half under the pointer, validated against
         // the cell that actually drew it. A stale hover names nothing else.
-        guard kind == .pin || kind == .pair, let hovered, let look = current,
-              look.tab == ObjectIdentifier(hovered) || look.other == ObjectIdentifier(hovered) else { return nil }
+        guard kind == .pin || kind == .pair, let hovered, let look = current else { return nil }
+        if look.tab == ObjectIdentifier(hovered) || look.other == ObjectIdentifier(hovered) { return hovered.id }
+        // A third or fourth chip: one of the split this row's first heads.
+        guard kind == .pair, let browser = owner, let pair = browser.pair(of: hovered.id),
+              let head = browser.tab(id: pair.first), look.tab == ObjectIdentifier(head) else { return nil }
         return hovered.id
     }
     /// Its row's identity to SwiftUI: a new one for another row, so none of
@@ -260,6 +263,8 @@ final class ColumnCell: NSHostingView<AnyView> {
             tab = ObjectIdentifier(first)
             other = ObjectIdentifier(second)
             lit = browser.newTabLit
+            // A pane come or gone redraws the row.
+            count = 2 + browser.morePanes(of: first.id).count
         case .nest(let nest, let n, let pose):
             tab = ObjectIdentifier(nest)
             count = n

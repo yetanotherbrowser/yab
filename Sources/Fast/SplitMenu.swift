@@ -3,12 +3,12 @@ import SwiftUI
 
 /// The split is the context, even when the press lands on one of its chips.
 /// Page commands belong to each page's submenu. Group commands always carry
-/// both halves, including Pin from search and Move to > Pinned Tabs.
+/// every pane, including Pin from search and Move to > Pinned Tabs.
 struct SplitMenu: View {
     let browser: Browser
     let pair: Pair
 
-    private var halves: [Tab] { [pair.first, pair.second].compactMap { browser.tab(id: $0) } }
+    private var halves: [Tab] { pair.ids.compactMap { browser.tab(id: $0) } }
     private var pinned: Bool { browser.pinPair(of: pair.first) != nil }
 
     var body: some View {
@@ -20,6 +20,15 @@ struct SplitMenu: View {
                 .disabled(!browser.canPinPair(pair))
         }
         Button("Separate All Tabs", mark: "yab.split.slash") { separate() }
+        // Two side by side or stacked; three and four have one layout each.
+        if pair.count == 2 {
+            Menu("Arrange", mark: "rectangle.split.2x1") {
+                Button("Side by Side", mark: "rectangle.split.2x1") { browser.arrange(pair, .across) }
+                    .disabled(!browser.canArrange(pair, .across))
+                Button("Stacked", mark: "rectangle.split.1x2") { browser.arrange(pair, .stacked) }
+                    .disabled(!browser.canArrange(pair, .stacked))
+            }
+        }
         Divider()
         Button("Tab Options") {}.disabled(true)
         ForEach(halves, id: \.id) { half in
@@ -55,9 +64,9 @@ struct SplitMenu: View {
         // handlers act on the split, never the half that was right-clicked.
         Menu(ActionMenu.tabSearchActions) {
             Button("Swap Halves", mark: "arrow.left.arrow.right") { browser.swapHalves(pair) }
-                .disabled(browser.stagePair?.contains(pair.first) != true)
-            Button("Copy 2 URLs", mark: "link") { browser.copyAddresses(halves) }.shortcut(.copyAddress)
-            Button("Copy 2 Markdown Links", mark: "markdown") { browser.copyMarkdownLink(halves) }.shortcut(.copyMarkdownLink)
+                .disabled(browser.stagePair?.contains(pair.first) != true || pair.count != 2)
+            Button("Copy \(halves.count) URLs", mark: "link") { browser.copyAddresses(halves) }.shortcut(.copyAddress)
+            Button("Copy \(halves.count) Markdown Links", mark: "markdown") { browser.copyMarkdownLink(halves) }.shortcut(.copyMarkdownLink)
         }
     }
 
@@ -92,15 +101,15 @@ struct SplitMenu: View {
 
 extension Browser {
     /// Duplicate the two pages using the normal tab duplication, then keep
-    /// the copies together with the original divider position.
+    /// the copies together with the original divider position and layout.
     func duplicateSplit(_ pair: Pair) {
-        let halves = [pair.first, pair.second].compactMap { tab(id: $0) }
+        let halves = pair.ids.compactMap { tab(id: $0) }
         guard pairs.contains(pair), halves.count == 2, halves.allSatisfy({ !$0.isBlank }) else { return }
         duplicate(halves)
         // The copies alone: `chosen` also counts the tab in front.
         let copies = tabs.filter { gathered.contains($0.id) }
         guard copies.count == 2, copies.allSatisfy({ copy in !halves.contains { $0 === copy } }) else { return }
-        pairs.append(Pair(first: copies[0].id, second: copies[1].id, share: pair.share))
+        pairs.append(Pair(first: copies[0].id, second: copies[1].id, share: pair.share, arrangement: pair.arrangement))
         select(copies[1])
         restage()
         writeSession(now: true)

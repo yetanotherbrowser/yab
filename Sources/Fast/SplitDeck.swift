@@ -319,6 +319,13 @@ final class SplitDeck {
     // MARK: - where it can go
 
     private static func targets(for tab: Tab, in browser: Browser) -> [Target] {
+        // Three or four panes, or two stacked: over a pane, the tab in its
+        // place, as over a half.
+        if let pair = browser.stagePair, !pair.halves {
+            guard !pair.contains(tab.id), browser.canPlace(tab) || browser.canHost(tab) else { return [] }
+            let frames = browser.paneFrames()
+            return pair.ids.compactMap { id in frames[id].map { Target(over: $0, card: $0, drop: .instead(id)) } }
+        }
         if let pair = browser.stagePair, let (left, right) = browser.halves() {
             let halves = [(pair.first, left), (pair.second, right)]
             if pair.contains(tab.id) {

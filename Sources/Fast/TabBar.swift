@@ -891,7 +891,7 @@ struct TabBar: View {
     /// their original order at the gap the held tab found.
     private func groupOrder(_ held: Tab.ID, at index: Int) -> [Tab] {
         let members = Set(groupIDs)
-        let single = Browser.moving(browser.tabs, held, to: index, with: browser.pair(of: held)?.other(than: held))
+        let single = Browser.moving(browser.tabs, held, to: index, with: browser.mates(of: held))
         let gap = single.prefix { $0.id != held }.filter { !members.contains($0.id) }.count
         let picked = browser.tabs.filter { members.contains($0.id) }
         var rest = browser.tabs.filter { !members.contains($0.id) }
@@ -995,7 +995,7 @@ struct TabBar: View {
         if planned, let id = dragging, let plan {
             // A half of a pair takes its other half with it.
             order = groupIDs.count > 1 ? groupOrder(id, at: plan.index)
-                : Browser.moving(order, id, to: plan.index, with: browser.pair(of: id)?.other(than: id))
+                : Browser.moving(order, id, to: plan.index, with: browser.mates(of: id))
         }
         let out = planned && plan?.out == true ? dragging : nil
         // The held tab as the plan has it: kept or not, in a folder or not.
@@ -1378,7 +1378,7 @@ struct TabBar: View {
                 var stays = false
                 withTransaction(still) {
                     if let splitTarget {
-                        browser.split(tab, with: splitTarget)
+                        browser.split(tab, onto: splitTarget)
                         stays = true
                     } else if let other {
                         // Stayed over another pill: a new folder of the two.
@@ -1509,7 +1509,7 @@ struct TabBar: View {
               let over = overlapped(tab, leading: leading, each: each),
               over.by >= 0.3, over.by <= 0.7,
               let start = places(each: each, planned: true)[over.tab.id] else { return clearChoice() }
-        let canSplit = browser.canCarry(tab, beside: over.tab)
+        let canSplit = browser.canSplit(tab, onto: over.tab)
         let side: TabDropChoice.Side = canSplit && x >= start + each / 2 ? .split : .folder
         if choice?.target == over.tab.id {
             if choice?.side != side {
@@ -1539,7 +1539,7 @@ struct TabBar: View {
         if choice?.side == .split {
             if choicePreviousActive == nil { choicePreviousActive = browser.activeID }
             browser.select(other)
-            browser.previewSplit(.right)
+            if browser.pair(of: other.id) == nil { browser.previewSplit(.right) }
         } else {
             restoreChoicePreview()
             choice?.fill = 0
@@ -1549,7 +1549,7 @@ struct TabBar: View {
             }
             let work = DispatchWorkItem { [self] in
                 guard dragging == tab.id, choice?.target == other.id, choice?.side == .folder else { return }
-                choice?.count = (browser.partner(of: other) == nil ? 1 : 2) + (browser.partner(of: tab) == nil ? 1 : 2)
+                choice?.count = 2 + browser.mates(of: other.id).count + browser.mates(of: tab.id).count
                 choice?.ready = true
                 combine = other.id
                 NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
@@ -1578,9 +1578,9 @@ struct TabBar: View {
     /// width, if a folder of the two can be made.
     private func overlapped(_ tab: Tab, leading: CGFloat, each: CGFloat) -> (tab: Tab, by: CGFloat)? {
         let then = layout(each: each, planned: true).tabs
-        let partner = browser.partner(of: tab)?.id
+        let mates = browser.mates(of: tab.id)
         var best: (tab: Tab, by: CGFloat)?
-        for other in browser.tabs where other.id != tab.id && other.id != partner && other.pin == nil {
+        for other in browser.tabs where other.id != tab.id && !mates.contains(other.id) && other.pin == nil {
             guard let start = then[other.id], folders.place(of: other)?.shown ?? true else { continue }
             let by = (min(leading, start) + each - max(leading, start)) / each
             if by > (best?.by ?? 0) { best = (other, by) }
@@ -1649,7 +1649,7 @@ struct TabBar: View {
     private func coming(_ row: Parked, in strip: CGFloat) -> StripComing.Lay {
         let tabs = row.tabs + browser.tabs.filter(browser.travels)
         let front = tabs.first { $0.id == row.active }
-        let bar = row.pairs.contains { $0.first == row.active || $0.second == row.active }
+        let bar = row.pairs.contains { $0.contains(row.active) }
             || browser.prefs.addressBar && front.map { !$0.isBlank && !$0.immersed && !$0.showsMail } == true
         // Its folders of yours a pill each, their tucked tabs none, and the
         // stroke after its kept (StripItem).
@@ -2434,9 +2434,9 @@ private struct TabPill: View, Equatable {
         refusals = browser.refusals
         pictured = row != nil
         if let row {
-            let pair = row.pairs.first { $0.first == tab.id || $0.second == tab.id }
-            joint = pair.map { $0.first == tab.id ? .first : .second }
-            paired = pair.map { $0.first == row.active || $0.second == row.active } ?? false
+            let pair = row.pairs.first { $0.contains(tab.id) }
+            joint = pair.map { Joint($0, tab.id) }
+            paired = pair.map { $0.contains(row.active) } ?? false
         } else {
             joint = browser.joint(of: tab.id)
             paired = joint != nil && browser.stagePair?.contains(tab.id) == true
@@ -3134,9 +3134,9 @@ struct TabMenu: View {
             .disabled(!AudioWatch.canMute || tab.address?.scheme?.hasPrefix("http") != true)
         Divider()
         Button(tab.kept ? "Close and Keep" : "Close", mark: tab.kept ? "xmark" : "yab.tab.x", action: close).shortcut(.closeTab)
-        // Both halves of the split at once.
+        // Every pane of the split at once.
         if let pair = browser.pair(of: tab.id) {
-            Button("Close Split", mark: "yab.tabs.x") { browser.close([pair.first, pair.second].compactMap { browser.tab(id: $0) }) }
+            Button("Close Split", mark: "yab.tabs.x") { browser.close(pair.ids.compactMap { browser.tab(id: $0) }) }
         }
         Button("Close Other Tabs", mark: "broom") { browser.closeOthers(but: [tab]) }
             .shortcut(.closeOthers).disabled(browser.tabs.count < 2)

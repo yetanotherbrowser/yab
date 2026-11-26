@@ -173,10 +173,7 @@ enum SharedPins {
         let loose = shape.tabs.indices.filter { shape.tabs[$0].pin == nil }
         guard loose.count != shape.tabs.count else { return shape }
         let at = Dictionary(uniqueKeysWithValues: loose.enumerated().map { ($1, $0) })
-        let pairs = (shape.pairs ?? []).compactMap { pair -> Session.Pair? in
-            guard let a = at[pair.first], let b = at[pair.second] else { return nil }
-            return Session.Pair(first: a, second: b, share: pair.share)
-        }
+        let pairs = (shape.pairs ?? []).compactMap { $0.moved { at[$0] } }
         return Session.Shape(tabs: loose.map { shape.tabs[$0] }, front: shape.front.flatMap { at[$0] }, pairs: pairs.isEmpty ? nil : pairs)
     }
 
@@ -194,7 +191,7 @@ enum SharedPins {
             at < 0 ? min(-1 - at, count - 1) : first.tabs.indices.contains(at) ? at + count : nil
         }
         let own = (pinPairs ?? []).filter { $0.first < count && $0.second < count && $0.first >= 0 && $0.second >= 0 }
-        let pairs = own + (first.pairs ?? []).map { Session.Pair(first: $0.first + count, second: $0.second + count, share: $0.share) }
+        let pairs = own + (first.pairs ?? []).compactMap { $0.moved { $0 + count } }
         return Session.Shape(tabs: pins + first.tabs, front: front, pairs: pairs.isEmpty ? nil : pairs)
     }
 
@@ -203,10 +200,7 @@ enum SharedPins {
     nonisolated static func pinPairs(_ shape: Session.Shape) -> [Session.Pair] {
         let pinned = shape.tabs.indices.filter { shape.tabs[$0].pin != nil }
         let at = Dictionary(uniqueKeysWithValues: pinned.enumerated().map { ($1, $0) })
-        return (shape.pairs ?? []).compactMap { pair in
-            guard let a = at[pair.first], let b = at[pair.second] else { return nil }
-            return Session.Pair(first: a, second: b, share: pair.share)
-        }
+        return (shape.pairs ?? []).compactMap { $0.moved { at[$0] } }
     }
 
     /// The first space's row as sync brings it, apart again: its pins for
@@ -217,10 +211,7 @@ enum SharedPins {
         let loose = shape.tabs.indices.filter { shape.tabs[$0].pin == nil }
         let at = Dictionary(uniqueKeysWithValues: loose.enumerated().map { ($1, $0) })
         let front = shape.front.flatMap { front in pinned.firstIndex(of: front).map { -1 - $0 } ?? at[front] }
-        let pairs = (shape.pairs ?? []).compactMap { pair -> Session.Pair? in
-            guard let a = at[pair.first], let b = at[pair.second] else { return nil }
-            return Session.Pair(first: a, second: b, share: pair.share)
-        }
+        let pairs = (shape.pairs ?? []).compactMap { $0.moved { at[$0] } }
         return (pinned.map { shape.tabs[$0] }, Session.Shape(tabs: loose.map { shape.tabs[$0] }, front: front, pairs: pairs.isEmpty ? nil : pairs))
     }
 
@@ -450,7 +441,7 @@ extension Browser {
         row.tabs = shared + back.tabs.filter { tab in !stray.contains { $0 === tab } }
         let ids = Set(row.tabs.map(\.id))
         let paired = Set(back.pairs.flatMap { [$0.first, $0.second] })
-        row.pairs = back.pairs + sharedPairs.filter { ids.contains($0.first) && ids.contains($0.second) && !paired.contains($0.first) && !paired.contains($0.second) }
+        row.pairs = back.pairs + sharedPairs.filter { $0.ids.allSatisfy(ids.contains) && !paired.contains($0.first) && !paired.contains($0.second) }
         if let at = back.sharedFront, front == nil || !row.tabs.contains(where: { $0.id == front }), shared.indices.contains(at) {
             front = shared[at].id
         }
@@ -665,7 +656,7 @@ extension Browser {
         // Replace the shared pins' pairs, including an explicit separation;
         // leave this window's other splits alone.
         let retained = pairs.filter {
-            !(sharedIDs.contains($0.first) && sharedIDs.contains($0.second))
+            !($0.ids.allSatisfy(sharedIDs.contains))
                 && !pairedIDs.contains($0.first) && !pairedIDs.contains($0.second)
         }
         // Gone elsewhere: closed here, but a call or an agent's work in one
@@ -684,7 +675,7 @@ extension Browser {
             pairs = retained + restored
         } else {
             let here = Set(tabs.map(\.id))
-            pairs = retained + restored.filter { here.contains($0.first) && here.contains($0.second) }
+            pairs = retained + restored.filter { $0.ids.allSatisfy(here.contains) }
             parked[Space.pinsID] = Parked(tabs: next.filter { tab in !tabs.contains { $0 === tab } }, active: nil,
                                          pairs: restored.filter { !here.contains($0.first) || !here.contains($0.second) }, order: next.map(\.id))
         }

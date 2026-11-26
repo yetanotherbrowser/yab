@@ -626,7 +626,7 @@ final class SpacePager {
                 // woken now: by the time the row lands they are drawn.
                 if let row, let front = row.tabs.first(where: { $0.id == row.active }) {
                     if !front.wake() { front.revive() }
-                    if let pair = row.pairs.first(where: { $0.first == front.id || $0.second == front.id }),
+                    if let pair = row.pairs.first(where: { $0.contains(front.id) }),
                        let other = row.tabs.first(where: { $0.id == (pair.first == front.id ? pair.second : pair.first) }) {
                         if !other.wake() { other.revive() }
                     }
@@ -710,7 +710,7 @@ final class SpacePager {
             }
         }
         let front = row.flatMap { row in row.tabs.first { $0.id == row.active } }
-        let paired = row.map { row in row.pairs.contains { $0.first == row.active || $0.second == row.active } } ?? false
+        let paired = row.map { row in row.pairs.contains { $0.contains(row.active) } } ?? false
         let window = browser.column?.window
         let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -1042,7 +1042,7 @@ final class SpacePager {
         var key = "\(ObjectIdentifier(browser).hashValue) \(id) \(rows) \(size) \(floating) \(shared) \(browser.prefs.sideWidth) \(browser.barShown(row, travelling: travelling)) \(browser.namesSpaces)"
         key += " \(NSApp.effectiveAppearance.name.rawValue) \(paint.map { "\($0)" } ?? "-") \(browser.prefs.glyph) \(browser.prefs.density)"
         key += " \(browser.prefs.backdrop) \(browser.prefs.wearsGlass)"
-        key += " \(row?.active?.uuidString ?? "-") \(row?.pairs.map { "\($0.first)\($0.second)\($0.share)" } ?? [])"
+        key += " \(row?.active?.uuidString ?? "-") \(row?.pairs.map { "\($0.ids)\($0.share)\($0.cuts)\($0.arrangement)" } ?? [])"
         key += " \(SidePlate.extensionPlate(in: browser, space: id, tab: ((row?.tabs ?? []) + travelling).first { $0.id == row?.active }, shown: browser.sidePlated(row)))"
         key += " \(folders.open.sorted()) \(folders.whole.sorted()) \(folders.isShut(id, in: browser))"
         key += " \(folders.empties(in: id).map { "\($0.id)\($0.open)\($0.name)\($0.parent?.id.uuidString ?? "")" })"

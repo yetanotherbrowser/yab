@@ -75,6 +75,30 @@ enum Session {
         var first: Int
         var second: Int
         var share: Double
+        /// A third and fourth pane, how they are laid and where the other
+        /// dividers stand (Split.swift). Missing from sessions written
+        /// before; a Yab from before reads the first two, a pair.
+        var more: [Int]? = nil
+        var arrangement: String? = nil
+        var cuts: [Double]? = nil
+
+        /// The same pair with its tabs in new places: nil when either of the
+        /// first two has none.
+        func moved(_ place: (Int) -> Int?) -> Pair? {
+            guard let a = place(first), let b = place(second), a != b else { return nil }
+            var next = self
+            next.first = a
+            next.second = b
+            if let more {
+                let placed = more.compactMap(place)
+                // A pane gone takes the others' places with it: laid evenly
+                // again, as a split a pane left is.
+                if placed.count != more.count { next.cuts = nil; next.share = 0.5 }
+                next.more = placed.isEmpty ? nil : placed
+                if placed.isEmpty, next.arrangement == "grid" { next.arrangement = nil }
+            }
+            return next
+        }
     }
 
     struct Shape: Codable {
@@ -248,4 +272,20 @@ extension Session.Shape {
     /// The place of the tab in front, below zero for a shared pin, nil when
     /// the row was left with none.
     var front: Int? { nothingInFront == true ? nil : active }
+}
+
+extension Session.Pair {
+    /// Written for this pair, by where each tab stands: nil when either
+    /// of the first two isn't there; a pane past them that isn't is
+    /// left out.
+    init?(_ pair: Fast.Pair, at place: (Tab.ID) -> Int?) {
+        guard let a = place(pair.first), let b = place(pair.second) else { return nil }
+        self.init(first: a, second: b, share: Double(pair.share))
+        let more = pair.more.compactMap(place)
+        guard !pair.halves else { return }
+        if !more.isEmpty { self.more = more }
+        arrangement = pair.arrangement.rawValue
+        // A pane left out leaves the dividers to be laid evenly again.
+        if !pair.cuts.isEmpty, more.count == pair.more.count { cuts = pair.cuts.map(Double.init) }
+    }
 }

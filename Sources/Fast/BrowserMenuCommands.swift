@@ -78,6 +78,7 @@ struct SplitMenuCommands: View {
             if browser.pair(of: browser.activeID) != nil { browser.separate() } else { browser.splitView() }
         }
         .shortcut(.split)
+        // Of three or four, the next pane, round to the first.
         Button("Focus Other Half") {
             if let active = browser.active, let other = browser.partner(of: active) {
                 browser.focus(other)
@@ -88,7 +89,7 @@ struct SplitMenuCommands: View {
         Button("Swap Halves") {
             if let pair = browser.stagePair { browser.swapHalves(pair) }
         }
-        .disabled(!browser.splitShown)
+        .disabled(!browser.splitShown || browser.stagePair?.count != 2)
     }
 }
 

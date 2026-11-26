@@ -1060,18 +1060,27 @@ struct ContentView: View {
                         // ran again at every navigation for it.
                         let devHere = (!Narrow.dev || browser.devOpen || browser.devMoving) && browser.toolsFront != nil
                         DevRoom(open: devHere && browser.devOpen && !browser.devDetached, side: browser.devSide, rim: devRim, height: devSize.height, width: devSize.width) {
-                        SplitRoom(drag: browser.splitDrag, preview: browser.splitPreview, share: browser.stagePair?.share ?? 0.5, book: browser.splitBook, measured: { browser.floorWindow() }) {
-                            ForEach(0..<2, id: \.self) { slot in
+                        SplitRoom(drag: browser.splitDrag, preview: browser.splitPreview, share: browser.stagePair?.share ?? 0.5, shape: browser.stagePair, book: browser.splitBook, measured: { browser.floorWindow() }) {
+                            ForEach(0..<Pair.mostPanes, id: \.self) { slot in
                                 if let id = browser.stages[slot], let tab = browser.tabs.first(where: { $0.id == id }) {
                                     half(tab)
                                         .layoutValue(key: SplitLayout.Place.self, value: browser.side(of: id))
                                         .zIndex(browser.wide == id ? 1 : 0)
                                 }
                             }
-                            if browser.splitShown {
-                                SplitDivider(browser: browser, drag: browser.splitDrag, flat: !laid)
-                                    .layoutValue(key: SplitLayout.Place.self, value: .gap)
-                                    .zIndex(2)
+                            if browser.splitShown, let pair = browser.stagePair {
+                                if pair.halves {
+                                    SplitDivider(browser: browser, drag: browser.splitDrag, flat: !laid)
+                                        .layoutValue(key: SplitLayout.Place.self, value: .gap)
+                                        .zIndex(2)
+                                } else {
+                                    ForEach(pair.allCuts.indices, id: \.self) { cut in
+                                        SplitDivider(browser: browser, drag: browser.splitDrag, flat: !laid, cut: cut,
+                                                     stacked: pair.arrangement == .stacked || (pair.arrangement == .grid && cut == 1))
+                                            .layoutValue(key: SplitLayout.Place.self, value: .cut(cut))
+                                            .zIndex(2)
+                                    }
+                                }
                             }
                         }
                             if devHere && !browser.devDetached && (browser.devOpen || browser.devMoving) {
@@ -1159,7 +1168,7 @@ struct ContentView: View {
                             // its margins, so they are added back. The
                             // top rim is each one's own, so the notice
                             // can be tucked away above it.
-                            .padding(.top, margins.top + barHeight)
+                            .padding(.top, margins.top + barHeight + max(0, browser.frontPaneInset()?.top ?? 0))
                             .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                             }
@@ -1170,7 +1179,7 @@ struct ContentView: View {
                             // its buttons in the corner (AskStand).
                             GeometryReader { room in
                                 AskStandView(browser: browser)
-                                    .padding(.bottom, margins.bottom + Metrics.rim)
+                                    .padding(.bottom, margins.bottom + Metrics.rim + max(0, browser.frontPaneInset()?.bottom ?? 0))
                                     .padding(.trailing, margins.trailing + Metrics.rim + devTrail + frontTrail(in: room.size.width - margins.leading - margins.trailing - devTrail))
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                             }
@@ -1287,6 +1296,15 @@ struct ContentView: View {
         .animation(browser.spaceWash.turning ? nil : Motion.glide, value: browser.prefs.swatch)
     }
 
+    /// Of three or four panes, whether this one is in the room's top corner
+    /// on that side: the downloads and extensions stand in the right one's
+    /// band, the column's button in the one beside the column. Nil for a
+    /// lone page or two halves, which say so by their side.
+    private func topPane(_ side: Side, _ tab: Tab, right: Bool) -> Bool? {
+        guard case .pane = side, let pair = browser.stagePair else { return nil }
+        return pair.topPane(right: right) == tab.id
+    }
+
     /// A page on its stage, with the address bar over it when there is
     /// one: the whole room, or one of two halves side by side, each with a
     /// bar of its own.
@@ -1311,9 +1329,9 @@ struct ContentView: View {
                     AddressBar(
                         browser: browser, tab: tab, peek: browser.peek, strip: !browser.prefs.sidebar,
                         height: AddressBar.height(sidebar: browser.prefs.sidebar, carded: laid), corner: corner,
-                        half: split, doors: side != .left,
+                        half: split, doors: topPane(side, tab, right: true) ?? (side != .left),
                         // Of two halves, the one on the column's side.
-                        columnDoor: side != (browser.flank == .right ? .left : .right), leadingInset: margins.leading,
+                        columnDoor: topPane(side, tab, right: browser.flank == .right) ?? (side != (browser.flank == .right ? .left : .right)), leadingInset: margins.leading,
                         leave: split ? { [browser, id = tab.id] in browser.leaveSplit(id) } : nil
                     )
                     .toned(worn)
@@ -1427,6 +1445,7 @@ struct ContentView: View {
     /// takes: the find bar and the notices are about the page in front, and
     /// stand in its corner, not the window's.
     private func frontTrail(in room: CGFloat) -> CGFloat {
+        if room > 0, let inset = browser.frontPaneInset() { return max(0, inset.trailing) }
         guard browser.splitShown, let pair = browser.stagePair, browser.activeID == pair.first, room > 0 else { return 0 }
         // As SplitLayout places the halves.
         let left = ((room - Pair.gap) * pair.share).rounded()

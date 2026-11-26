@@ -240,6 +240,9 @@ final class ColumnHand: NSObject {
     /// Where the press began and where the hand is, in the column's space
     /// (SideBar's "column": in from the margin, down from the top).
     private var startAt: CGPoint = .zero
+    /// Where the press fell in its row, from the row's top left, for the
+    /// chip of a split's row it took (`decking`).
+    private(set) var pressInRow: CGPoint = .zero
     private var at: CGPoint = .zero
     private var scrollAtStart: CGFloat = 0
     private var scrollTimer: Timer?
@@ -340,7 +343,7 @@ final class ColumnHand: NSObject {
             shape.forming = .init(target: choice.target, held: held, nest: nest)
             if !nest.today {
                 shape.pinning.insert(held)
-                if let tab = browser?.tab(id: held), let mate = browser?.partner(of: tab) { shape.pinning.insert(mate.id) }
+                shape.pinning.formUnion(browser?.mates(of: held) ?? [])
             }
         }
         if let carry {
@@ -475,7 +478,7 @@ final class ColumnHand: NSObject {
             let landedHerd = herd?.landed == true && herd?.members.contains(tab.id) == true
             if away || settling == tab.id || sinking == tab.id || browser?.dusting.contains(tab.id) == true || landedHerd {
                 out.opacity = 0
-            } else if (decked != nil && (decked == tab.id || browser?.partner(of: tab)?.id == decked)) || torn == tab.id {
+            } else if (decked != nil && (decked == tab.id || browser?.mates(of: tab.id).contains(where: { $0 == decked }) == true)) || torn == tab.id {
                 out.opacity = 0.5
             }
         case .more(let key, _):
@@ -571,6 +574,7 @@ final class ColumnHand: NSObject {
             scrollAtStart = page.offset
             at = point
             guard let item = page.item(at: grip.start) else { return grip.state = .cancelled }
+            if let middle = page.rowMiddle(item.id) { pressInRow = CGPoint(x: startAt.x, y: grip.start.y - (middle - item.height / 2)) }
             spaceCarry = ColumnSpaceCarry(browser: browser, page: page, hand: self, item: item, start: grip.start)
             // The stationary pager's points only when the page sits in one;
             // a page hosted alone keeps its own (flipped) coordinates.
@@ -765,14 +769,16 @@ final class ColumnHand: NSObject {
 
     private func alone(_ held: Tab) -> [Tab] {
         guard let browser, let pair = browser.pair(of: held.id), pair.first == held.id else { return looseTabs }
-        return looseTabs.filter { $0.id != pair.second }
+        return looseTabs.filter { !pair.contains($0.id) || $0.id == held.id }
     }
 
     private var pairRows: [Int]? {
         guard let browser, !browser.pairs.isEmpty else { return nil }
         var row = -1
         return looseTabs.map { tab in
-            if browser.pair(of: tab.id)?.second != tab.id { row += 1 }
+            if browser.pair(of: tab.id).map({ $0.first == tab.id }) ?? true { row += 1 }
+            // A split of four's row is two rows: the next one starts after both.
+            defer { if browser.rowsTaken(by: tab.id) == 2 { row += 1 } }
             return max(0, row)
         }
     }
@@ -977,7 +983,7 @@ final class ColumnHand: NSObject {
         let out = browser.flank == .left ? point.x > width - SideBar.margin + 8 : point.x < -SideBar.margin - 8
         if out { unfold() }
         if out, decked == nil, carry == nil, let herd, herd.ids.count == 1, !herd.landed,
-           let deck = decking(tab, at: startAt.x), SplitDeck.shared.begin(deck, in: browser) {
+           let deck = decking(tab), SplitDeck.shared.begin(deck, in: browser) {
             unfold()
             decked = deck.id
             self.herd = nil
@@ -996,7 +1002,7 @@ final class ColumnHand: NSObject {
             if out { SplitDeck.shared.move(); return }
             SplitDeck.shared.leave()
             decked = nil
-        } else if out, carry == nil, let deck = decking(tab, at: startAt.x), SplitDeck.shared.begin(deck, in: browser) {
+        } else if out, carry == nil, let deck = decking(tab), SplitDeck.shared.begin(deck, in: browser) {
             unfold()
             decked = deck.id
             target = from
@@ -1205,7 +1211,7 @@ final class ColumnHand: NSObject {
             target = from
         }
         if let choice, choice.revealed, choice.side == .split,
-           let other = browser.tab(id: choice.target), browser.canCarry(tab, beside: other) {
+           let other = browser.tab(id: choice.target), browser.canSplit(tab, onto: other) {
             self.choicePreviousActive = nil
             self.choice = nil
             combine = nil
@@ -1214,7 +1220,7 @@ final class ColumnHand: NSObject {
             dragging = nil
             aim = nil
             travel = 0
-            browser.split(tab, with: other)
+            browser.split(tab, onto: other)
             page.refresh(ColumnMotion.settle)
             return
         }
@@ -1250,8 +1256,8 @@ final class ColumnHand: NSObject {
                 tab.kept = guise.kept && tab.keepable
                 tab.nest = guise.nest.flatMap { id in browser.nests.first { $0.id == id } }
             }
-            let past = self.aim != nil && self.target > self.from && browser.partner(of: tab) != nil && browser.pair(of: tab.id)?.first == tab.id
-            if self.target != self.from { browser.move(tab, to: self.target + (past ? 1 : 0) + browser.pinnedCount) }
+            let past = self.aim != nil && self.target > self.from && browser.pair(of: tab.id)?.first == tab.id ? browser.mates(of: tab.id).count : 0
+            if self.target != self.from { browser.move(tab, to: self.target + past + browser.pinnedCount) }
             if changed {
                 self.folders.refresh()
                 browser.writeSession(now: true)
@@ -1436,7 +1442,7 @@ final class ColumnHand: NSObject {
               at.x >= 0, at.x <= columnWidth,
               let under = choiceTarget(held: tab),
               let other = browser.tab(id: under) else { return unfold() }
-        let canSplit = browser.canCarry(tab, beside: other)
+        let canSplit = browser.canSplit(tab, onto: other)
         let side: TabDropChoice.Side = canSplit && at.x >= columnWidth / 2 ? .split : .folder
         if choice?.target == under {
             if choice?.side != side {
@@ -1472,7 +1478,7 @@ final class ColumnHand: NSObject {
         guard let browser else { return nil }
         if let choice, choice.ready, let middle = formingPointerY,
            abs(at.y - middle) < SideBar.row / 2 { return choice.target }
-        let partner = browser.partner(of: held)?.id
+        let mates = browser.mates(of: held.id)
         let moving = folderShifts
         for item in page.items {
             if item.id.hasPrefix("choice child ") { continue }
@@ -1481,7 +1487,7 @@ final class ColumnHand: NSObject {
             case .tab(let value), .pair(let value, _): tab = value
             default: continue
             }
-            guard tab.id != held.id, tab.id != partner, tab.keepable,
+            guard tab.id != held.id, !mates.contains(tab.id), tab.keepable,
                   !folders.theirs(tab), let middle = page.rowMiddle(item.id) else { continue }
             let shift = rowShift(tab, index: index(of: tab), step: ColumnLayout.step, moving: moving)
             if abs(at.y - middle - shift) < SideBar.row / 2 - 3 { return tab.id }
@@ -1494,7 +1500,8 @@ final class ColumnHand: NSObject {
         if choice.side == .split {
             if choicePreviousActive == nil { choicePreviousActive = browser?.activeID }
             browser?.select(other)
-            browser?.previewSplit(.right)
+            // Beside a lone page, room made for it; a split shows as it is.
+            if browser?.pair(of: other.id) == nil { browser?.previewSplit(.right) }
         } else {
             restoreChoicePreview()
             self.choice?.fill = 0
@@ -1511,7 +1518,7 @@ final class ColumnHand: NSObject {
                 nest.fleeting = !other.kept
                 self.formingNest = nest
                 self.formingPointerY = self.at.y
-                self.choice?.count = (self.browser?.partner(of: other) == nil ? 1 : 2) + (self.browser?.partner(of: tab) == nil ? 1 : 2)
+                self.choice?.count = 2 + (self.browser?.mates(of: other.id).count ?? 0) + (self.browser?.mates(of: tab.id).count ?? 0)
                 self.choice?.ready = true
                 self.combine = other.id
                 self.level()
@@ -1549,9 +1556,10 @@ final class ColumnHand: NSObject {
         spaceCarry?.refreshHand()
     }
 
-    private func decking(_ tab: Tab, at x: CGFloat) -> Tab? {
-        guard let browser, let other = browser.partner(of: tab), browser.pair(of: tab.id)?.first == tab.id else { return tab }
-        return x > columnWidth / 2 ? other : tab
+    /// The chip under the press, of a split's row: as PairRow lays them.
+    func decking(_ tab: Tab) -> Tab? {
+        guard let browser, let pair = browser.pair(of: tab.id), pair.first == tab.id else { return tab }
+        return PairRow.chip(pair.ids.compactMap(browser.tab(id:)), at: pressInRow, width: columnWidth) ?? tab
     }
 
     // MARK: - a folder of yours in the hand (SideBar.nestReorder)
@@ -1740,8 +1748,8 @@ final class ColumnHand: NSObject {
             let kept = looseTabs.filter(\.kept)
             var head = carried.index < kept.count ? kept[carried.index] : nil
             // Never over the second of a pair: over the pair's row.
-            if let tab = head, let pair = browser.pair(of: tab.id), pair.second == tab.id, carried.index > 0,
-               kept[carried.index - 1].id == pair.first { head = kept[carried.index - 1] }
+            if let tab = head, let pair = browser.pair(of: tab.id), pair.first != tab.id,
+               let first = kept.first(where: { $0.id == pair.first }) { head = first }
             folders.stand(nest, before: head?.id)
             browser.writeSession(now: true)
         }
@@ -2019,10 +2027,10 @@ final class ColumnHand: NSObject {
 
     // MARK: - carrying several (SideBar.gather, herdMove, herdEnd)
 
-    /// The row's tabs: a pair row's two, first and second, or the one.
+    /// The row's tabs: a pair row's two, three or four, or the one.
     private func withMate(_ tab: Tab) -> [Tab.ID] {
-        guard let browser, let pair = browser.pair(of: tab.id), pair.first == tab.id, browser.tab(id: pair.second) != nil else { return [tab.id] }
-        return [pair.first, pair.second]
+        guard let browser, let pair = browser.pair(of: tab.id), pair.first == tab.id else { return [tab.id] }
+        return pair.ids.filter { browser.tab(id: $0) != nil }
     }
 
     private func gather(_ ids: [Tab.ID], held tab: Tab, index: Int, at point: CGPoint) {

@@ -980,7 +980,7 @@ final class Player {
     private var onScreen: Set<Tab.ID> {
         guard let browser, let active = browser.active else { return [] }
         var shown: Set<Tab.ID> = [active.id]
-        if let other = browser.partner(of: active) { shown.insert(other.id) }
+        shown.formUnion(browser.mates(of: active.id))
         return shown
     }
 

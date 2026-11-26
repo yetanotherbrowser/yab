@@ -58,7 +58,7 @@ struct SplitMenuTests {
             let list = ActionMenuList(menu: root, falls: true)
             #expect(list.compact && list.searchVisible)
             let pinTitle = pinned ? "Unpin Pair" : "Pin Pair"
-            #expect(list.lines.map(\.title) == [pinTitle, "Separate All Tabs", "Tab Options", "Left", "Right", "Duplicate", "Move to", "Archive Item", "Archive Tabs Below"])
+            #expect(list.lines.map(\.title) == [pinTitle, "Separate All Tabs", "Arrange", "Tab Options", "Left", "Right", "Duplicate", "Move to", "Archive Item", "Archive Tabs Below"])
             #expect(try item(root, [pinTitle]).image === MenuMark.image(pinned ? "pin.slash" : "pin"))
             #expect(list.lines.first { $0.title == "Tab Options" }?.enabled == false)
             #expect(list.lines.first { $0.title == "Left" }?.image != nil)

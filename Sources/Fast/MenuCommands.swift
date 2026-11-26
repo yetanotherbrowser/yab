@@ -299,7 +299,16 @@ enum MenuCommands {
             }
         }
         add(.swapHalves, "Swap Halves", ["swap split panes"], symbol: "arrow.left.arrow.right",
-            when: { $0.splitShown }) { if let pair = $0.stagePair { $0.swapHalves(pair) } }
+            when: { $0.splitShown && $0.stagePair?.count == 2 }) { if let pair = $0.stagePair { $0.swapHalves(pair) } }
+        for (command, title, aliases, symbol, arrangement) in [
+            (Command.splitSideBySide, "Split View Side by Side", ["arrange split side by side", "split columns"], "rectangle.split.2x1", Pair.Arrangement.across),
+            (.splitStacked, "Split View Stacked", ["arrange split stacked", "split rows", "split vertically"], "rectangle.split.1x2", .stacked),
+        ] {
+            add(command, title, aliases, symbol: symbol,
+                when: { browser in browser.splitShown && browser.stagePair.map { browser.canArrange($0, arrangement) } == true }) { browser in
+                if let pair = browser.stagePair { browser.arrange(pair, arrangement) }
+            }
+        }
         add(.developerPanel, "Open Developer Panel…", ["developer panels"], symbol: "hammer", opens: true,
             when: page) { choose(.developerPanel, in: $0) }
         add(.showFullURL, "Show Full URL", ["full url"], symbol: "link",

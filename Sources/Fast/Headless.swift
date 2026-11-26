@@ -214,7 +214,7 @@ enum Headless {
             // Put to sleep by the quit: the pages in front load again.
             for browser in BrowserWindows.shared.browsers {
                 browser.active?.wake()
-                if let active = browser.active, let other = browser.partner(of: active) { _ = other.wake() }
+                if let active = browser.active { for id in browser.mates(of: active.id) { _ = browser.tab(id: id)?.wake() } }
             }
             return
         }

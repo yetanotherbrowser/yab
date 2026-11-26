@@ -335,7 +335,7 @@ extension Browser {
         // Arc's has no Pin Tab nor New Folder.
         guard !blank else { return }
         var going = group.filter(\.keepable)
-        for tab in going { if let other = partner(of: tab), other.keepable, !going.contains(where: { $0 === other }) { going.append(other) } }
+        for tab in going { for other in mates(of: tab.id).compactMap({ self.tab(id: $0) }) where other.keepable && !going.contains(where: { $0 === other }) { going.append(other) } }
         guard !going.isEmpty else { return }
         let ids = Set(going.map(\.id))
         going = tabs.filter { ids.contains($0.id) }
@@ -359,7 +359,7 @@ extension Browser {
     func releaseTabs(_ group: [Tab]) {
         if startsArranging { return arranging { releaseTabs(group) } }
         var going = group.filter(\.kept)
-        for tab in going { if let other = partner(of: tab), other.kept, !going.contains(where: { $0 === other }) { going.append(other) } }
+        for tab in going { for other in mates(of: tab.id).compactMap({ self.tab(id: $0) }) where other.kept && !going.contains(where: { $0 === other }) { going.append(other) } }
         guard !going.isEmpty else { return }
         let ids = Set(going.map(\.id))
         going = tabs.filter { ids.contains($0.id) }
@@ -412,7 +412,7 @@ extension Browser {
     /// where the first of them stood, its name ready. Never kept, so it goes
     /// when today's do (Nest.today).
     private func newTodayFolder(with group: [Tab], around: Tab? = nil) {
-        let members = Set(group.flatMap { tab in [tab.id] + [partner(of: tab)?.id].compactMap { $0 } })
+        let members = Set(group.flatMap { tab in [tab.id] + mates(of: tab.id) })
         let going = tabs.filter { $0.keepable && members.contains($0.id) }
         guard going.count > 1, let first = around ?? going.first else { return }
         let nest = Nest(name: "New Folder")

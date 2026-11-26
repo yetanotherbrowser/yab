@@ -172,10 +172,7 @@ enum KeptEverywhere {
         for (index, found) in todayAt { at[index] = list.count + strays.count + found }
         // None in front, or one gone from the list since: none.
         let front = own.front.flatMap { $0 < 0 ? $0 : at[$0] }
-        let pairs = (own.pairs ?? []).compactMap { pair -> Session.Pair? in
-            guard let a = at[pair.first], let b = at[pair.second], a != b else { return nil }
-            return Session.Pair(first: a, second: b, share: pair.share)
-        }
+        let pairs = (own.pairs ?? []).compactMap { $0.moved { at[$0] } }
         return Joined(shape: Session.Shape(tabs: restored + strays + today, front: front, pairs: pairs.isEmpty ? nil : pairs),
                       keyed: list.count + strays.count, strays: strays.count, fresh: own.tabs.isEmpty)
     }
@@ -195,10 +192,7 @@ enum KeptEverywhere {
             }
         }
         let front = shape.front.flatMap { $0 < 0 ? $0 : at[$0] }
-        let pairs = (shape.pairs ?? []).compactMap { pair -> Session.Pair? in
-            guard let a = at[pair.first], let b = at[pair.second], a != b else { return nil }
-            return Session.Pair(first: a, second: b, share: pair.share)
-        }
+        let pairs = (shape.pairs ?? []).compactMap { $0.moved { at[$0] } }
         return Session.Shape(tabs: list + rest, front: front, pairs: pairs.isEmpty ? nil : pairs)
     }
 
@@ -430,7 +424,7 @@ extension Browser {
             takeKept(entry, into: tab, nests: &nests)
             next.append(tab)
         }
-        let paired = Set((onScreen ? pairs : parked[space]?.pairs ?? []).flatMap { [$0.first, $0.second] })
+        let paired = Set((onScreen ? pairs : parked[space]?.pairs ?? []).flatMap(\.ids))
         var demoted: [Tab] = [], closing: [Tab] = [], shutting: [Tab] = []
         for tab in mine where !next.contains(where: { $0 === tab }) {
             if tab.asleep, tab.id != front, !paired.contains(tab.id) {
@@ -489,7 +483,10 @@ extension Browser {
             }
             let gone = Set(shutting.map(\.id))
             held.tabs = row
-            held.pairs.removeAll { gone.contains($0.first) || gone.contains($0.second) }
+            // A split a closed tab was in is the rest of it, as on screen.
+            held.pairs = held.pairs.compactMap { pair in
+                pair.ids.contains(where: gone.contains) ? pair.with(pair.ids.filter { !gone.contains($0) }) : pair
+            }
             if let active = held.active, gone.contains(active) { held.active = nil }
             parked[space] = held
             writeRow(row, active: held.active, space: space, pairs: held.pairs, now: true)
@@ -525,7 +522,7 @@ extension Browser {
             let onScreen = space == spaceID
             guard let current = self.row(of: space) else { continue }
             let front = onScreen ? activeID : parked[space]?.active
-            let paired = Set((onScreen ? pairs : parked[space]?.pairs ?? []).flatMap { [$0.first, $0.second] })
+            let paired = Set((onScreen ? pairs : parked[space]?.pairs ?? []).flatMap(\.ids))
             var going: [Tab] = []
             for tab in current where tab.keptKey != nil && tab.pin == nil && !tab.kept && tab.everywhere == nil {
                 if tab.asleep, tab.id != front, !paired.contains(tab.id) {

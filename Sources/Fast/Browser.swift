@@ -274,7 +274,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
             // A pin's copy goes with its pair, however the pair went
             // (`dropCarried`): separated, its other half closed, or the copy
             // replaced by another tab.
-            let left: [Tab.ID] = oldValue.flatMap { [$0.first, $0.second] }.filter { (id: Tab.ID) in
+            let left: [Tab.ID] = oldValue.flatMap(\.ids).filter { (id: Tab.ID) in
                 pair(of: id) == nil && tabs.contains { $0.id == id && $0.carriedFrom != nil }
             }
             if !left.isEmpty { DispatchQueue.main.async { [weak self] in self?.dropCarried(left) } }
@@ -344,11 +344,11 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// The side asked for last, set at once; `splitRoom` follows a frame on.
     @ObservationIgnored var splitRoomAsked: Side?
     @ObservationIgnored var splitRoomMoves = 0
-    /// Which tab each of the two stages shows. Read while drawing, changed
-    /// only with `activeID` or the pairs, and observed itself, so the window
-    /// that draws the stages depends on it and not on whatever else changed
-    /// with it.
-    var stages: [Tab.ID?] = [nil, nil]
+    /// Which tab each stage shows, one for each pane a split can have. Read
+    /// while drawing, changed only with `activeID` or the pairs, and
+    /// observed itself, so the window that draws the stages depends on it
+    /// and not on whatever else changed with it.
+    var stages = [Tab.ID?](repeating: nil, count: Pair.mostPanes)
     let splitBook = SplitBook()
     /// What plays in a tab you aren't looking at, for the band over the
     /// column's foot (Tune.swift, PlayerBand.swift).
@@ -2342,7 +2342,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// stand, not as the one on screen, Mail's list, which never has it.
     func barShown(_ row: Parked?, travelling: [Tab]) -> Bool {
         guard let row, let id = row.active else { return false }
-        if row.pairs.contains(where: { $0.first == id || $0.second == id }) { return true }
+        if row.pairs.contains(where: { $0.contains(id) }) { return true }
         guard let front = (row.tabs + travelling).first(where: { $0.id == id }), !front.isBlank, !front.showsMail else { return false }
         return prefs.addressBar || front.isDev
     }
@@ -3337,7 +3337,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         if windowID == nil, Startup.flag("SPARE_SOON") {
             Startup.later("spare") { [weak self] in self?.keepSpare(in: 0.05) }
         }
-        if let active, let other = partner(of: active) { _ = other.wake() }
+        if let active { for id in mates(of: active.id) { _ = tab(id: id)?.wake() } }
         tidy(atLaunch: true)
     }
 
@@ -3736,10 +3736,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
         }
         // Pairs by where their two stand in what was written: a tab left
         // out, a private one, takes its pair with it.
-        let kept = pairs.compactMap { pair -> Session.Pair? in
-            guard let a = written[pair.first], let b = written[pair.second] else { return nil }
-            return Session.Pair(first: a, second: b, share: Double(pair.share))
-        }
+        let kept = pairs.compactMap { Session.Pair($0) { written[$0] } }
         // Left with none in front, or on one never written (a private tab,
         // a blank one): none in front when it comes back, not its first pin
         // or folder tab woken for it.
@@ -4474,6 +4471,9 @@ final class Browser: NSObject, ObservableObject, Relaying {
         }
         // A pair still coming apart finishes first: ⌘W twice.
         settleNow()
+        // One of three or four: out of the split first, the rest staying
+        // one, and then closed or put down as a tab alone.
+        if let pair = pair(of: tab.id), pair.count > 2 { removePane(tab.id, from: pair) }
         // The other half a pin's copy: the pair goes whole, the copy with it
         // (`dropCarried`), and you land on the pin, on that same page.
         if tab.pin == nil, !tab.kept, let pair = pair(of: tab.id), let other = partner(of: tab),
@@ -4782,13 +4782,13 @@ final class Browser: NSObject, ObservableObject, Relaying {
               !agents.sealed(tabs[boundary]) else { return [] }
         var protected = selected
         for tab in group {
-            if let partner = partner(of: tab) { protected.insert(partner.id) }
+            protected.formUnion(mates(of: tab.id))
         }
         // A context menu can be opened on a background tab. Closing to its
         // side must leave the page already on screen and its split in place.
         if let active {
             protected.insert(active.id)
-            if let partner = partner(of: active) { protected.insert(partner.id) }
+            protected.formUnion(mates(of: active.id))
         }
         return tabs.indices.compactMap { index in
             guard before ? index < boundary : index > boundary else { return nil }
@@ -5086,7 +5086,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
             .map { pair(of: $0.id) == nil ? $0 : pinStandIn(for: $0) ?? $0 }
         guard !pinning.isEmpty else { return }
         let ids = Set(pinning.map(\.id))
-        if !pairs.isEmpty { pairs.removeAll { ids.contains($0.first) || ids.contains($0.second) } }
+        if !pairs.isEmpty { pairs.removeAll { $0.ids.contains(where: ids.contains) } }
         let shared = showsShared(spaceID)
         for tab in pinning {
             if tab.agent != nil { folderBook.keep(tab) }
@@ -5143,7 +5143,7 @@ final class Browser: NSObject, ObservableObject, Relaying {
             // Selecting one half also wakes its partner: both must already
             // be awake, outside the group, and belong to the person.
             guard let pair = pair(of: candidate.id) else { return true }
-            return [pair.first, pair.second].allSatisfy { id in
+            return pair.ids.allSatisfy { id in
                 guard !excluded.contains(id), let half = self.tab(id: id) else { return false }
                 return !half.asleep && half.builtPage != nil && !Agents.shared.sealed(half)
             }
@@ -5439,10 +5439,11 @@ final class Browser: NSObject, ObservableObject, Relaying {
         let pinned = pinnedCount
         if tab.pin != nil, index >= pinned { return }
         if tab.pin == nil, index < pinned { return }
-        folderBook.moving.formUnion([tab.id] + (partner(of: tab).map { [$0.id] } ?? []))
-        if let other = partner(of: tab) {
+        let mates = mates(of: tab.id)
+        folderBook.moving.formUnion([tab.id] + mates)
+        if !mates.isEmpty {
             // The two go together, where the one was let go.
-            tabs = Browser.moving(tabs, tab.id, to: index, with: other.id)
+            tabs = Browser.moving(tabs, tab.id, to: index, with: mates)
         } else {
             tabs.move(fromOffsets: IndexSet(integer: here), toOffset: index > here ? index + 1 : index)
         }
@@ -5453,8 +5454,8 @@ final class Browser: NSObject, ObservableObject, Relaying {
     /// partner with it, and never out of the pinned block or into it.
     func nudge(_ by: Int) {
         guard let tab = active else { return }
-        let partner = partner(of: tab)?.id
-        let span = tabs.indices.filter { tabs[$0].id == tab.id || tabs[$0].id == partner }
+        let mates = mates(of: tab.id)
+        let span = tabs.indices.filter { tabs[$0].id == tab.id || mates.contains(tabs[$0].id) }
         guard let low = span.first, let high = span.last else { return }
         move(tab, to: by > 0 ? high + 1 : low - 1)
     }

@@ -529,7 +529,7 @@ final class TearOff {
         let pins = browser.pinnedCount
         var rows: [TearRules.Row] = []
         for (index, other) in browser.tabs.enumerated() where (other.pin != nil) == pinned {
-            if let pair = browser.pair(of: other.id), pair.second == other.id { continue }
+            if let pair = browser.pair(of: other.id), pair.first != other.id { continue }
             let frame: CGRect?
             if column, !pinned {
                 frame = browser.drawnRows[DrawnRows.tab(other.id)]

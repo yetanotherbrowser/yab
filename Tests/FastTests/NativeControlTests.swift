@@ -767,4 +767,28 @@ struct NativeControlTests {
             #expect(browser.tabs.count == 35)
         }
     }
+
+    /// The agent's view of a split of three: every tab names all three, in
+    /// the split's order, and `splitPartnerId` stays the one it always was.
+    @MainActor @Test func contextNamesEveryTabOfASplit() throws {
+        try fixture { control, browser, session in
+            let first = try #require(browser.active)
+            let tabs = [first, Tab(), Tab(), Tab()]
+            for (at, tab) in tabs.enumerated() {
+                tab.restore(url: URL(string: "https://example.test/\(at)")!, title: "\(at)")
+                if at > 0 { browser.prepare(tab) }
+            }
+            browser.lay(tabs)
+            browser.pairs = [Pair(first: tabs[0].id, second: tabs[1].id, more: [tabs[2].id])]
+            let context = call(control, "context", browser, session, ["limit": 50])["tabs"] as? [[String: Any]] ?? []
+            let byID = Dictionary(context.map { ($0["id"] as? String ?? "", $0) }, uniquingKeysWith: { a, _ in a })
+            let split = tabs.prefix(3).map(\.id.uuidString)
+            for tab in tabs.prefix(3) {
+                #expect(byID[tab.id.uuidString]?["splitTabIds"] as? [String] == split)
+            }
+            #expect(byID[tabs[0].id.uuidString]?["splitPartnerId"] as? String == tabs[1].id.uuidString)
+            #expect(byID[tabs[3].id.uuidString]?["splitTabIds"] as? [String] == [])
+            #expect(byID[tabs[3].id.uuidString]?["splitPartnerId"] as? String == "")
+        }
+    }
 }

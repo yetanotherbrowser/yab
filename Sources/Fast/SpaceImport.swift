@@ -494,6 +494,7 @@ extension Browser {
         for index in (shape.pairs ?? []).indices {
             if shape.pairs![index].first >= after { shape.pairs![index].first += madePins.count }
             if shape.pairs![index].second >= after { shape.pairs![index].second += madePins.count }
+            shape.pairs![index].more = shape.pairs![index].more?.map { $0 >= after ? $0 + madePins.count : $0 }
         }
         shape.tabs.insert(contentsOf: madePins, at: after)
         // After the kept already there; the row is put in order as it is read.
@@ -502,6 +503,7 @@ extension Browser {
         for index in (shape.pairs ?? []).indices {
             if shape.pairs![index].first >= keptAt { shape.pairs![index].first += madeKept.count }
             if shape.pairs![index].second >= keptAt { shape.pairs![index].second += madeKept.count }
+            shape.pairs![index].more = shape.pairs![index].more?.map { $0 >= keptAt ? $0 + madeKept.count : $0 }
         }
         shape.tabs.insert(contentsOf: madeKept, at: keptAt)
         shape.tabs.append(contentsOf: madeOpen)

@@ -65,13 +65,13 @@ extension Browser {
         settleNow()
         cancelTabEdit()
         var ids = Set(picked.map(\.id))
-        for tab in picked { if let other = partner(of: tab) { ids.insert(other.id) } }
+        for tab in picked { ids.formUnion(mates(of: tab.id)) }
         let moving = tabs.filter { ids.contains($0.id) && !travels($0) && !$0.shy }
         guard !moving.isEmpty else { return }
         let destination = spaceWindow(for: target)
         let here = destination.spaceID
         _ = unpick()
-        pairs.removeAll { ids.contains($0.first) || ids.contains($0.second) }
+        pairs.removeAll { $0.ids.contains(where: ids.contains) }
         for (index, tab) in moving.enumerated() {
             let last = index == moving.count - 1
             moveOut(tab)

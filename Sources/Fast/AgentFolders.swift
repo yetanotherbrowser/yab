@@ -696,7 +696,8 @@ final class Folders: ObservableObject {
         var away: Set<Tab.ID> = []
         var hidden = 0
         for tab in tabs where tab.pin == nil && tab.kept {
-            let seen = tab.id == active || asking.contains(tab.id) || (active != nil && partner(tab.id) == active)
+            // A split's row is its first tab's: seen with any of it in front.
+            let seen = tab.id == active || asking.contains(tab.id) || (active != nil && (partner(tab.id) == active || active.flatMap(partner) == tab.id))
             if var place = placed[tab.id] {
                 if place.shown, !seen { hidden += 1 }
                 if !place.shown, seen { hidden -= 1 }
@@ -868,10 +869,11 @@ final class Folders: ObservableObject {
             for tab in own where tab.nest.map({ $0.today && alone[ObjectIdentifier($0)] == 1 }) == true { tab.nest = nil }
         }
         for pair in browser.pairs {
-            guard let first = browser.tabs.first(where: { $0.id == pair.first }),
-                  let second = browser.tabs.first(where: { $0.id == pair.second }) else { continue }
-            if second.kept != first.kept { second.kept = first.kept }
-            if second.nest !== first.nest { second.nest = first.nest }
+            guard let first = browser.tabs.first(where: { $0.id == pair.first }) else { continue }
+            for second in pair.ids.dropFirst().compactMap({ id in browser.tabs.first { $0.id == id } }) {
+                if second.kept != first.kept { second.kept = first.kept }
+                if second.nest !== first.nest { second.nest = first.nest }
+            }
         }
     }
 
@@ -1013,7 +1015,7 @@ final class Folders: ObservableObject {
             // The pair is one row even inside a folder. Its second half
             // keeps the first half's slot, but still ends its folder's run.
             let sharedSlot: Int?
-            if joined, let pair = browser?.pair(of: tab.id), pair.second == tab.id {
+            if joined, let pair = browser?.pair(of: tab.id), pair.first != tab.id {
                 sharedSlot = tabs[pair.first]
             } else {
                 sharedSlot = nil
@@ -1032,12 +1034,12 @@ final class Folders: ObservableObject {
                     tabs[tab.id] = sharedSlot
                     continue
                 }
-                if joined, let last, let pair = browser?.pair(of: tab.id), pair.second == tab.id, pair.first == last {
+                if joined, let last, let pair = browser?.pair(of: tab.id), pair.first != tab.id, pair.contains(last) {
                     tabs[tab.id] = slot - 1
                     continue
                 }
                 tabs[tab.id] = slot
-                if each.shown { slot += 1 }
+                if each.shown { slot += rows(tab) }
                 continue
             }
             for key in each.keys where made[key] == nil {
@@ -1045,7 +1047,7 @@ final class Folders: ObservableObject {
                 slot += 1
             }
             tabs[tab.id] = sharedSlot ?? slot
-            if each.shown, sharedSlot == nil { slot += 1 }
+            if each.shown, sharedSlot == nil { slot += rows(tab) }
             if tab.id != out, let more = places[tab.id]?.more, more > 0 { slot += 1 }
             // The empty ones at the end of each folder that ends here, the
             // deepest first, while it is open and its row drawn.
@@ -1068,6 +1070,10 @@ final class Folders: ObservableObject {
         for nest in todayBlock { made[nest.key] = slot; slot += 1 }
         return (tabs, made)
     }
+
+    /// The slots a tab's own row takes: one, or two for the first of a
+    /// split of four, whose chips stand in two rows (PairRow).
+    func rows(_ tab: Tab) -> Int { max(1, browser?.rowsTaken(by: tab.id) ?? 1) }
 
     /// The kept tabs in folders of yours that are open, as Arc's pinned
     /// tab is from its first click until its minus or ⌘W: opened since the
@@ -1325,15 +1331,15 @@ final class Folders: ObservableObject {
                 standsOver[at] = nests.count
             }
             guard let place = places[tab.id] else {
-                if joined, let last, let pair = browser?.pair(of: tab.id), pair.second == tab.id, pair.first == last { continue }
-                if !away.contains(tab.id) { slot += 1 }
+                if joined, let last, let pair = browser?.pair(of: tab.id), pair.first != tab.id, pair.contains(last) { continue }
+                if !away.contains(tab.id) { slot += rows(tab) }
                 continue
             }
             for key in place.bare ? [] : place.chain.isEmpty ? [place.folder] : place.chain where first[key] == nil {
                 first[key] = at
                 slot += 1
             }
-            if place.shown { slot += 1 }
+            if place.shown { slot += rows(tab) }
             if place.more > 0 { slot += 1 }
             for key in place.chain where ends[key] == at && key != carried && folder(key)?.nest?.open == true {
                 slot += trail[key]?.count ?? 0
@@ -1349,7 +1355,7 @@ final class Folders: ObservableObject {
             // only be put back together after it, and the row drawn a slot
             // off where it lands.
             if joined, option.index > 0, option.index < rest.count, let pair = browser?.pair(of: rest[option.index].id),
-               pair.second == rest[option.index].id, pair.first == rest[option.index - 1].id { continue }
+               pair.first != rest[option.index].id, pair.contains(rest[option.index - 1].id) { continue }
             let at = min(option.index, rest.count)
             let above = prefix[at]
             var slot = above.slot
@@ -1496,8 +1502,8 @@ final class Folders: ObservableObject {
         // The second of a pair drawn as one row: no row of its own, as in
         // `slots` (after the first, or anywhere after it in a folder).
         func second(_ tab: Tab, placed: Bool) -> Bool {
-            guard joined, let pair = browser?.pair(of: tab.id), pair.second == tab.id else { return false }
-            return placed ? seen.contains(pair.first) : pair.first == last
+            guard joined, let pair = browser?.pair(of: tab.id), pair.first != tab.id else { return false }
+            return placed ? seen.contains(pair.first) : pair.contains(last)
         }
         for (at, tab) in rest.prefix(keptIn).enumerated() {
             prefix.append(slot)
@@ -1507,14 +1513,14 @@ final class Folders: ObservableObject {
                 standsOver[at] = nests.count
             }
             guard let place = places[tab.id] else {
-                if !away.contains(tab.id), !second(tab, placed: false) { slot += 1 }
+                if !away.contains(tab.id), !second(tab, placed: false) { slot += rows(tab) }
                 continue
             }
             for key in place.chain where first[key] == nil {
                 first[key] = at
                 slot += 1
             }
-            if place.shown, !second(tab, placed: true) { slot += 1 }
+            if place.shown, !second(tab, placed: true) { slot += rows(tab) }
             if place.more > 0 { slot += 1 }
             for key in place.chain where ends[key] == at && folder(key)?.nest?.open == true {
                 slot += trail[key]?.filter { $0.key != carried }.count ?? 0
@@ -1528,7 +1534,7 @@ final class Folders: ObservableObject {
         for index in 0...keptIn where only.map({ $0.index == index }) ?? true {
             // Never between the two of a pair drawn as one row.
             if joined, index > 0, index < keptIn, let pair = browser?.pair(of: rest[index].id),
-               pair.second == rest[index].id, pair.first == rest[index - 1].id { continue }
+               pair.first != rest[index].id, pair.contains(rest[index - 1].id) { continue }
             let before = index > 0 ? rest[index - 1].nest?.chain ?? [] : []
             let after = index < keptIn ? rest[index].nest?.chain ?? [] : []
             var common = 0
@@ -1592,7 +1598,7 @@ final class Folders: ObservableObject {
             if index > keptIn, index < rest.count {
                 let above = rest[index - 1], below = rest[index]
                 if let inside = above.nest?.chain.first, below.nest?.within(inside) == true { continue }
-                if let pair = browser?.pair(of: below.id), pair.second == below.id, pair.first == above.id { continue }
+                if let pair = browser?.pair(of: below.id), pair.first != below.id, pair.contains(above.id) { continue }
             }
             let slot = index < rest.count ? head(rest[index]) ?? end : end
             let off = abs(Double(slot) - want)
@@ -1743,7 +1749,7 @@ final class Folders: ObservableObject {
         var last: Tab?
         for tab in order where tab.pin == nil && tab.kept && !skip.contains(tab.id) {
             defer { last = tab }
-            if let last, let pair = browser?.pair(of: tab.id), pair.second == tab.id, pair.first == last.id { continue }
+            if let last, let pair = browser?.pair(of: tab.id), pair.first != tab.id, pair.contains(last.id) { continue }
             if let top = tab.nest?.chain.first, let last, last.nest?.chain.first === top { continue }
             out.append(tab.id)
         }

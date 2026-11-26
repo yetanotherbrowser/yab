@@ -6124,7 +6124,8 @@ final class Bench {
                     }
                 }
             case "split-drag":
-                guard !Bench.dragDivider(browser, by: request["by"] as? Double ?? -240, over: request["over"] as? Double ?? 0.8, hold: request["hold"] as? Bool ?? false) else { break }
+                guard !Bench.dragDivider(browser, by: request["by"] as? Double ?? -240, over: request["over"] as? Double ?? 0.8, hold: request["hold"] as? Bool ?? false,
+                                         cut: request["cut"] as? Int) else { break }
                 answer(["error": "no divider on screen"]); link.invalidate(); return
             // A tab carried out over the pages (SplitDeck), as the column's
             // or the row's drag drives it: taken out at the top of the
@@ -6716,6 +6717,15 @@ final class Bench {
             case "with":
                 guard let other = target, let current = browser.active else { answer(missing(request)); return }
                 browser.split(other, with: current)
+            // The tab let go on the tab in front's row, as the column's drop
+            // does: a pair, or one more pane of its split.
+            case "onto":
+                guard let other = target, let current = browser.active else { answer(missing(request)); return }
+                browser.split(other, onto: current)
+            // The split in front laid "across", "stacked" or as a "grid".
+            case "arrange":
+                guard let pair = browser.stagePair, let way = (request["mode"] as? String).flatMap(Pair.Arrangement.init) else { answer(missing(request)); return }
+                browser.arrange(pair, way)
             case "view": browser.splitView()
             case "click":
                 // A click on the tab's row with `mods` held ("option",
@@ -6814,8 +6824,15 @@ final class Bench {
             DispatchQueue.main.asyncAfter(deadline: .now() + (request["act"] == nil ? 0 : 0.6)) {
                 let short = { (id: Tab.ID?) in id.map { String($0.uuidString.prefix(8)).lowercased() } ?? "" }
                 answer([
-                    "pairs": browser.pairs.map { ["first": short($0.first), "second": short($0.second), "share": Double($0.share)] },
-                    "shown": browser.stagePair.map { [short($0.first), short($0.second)] } ?? [],
+                    "pairs": browser.pairs.map { ["first": short($0.first), "second": short($0.second), "share": Double($0.share),
+                                                  "more": $0.more.map(short), "arrangement": $0.arrangement.rawValue, "cuts": $0.cuts.map(Double.init)] },
+                    "dividers": browser.stagePair.map { pair in
+                        SplitLayout.panes(pair.count, pair.arrangement, cuts: pair.allCuts, in: browser.splitBook.place).cuts.map { [$0.minX, $0.minY, $0.width, $0.height].map(Double.init) }
+                    } ?? [],
+                    "places": Dictionary(uniqueKeysWithValues: browser.tabs.compactMap { tab in
+                        browser.keySky.place(tab.id).map { (short(tab.id), [$0.minX, $0.minY, $0.width, $0.height].map(Double.init)) }
+                    }),
+                    "shown": browser.stagePair.map { $0.ids.map(short) } ?? [],
                     "stages": browser.stages.map(short),
                     "active": short(browser.activeID),
                     "wide": short(browser.wide),
@@ -10596,13 +10613,23 @@ extension Bench {
     /// `over` seconds a frame at a time, and let go, as posted mouse events
     /// the window hit-tests like the mouse's own. False with no divider.
     @MainActor
-    static func dragDivider(_ browser: Browser, by: Double, over: Double, hold: Bool = false) -> Bool {
+    /// `cut`: of three or four panes, or two stacked, which divider, moved
+    /// along the room: across it for one between panes one above another.
+    static func dragDivider(_ browser: Browser, by: Double, over: Double, hold: Bool = false, cut: Int? = nil) -> Bool {
         guard browser.splitShown, let pair = browser.stagePair, let window = Links.window,
-              let content = window.contentView, let left = browser.splitBook.frames[pair.first] else { return false }
+              let content = window.contentView else { return false }
         let height = content.bounds.height
-        let x0 = left.maxX + Pair.gap / 2
-        let y = left.midY
-        func post(_ type: NSEvent.EventType, _ x: Double, clicks: Int = 1) {
+        var x0: Double, y0: Double, down = false
+        if let cut {
+            let cuts = SplitLayout.panes(pair.count, pair.arrangement, cuts: pair.allCuts, in: browser.splitBook.place).cuts
+            guard cuts.indices.contains(cut) else { return false }
+            (x0, y0, down) = (cuts[cut].midX, cuts[cut].midY, cuts[cut].width > cuts[cut].height)
+        } else {
+            guard let left = browser.splitBook.frames[pair.first] else { return false }
+            (x0, y0) = (left.maxX + Pair.gap / 2, left.midY)
+        }
+        func post(_ type: NSEvent.EventType, _ along: Double, clicks: Int = 1) {
+            let (x, y) = down ? (x0, y0 - x0 + along) : (along, y0)
             guard let event = NSEvent.mouseEvent(
                 with: type, location: NSPoint(x: x, y: height - y), modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,

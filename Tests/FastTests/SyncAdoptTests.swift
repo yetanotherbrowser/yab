@@ -236,4 +236,24 @@ struct SyncAdoptTests {
             #expect(browser.pairs == [Pair(first: a.id, second: b.id, share: 0.4)])
         }
     }
+
+    /// A local split kept because its first is private (it never syncs):
+    /// a pane past its first two that another Mac has paired elsewhere is
+    /// that pair's alone, never in two splits.
+    @Test func aKeptLocalSplitGivesUpAPaneAnIncomingPairTook() {
+        world { browser in
+            let a = page(browser, 1, shy: true), b = page(browser, 2), c = page(browser, 3), d = page(browser, 4)
+            browser.lay([a, b, c, d])
+            browser.pairs = [Pair(first: a.id, second: b.id, more: [c.id], arrangement: .grid)]
+            browser.activeID = a.id
+
+            browser.adopt(.init(tabs: [entry(b), entry(c), entry(d)], active: 0,
+                                pairs: [.init(first: 1, second: 2, share: 0.5)]), in: browser.spaceID)
+
+            let all = browser.pairs.flatMap(\.ids)
+            #expect(Set(all).count == all.count, "a tab in two splits: \(browser.pairs)")
+            #expect(browser.pairs.contains { $0.first == c.id && $0.second == d.id })
+            #expect(browser.pairs.contains { $0.ids == [a.id, b.id] || $0.ids == [b.id, a.id] })
+        }
+    }
 }

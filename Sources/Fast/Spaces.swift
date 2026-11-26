@@ -717,7 +717,7 @@ extension Browser {
         var row = parked[home] ?? loadRow(home)
         var remaining = tabs
         remaining.remove(at: index)
-        pairs.removeAll { $0.first == tab.id || $0.second == tab.id }
+        pairs.removeAll { $0.contains(tab.id) }
         lay(remaining)
         let after = row.tabs.lastIndex { $0.pin != nil || ($0.kept && tab.pin == nil) }.map { $0 + 1 } ?? 0
         if tab.pin != nil || tab.kept { row.tabs.insert(tab, at: min(after, row.tabs.count)) } else { row.tabs.append(tab) }
@@ -843,7 +843,7 @@ extension Browser {
             let aside = tabs.filter { !along($0) && $0.everywhere != nil }
             // Pairs go with the row their two tabs are in.
             let gone = Set(leaving.map(\.id))
-            let leavingPairs = pairs.filter { gone.contains($0.first) && gone.contains($0.second) }
+            let leavingPairs = pairs.filter { $0.ids.allSatisfy(gone.contains) }
             let visited = visitFronts.removeValue(forKey: spaceID)
             writeRow(leaving, active: visited ?? activeID, space: spaceID, pairs: leavingPairs)
             // Parked as it is: music keeps playing in the space you left, as
@@ -1047,7 +1047,7 @@ extension Browser {
             guard !moving.isEmpty else { return made.id }
             row.tabs.removeAll { ids.contains($0.id) }
             if let active = row.active, ids.contains(active) { row.active = nil }
-            row.pairs.removeAll { ids.contains($0.first) || ids.contains($0.second) }
+            row.pairs.removeAll { $0.ids.contains(where: ids.contains) }
             parked[from] = row
             writeRow(row.tabs, active: row.active, space: from, pairs: row.pairs, now: true)
             moving.forEach { tab in
@@ -1072,7 +1072,7 @@ extension Browser {
         guard var row = parked[space], let at = row.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         row.tabs.remove(at: at)
         if row.active == tab.id { row.active = nil }
-        row.pairs.removeAll { $0.first == tab.id || $0.second == tab.id }
+        row.pairs.removeAll { $0.contains(tab.id) }
         parked[space] = row
         writeRow(row.tabs, active: row.active, space: space, pairs: row.pairs, now: true)
         tab.close()
@@ -1176,7 +1176,7 @@ extension Browser {
             if let floating, !(floater.kind == .call && inRow(floating) == nil) { land() }
             let leaving = tabs.filter { !travels($0) && $0.everywhere == nil }
             let gone = Set(leaving.map(\.id))
-            writeRow(leaving, active: activeID, space: id, pairs: pairs.filter { gone.contains($0.first) && gone.contains($0.second) }, now: true)
+            writeRow(leaving, active: activeID, space: id, pairs: pairs.filter { $0.ids.allSatisfy(gone.contains) }, now: true)
             row = Parked(tabs: leaving, active: activeID)
         } else if let kept = parked.removeValue(forKey: id) {
             writeRow(kept.tabs, active: kept.active, space: id, pairs: kept.pairs, now: true)
@@ -1382,7 +1382,7 @@ extension Browser {
         settleNow()
         cancelTabEdit()
         var ids = Set(picked.map(\.id))
-        for tab in picked { if let other = partner(of: tab) { ids.insert(other.id) } }
+        for tab in picked { ids.formUnion(mates(of: tab.id)) }
         // Nor the shared pins, for a space that has them already.
         let moving = tabs.filter { ids.contains($0.id) && sendable($0) && !pinnedAlready($0, in: target) }
         guard !moving.isEmpty else {
@@ -1401,7 +1401,7 @@ extension Browser {
         let from = spaceID
         let places = moving.map { tab in tabs.firstIndex { $0.id == tab.id } ?? 0 }
         let wasActive = activeID
-        let going = pairs.filter { ids.contains($0.first) && ids.contains($0.second) }
+        let going = pairs.filter { $0.ids.allSatisfy(ids.contains) }
         // A folder is in one space only: one all of whose tabs go goes with
         // them, out of a folder that stays; a tab whose folder stays
         // leaves it, as in Arc, and lands loose.
@@ -1437,7 +1437,7 @@ extension Browser {
         // Out of this row: the neighbor where the first of them stood is
         // in front, as after ⌘W, or the field if nothing is left.
         _ = unpick()
-        pairs.removeAll { ids.contains($0.first) || ids.contains($0.second) }
+        pairs.removeAll { $0.ids.contains(where: ids.contains) }
         let left = tabs.filter { !ids.contains($0.id) }
         lay(left)
         if let wasActive, ids.contains(wasActive) {
@@ -1609,10 +1609,7 @@ extension Browser {
         } else {
             row.tabs.append(contentsOf: today)
         }
-        row.pairs += going.compactMap { pair in
-            guard let a = map[pair.first], let b = map[pair.second] else { return nil }
-            return Pair(first: a, second: b, share: pair.share)
-        }
+        row.pairs += going.compactMap { pair in pair.mapped { map[$0] } }
         if row.active.map({ id in !row.tabs.contains { $0.id == id } }) ?? true { row.active = arrived.first?.id }
         parked[target] = row
         writeRow(row.tabs, active: row.active, space: target, pairs: row.pairs, now: true)
@@ -1720,9 +1717,9 @@ extension Browser {
         let ids = Set(move.tabs.map(\.now.id))
         let back = move.tabs.filter { moved in row.tabs.contains { $0 === moved.now } }
         guard !back.isEmpty else { return }
-        let going = row.pairs.filter { ids.contains($0.first) && ids.contains($0.second) }
+        let going = row.pairs.filter { $0.ids.allSatisfy(ids.contains) }
         row.tabs.removeAll { ids.contains($0.id) }
-        row.pairs.removeAll { ids.contains($0.first) || ids.contains($0.second) }
+        row.pairs.removeAll { $0.ids.contains(where: ids.contains) }
         if let active = row.active, ids.contains(active) { row.active = nil }
         parked[move.to] = row
         writeRow(row.tabs, active: row.active, space: move.to, pairs: row.pairs, now: true)
@@ -1746,10 +1743,7 @@ extension Browser {
         var row2 = tabs
         for (tab, at, _) in home { row2.insert(tab, at: min(at, row2.count)) }
         lay(row2)
-        pairs += going.compactMap { pair in
-            guard let a = map[pair.first], let b = map[pair.second] else { return nil }
-            return Pair(first: a, second: b, share: pair.share)
-        }
+        pairs += going.compactMap { pair in pair.mapped { map[$0] } }
         if let was = move.wasActive, let tab = home.first(where: { $0.2 == was })?.0 { select(tab) }
         else if !tabs.contains(where: { $0.id == activeID }), let first = tabs.first { select(first) }
         rememberSession()

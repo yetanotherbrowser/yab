@@ -46,7 +46,7 @@ final class ColumnSpaceCarry {
         if let folder { tabs = browser.tabs(in: folder) }
         else if let tab = item.tab {
             if browser.isPicked(tab) { tabs = browser.tabs.filter { browser.isPicked($0) } }
-            else { tabs = [tab] + [browser.partner(of: tab)].compactMap { $0 } }
+            else { tabs = [tab] + browser.mates(of: tab.id).compactMap { browser.tab(id: $0) } }
         } else { return nil }
         let y = item.isPin ? item.y : page.rowsTop + item.y
         gripY = start.y - y

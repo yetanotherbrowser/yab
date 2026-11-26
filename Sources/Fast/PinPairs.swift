@@ -78,13 +78,14 @@ extension Browser {
         return pair
     }
 
-    /// Whether this pair can be pinned as one: two tabs of yours, neither
-    /// a pin nor sealed. A half that is a pin's copy, carried beside the
-    /// other as Arc carries a pin (Split.swift's `carried`), counts as that
-    /// pin: two pins put side by side pin as one square of the two
-    /// (feedback #349). A kept or filed tab's copy is pinned itself.
+    /// Whether this pair can be pinned as one: two tabs of yours side by
+    /// side, neither a pin nor sealed. A half that is a pin's copy, carried
+    /// beside the other as Arc carries a pin (Split.swift's `carried`),
+    /// counts as that pin: two pins put side by side pin as one square of
+    /// the two (feedback #349). A kept or filed tab's copy is pinned itself.
     func canPinPair(_ pair: Pair) -> Bool {
-        guard let a = tab(id: pair.first), let b = tab(id: pair.second) else { return false }
+        // A pinned pair's square holds two side by side.
+        guard pair.halves, let a = tab(id: pair.first), let b = tab(id: pair.second) else { return false }
         func pinnable(_ tab: Tab) -> Bool {
             guard tab.pin == nil, !tab.bench, !tab.isBlank, tab.address != nil else { return false }
             if carriedHome(tab)?.pin != nil, pinHome(of: tab) == nil { return false }

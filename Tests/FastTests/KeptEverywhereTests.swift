@@ -224,4 +224,32 @@ struct KeptEverywhereTests {
         b.followKept(a.keptList(a.tabs), in: b.spaceID)
         #expect(b.tabs.elementsEqual(before, by: ===))
     }
+
+    /// With today's in every window, one pane of a split closed in another
+    /// window: the split parked here keeps its other panes.
+    @MainActor @Test func aPaneClosedElsewhereLeavesTheRestOfAParkedSplit() {
+        let was = KeptEverywhere.today
+        KeptEverywhere.today = true
+        let id = UUID(), space = UUID()
+        let b = Browser(windowID: id)
+        defer {
+            KeptEverywhere.today = was
+            b.letGo()
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: Store.folder.path)) ?? [] where name.contains(id.uuidString) {
+                try? FileManager.default.removeItem(at: Store.folder.appendingPathComponent(name))
+            }
+        }
+        let tabs = (0..<4).map { at -> Tab in
+            let tab = Tab()
+            tab.restore(url: URL(string: "https://kept.test/split-\(at)")!, title: "split \(at)")
+            b.prepare(tab)
+            return tab
+        }
+        b.parked[space] = Parked(tabs: tabs, active: tabs[3].id,
+                                 pairs: [Pair(first: tabs[0].id, second: tabs[1].id, more: [tabs[2].id], arrangement: .grid)])
+        let list = b.keptList(tabs).filter { $0.id != KeptEverywhere.key(tabs[2]).uuidString }
+        b.followKept(list, in: space)
+        #expect(!(b.parked[space]?.tabs.contains { $0 === tabs[2] } ?? true))
+        #expect(b.parked[space]?.pairs.map(\.ids) == [[tabs[0].id, tabs[1].id]])
+    }
 }

@@ -171,9 +171,7 @@ extension Browser {
         if let editing = editingPin, here[editing]?.pin == nil { editingPin = nil }
         lay(row.filter { $0.pin != nil } + row.filter { $0.pin == nil && $0.kept } + row.filter { $0.pin == nil && !$0.kept })
         let ids = Set(tabs.map(\.id))
-        let pairsBack = shape.pairs.map { pair in
-            Pair(first: replacing[pair.first]?.id ?? pair.first, second: replacing[pair.second]?.id ?? pair.second, share: pair.share)
-        }.filter { ids.contains($0.first) && ids.contains($0.second) }
+        let pairsBack = shape.pairs.compactMap { pair in pair.mapped { replacing[$0]?.id ?? $0 } }.filter { $0.ids.allSatisfy(ids.contains) }
         if pairs != pairsBack { pairs = pairsBack }
         folderBook.putEmpties(shape.empties)
         folderBook.refresh()
