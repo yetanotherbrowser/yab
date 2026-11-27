@@ -109,7 +109,7 @@ enum OpenCodeRunner {
         process.standardError = FileHandle.nullDevice
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         let writer = input.fileHandleForWriting
-        let server = CursorServer(name: "OpenCode", askMode: nil) { try? writer.write(contentsOf: $0) }
+        let server = CursorServer(write: { try? writer.write(contentsOf: $0) }, name: "OpenCode", askMode: nil)
         return await withCheckedContinuation { (done: CheckedContinuation<String, Never>) in
             let finish = { (words: String) in
                 guard !heard.over else { return }

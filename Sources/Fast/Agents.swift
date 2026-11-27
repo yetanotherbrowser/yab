@@ -2103,7 +2103,7 @@ final class Agents: ObservableObject {
                 } else if session.agent == .cursor || session.agent == .opencode {
                     let writer = input.fileHandleForWriting
                     let server = session.agent == .opencode
-                        ? CursorServer(name: "OpenCode", askMode: nil) { try? writer.write(contentsOf: $0) }
+                        ? CursorServer(write: { try? writer.write(contentsOf: $0) }, name: "OpenCode", askMode: nil)
                         : CursorServer { try? writer.write(contentsOf: $0) }
                     session.cursor = server
                     queued = true
