@@ -28,6 +28,14 @@ import WebKit
 // and a stuck one is ended with its group (StuckWatch), as tabs a page
 // opened always were.
 //
+// A site found with video or sound stops sharing. WebKit keeps one media
+// session manager for a whole page process, and each time a video starts,
+// stops or comes into view it goes over every media element of every page
+// in that process (MediaSessionManagerCocoa::performSessionStatusUpdate).
+// Five tabs of a page of 96 muted videos in one
+// process held its main thread 90 to 96% of the time while one of them
+// scrolled; each in a process of its own, 5 to 8%.
+//
 // Measured (docs/evidence/night-memory-2026-10-14.md): 200 tabs on a
 // 16 GB Mac, 201 page processes and 5156 MB, now 91 and 3753 MB.
 @MainActor
@@ -51,7 +59,7 @@ enum SiteProcesses {
     /// The view a page for `url` in `store` should share a process with, or
     /// nil for a process of its own.
     static func sibling(for url: URL?, store: WKWebsiteDataStore) -> WKWebView? {
-        guard on, let wanted = site(of: url) else { return nil }
+        guard on, let wanted = site(of: url), !mediaSites.contains(wanted) else { return nil }
         guard let all = processes(), all.count >= limit else { return nil }
         var best: (view: WKWebView, load: Int)?
         for views in all {
@@ -63,6 +71,34 @@ enum SiteProcesses {
             if best == nil || views.count < best!.load { best = (view, views.count) }
         }
         return best?.view
+    }
+
+    /// Sites a page of which had media, this run: their next pages get
+    /// processes of their own. Kept in memory only.
+    private(set) static var mediaSites: Set<String> = []
+
+    /// WebKit asked, once a page has loaded or settled on screen, whether
+    /// it has any media, playing, paused or muted.
+    static func learn(from web: WKWebView) {
+        guard on, let site = site(of: web.url), !mediaSites.contains(site) else { return }
+        ask(web)
+    }
+
+    /// The page's media state, learned for the site the page was on when
+    /// asked: a reply that comes after the view went to another site is
+    /// about the page it left.
+    static func ask(_ web: WKWebView, then answer: @escaping @MainActor (WKMediaPlaybackState) -> Void = { _ in }) {
+        let site = site(of: web.url)
+        web.requestMediaPlaybackState { state in
+            MainActor.assumeIsolated {
+                if let site { heard(state, on: site) }
+                answer(state)
+            }
+        }
+    }
+
+    static func heard(_ state: WKMediaPlaybackState, on site: String) {
+        if state != .none { mediaSites.insert(site) }
     }
 
     /// The site of an address as WebKit keeps sites apart: scheme and

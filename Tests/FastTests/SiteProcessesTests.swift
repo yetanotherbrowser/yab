@@ -77,6 +77,71 @@ struct SiteProcessesTests {
         second.stopLoading()
     }
 
+    /// A site with media never shares: WebKit keeps one media session
+    /// manager for a whole page process and goes over every page's media
+    /// each time one of them changes, so tabs of a video site in one
+    /// process held its main thread nearly all the time while one scrolled.
+    @Test func aSiteWithMediaKeepsItsPagesApartPastTheLimit() async throws {
+        let before = SiteProcesses.limit
+        SiteProcesses.limit = 1
+        defer { SiteProcesses.limit = before }
+        let browser = Browser(windowID: UUID())
+        defer { for tab in browser.tabs { tab.close() } }
+        // Native WebKit fixture: the media state asked for is WebKit's.
+        let tab = Tab(bench: true, factory: .webKitOnly)
+        browser.prepare(tab)
+        browser.lay(browser.tabs + [tab])
+        tab.go(to: URL(string: "about:blank")!)
+        let web = requireNativeWebKitFixture(tab, "SiteProcessesTests")
+        let store = web.configuration.websiteDataStore
+        web.loadHTMLString("<!doctype html><title>t</title><p>words</p>", baseURL: URL(string: "https://videos.test/a"))
+        try await until("the page without media") { web.url?.host == "videos.test" }
+        // Until one of its pages has media, the site shares past the limit.
+        try await until("its page as the sibling") { SiteProcesses.sibling(for: URL(string: "https://videos.test/c"), store: store) === web }
+        // WebKit counts media once an element has something to load.
+        web.loadHTMLString("<!doctype html><title>t</title><audio preload=auto src='\(silence)'></audio>",
+                           baseURL: URL(string: "https://videos.test/b"))
+        // The tab's own page load asks once it finishes; asked again here
+        // until the audio is in.
+        try await until("the site known to have media") {
+            SiteProcesses.learn(from: web)
+            return SiteProcesses.mediaSites.contains("https://videos.test")
+        }
+        #expect(SiteProcesses.sibling(for: URL(string: "https://videos.test/c"), store: store) == nil)
+    }
+
+    /// Media heard for a page counts for the site it was on when asked,
+    /// not for the site the view went to before WebKit answered.
+    @Test func mediaCountsForTheSiteThePageWasOnWhenAsked() {
+        let web = Asked(frame: .zero, configuration: WKWebViewConfiguration())
+        web.shown = URL(string: "https://left.test/a")
+        SiteProcesses.ask(web)
+        web.shown = URL(string: "https://arrived.test/a")
+        web.reply?(.paused)
+        #expect(SiteProcesses.mediaSites.contains("https://left.test"))
+        #expect(!SiteProcesses.mediaSites.contains("https://arrived.test"))
+    }
+
+    /// A view whose address the test moves and whose media state it sends.
+    private final class Asked: WKWebView {
+        var shown: URL?
+        var reply: (@MainActor (WKMediaPlaybackState) -> Void)?
+        override var url: URL? { shown }
+        override func requestMediaPlaybackState(completionHandler: @escaping @MainActor (WKMediaPlaybackState) -> Void) {
+            reply = completionHandler
+        }
+    }
+
+    /// A tenth of a second of silence, a WAV file as a data address.
+    private var silence: String {
+        func le(_ value: Int, _ bytes: Int) -> Data { Data((0..<bytes).map { UInt8((value >> (8 * $0)) & 0xFF) }) }
+        let samples = 800
+        var wav = Data("RIFF".utf8) + le(36 + samples, 4) + Data("WAVEfmt ".utf8)
+        wav += le(16, 4) + le(1, 2) + le(1, 2) + le(8000, 4) + le(8000, 4) + le(1, 2) + le(8, 2)
+        wav += Data("data".utf8) + le(samples, 4) + Data(repeating: 128, count: samples)
+        return "data:audio/wav;base64," + wav.base64EncodedString()
+    }
+
     private func until(_ what: String, _ condition: @MainActor () -> Bool) async throws {
         let end = Date().addingTimeInterval(20)
         while Date() < end {

@@ -1057,12 +1057,11 @@ final class StageView: NSView {
             // after each scroll (#243, evals/youtube-scroll). A still of a
             // playing video is out of date at once anyway; the one taken
             // as the page leaves its stage still is.
-            web.requestMediaPlaybackState { [weak self, weak web] state in
-                MainActor.assumeIsolated {
-                    guard let self, let web, state != .playing, self.owner == owner, self.wanted === web,
-                          self.awaitingPaint == nil, self.leaving == nil, self.still == nil else { return }
-                    self.picture(web, of: owner)
-                }
+            // Also learns media a page added after it loaded, a feed's videos.
+            SiteProcesses.ask(web) { [weak self, weak web] state in
+                guard let self, let web, state != .playing, self.owner == owner, self.wanted === web,
+                      self.awaitingPaint == nil, self.leaving == nil, self.still == nil else { return }
+                self.picture(web, of: owner)
             }
         }
     }
