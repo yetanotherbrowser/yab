@@ -1586,20 +1586,21 @@ private struct ModelsInLists: View {
 
     private func row(_ model: AgentModel) -> some View {
         let opacity = defaults.hidden.contains(model.id) ? 0.45 : 1.0
+        let detail = model.about.isEmpty && model.cli == "opencode" ? model.model : model.about
         return HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if !model.about.isEmpty {
+                if !detail.isEmpty {
                     // A description that fits needs no tip over the next model.
                     ViewThatFits(in: .horizontal) {
-                        Text(model.about)
+                        Text(detail)
                             .fixedSize(horizontal: true, vertical: false)
-                        Text(model.about)
+                        Text(detail)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .pointerTip(model.about)
+                            .pointerTip(detail)
                     }
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
@@ -1612,7 +1613,7 @@ private struct ModelsInLists: View {
                 .monospacedDigit()
                 .frame(width: 64, alignment: .trailing)
                 .opacity(opacity)
-            Toggle(model.name, isOn: Binding(
+            Toggle(model.cli == "opencode" ? "\(model.name), \(detail)" : model.name, isOn: Binding(
                 get: { !defaults.hidden.contains(model.id) },
                 set: { on in
                     if on { defaults.hidden.remove(model.id) } else { defaults.hidden.insert(model.id) }

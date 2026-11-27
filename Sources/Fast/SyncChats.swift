@@ -103,7 +103,8 @@ enum SyncChats {
     @MainActor
     static func every() -> [SyncMacModel] {
         (AgentModels.claude + AgentModels.codex() + OpenCodeRunner.models).map {
-            SyncMacModel(cli: $0.cli, model: $0.model, name: $0.name, about: $0.about, efforts: $0.efforts)
+            let about = $0.about.isEmpty && $0.cli == "opencode" ? $0.model : $0.about
+            return SyncMacModel(cli: $0.cli, model: $0.model, name: $0.name, about: about, efforts: $0.efforts)
         }
     }
 

@@ -108,8 +108,8 @@ struct SyncModelPickTests {
     }
 
     @Test func opencodeModelsAppearInEveryAndOfferedOnlyWhenConnectedAndUnhidden() {
-        let flash = SyncMacModel(cli: "opencode", model: "opencode/glm-5.3-flash", name: "Glm 5.3 Flash")
-        let sonnet = SyncMacModel(cli: "opencode", model: "opencode-go/claude-sonnet-5-5", name: "Claude Sonnet 5 5")
+        let flash = SyncMacModel(cli: "opencode", model: "opencode/glm-5.3-flash", name: "Glm 5.3 Flash", about: "opencode/glm-5.3-flash")
+        let sonnet = SyncMacModel(cli: "opencode", model: "opencode-go/claude-sonnet-5-5", name: "Claude Sonnet 5 5", about: "opencode-go/claude-sonnet-5-5")
         withOpenCodeSyncState(connected: false) {
             let every = SyncChats.every()
             #expect(every.contains(flash) && every.contains(sonnet))
@@ -191,6 +191,39 @@ struct SyncModelPickTests {
             #expect(!session.full && !session.textOnly)
             let env = OpenCodeRunner.sessionEnvironment([:], textOnly: session.textOnly, full: session.full)
             #expect(env["OPENCODE_CONFIG_CONTENT"] == OpenCodeRunner.browserOnlyConfig)
+        }
+    }
+
+    @Test func opencodeSyncModelsDistinguishSameNameAcrossProviders() throws {
+        try withOpenCodeSyncState(connected: true) {
+            Store.settings.set("opencode/claude-sonnet-5-5\nopenrouter/anthropic/claude-sonnet-5-5\nopenrouter/~z-ai/glm-latest\n",
+                               forKey: "agents.opencode.models")
+            let record = Record(collection: OpenOnMac.capability, id: "mac",
+                                fields: SyncChats.capability(device: "mac", models: SyncChats.offered()))
+            let roundTripped = ModelPick.models(record, device: "mac")
+
+            let direct = try #require(roundTripped.first { $0.model == "opencode/claude-sonnet-5-5" })
+            let routed = try #require(roundTripped.first { $0.model == "openrouter/anthropic/claude-sonnet-5-5" })
+            let tilde = try #require(roundTripped.first { $0.model == "openrouter/~z-ai/glm-latest" })
+
+            #expect(direct.name == "Claude Sonnet 5 5" && routed.name == "Claude Sonnet 5 5")
+            #expect(direct.about == "opencode/claude-sonnet-5-5")
+            #expect(routed.about == "openrouter/anthropic/claude-sonnet-5-5")
+            #expect(direct.detail == "opencode/claude-sonnet-5-5" && routed.detail == "openrouter/anthropic/claude-sonnet-5-5")
+            #expect(direct.detail != routed.detail)
+            #expect(direct.choiceLabel == "Claude Sonnet 5 5 · opencode")
+            #expect(routed.choiceLabel == "Claude Sonnet 5 5 · openrouter/anthropic")
+            #expect(direct.choiceLabel != routed.choiceLabel)
+            #expect(tilde.choiceLabel == "Glm Latest · openrouter/z-ai")
+
+            let emptyAbout = SyncMacModel(cli: "opencode", model: "openrouter/~z-ai/glm-latest", name: "Glm Latest", about: "")
+            #expect(emptyAbout.detail == "openrouter/~z-ai/glm-latest")
+            #expect(emptyAbout.choiceLabel == "Glm Latest · openrouter/z-ai")
+
+            let claude = SyncMacModel(cli: "claude", model: "opus", name: "Claude Opus", about: "For long, hard tasks.")
+            let codex = SyncMacModel(cli: "codex", model: "gpt-6", name: "GPT-6", about: "")
+            #expect(claude.detail == "For long, hard tasks." && claude.choiceLabel == "Claude Opus")
+            #expect(codex.detail.isEmpty && codex.choiceLabel == "GPT-6")
         }
     }
 }

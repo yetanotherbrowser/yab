@@ -287,7 +287,7 @@ private struct AttachMainPage: View {
                 let model = models.models.first { $0.model == pick.model && (pick.cli == nil || $0.cli == pick.cli) }
                 VStack(spacing: 0) {
                     if !models.models.isEmpty {
-                        ChoiceRow(title: "Model", value: model?.name ?? "Default", id: "chat.attachTray.model") { app.attachTrayPage(.model) }
+                        ChoiceRow(title: "Model", value: model?.choiceLabel ?? "Default", id: "chat.attachTray.model") { app.attachTrayPage(.model) }
                         Divider().padding(.leading, 16)
                         ChoiceRow(title: "Reasoning", value: pick.effort.map(SyncMacModel.effortTitle) ?? "Auto",
                                   id: "chat.attachTray.reasoning") { app.attachTrayPage(.reasoning) }
@@ -410,7 +410,7 @@ private struct ModelPage: View {
                         let group = models.filter { $0.cli == cli }
                         ForEach(Array(group.enumerated()), id: \.element.id) { n, model in
                             if n > 0 { Divider().padding(.leading, 16) }
-                            OptionRow(title: model.name, about: model.about,
+                            OptionRow(title: model.name, about: model.detail,
                                       checked: pick.model == model.model && (pick.cli == nil || pick.cli == model.cli)) {
                                 app.pickModel(model, for: id)
                             }
@@ -510,6 +510,7 @@ private struct OptionRow: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.attachTray.option")
         .accessibilityLabel(title)
+        .accessibilityValue(about ?? "")
         .accessibilityAddTraits(checked ? .isSelected : [])
     }
 }
