@@ -83,6 +83,7 @@ default:
         CursorUpdateGuard.install()
         ScrollWheelGuard.install()
         _ = AppleWritingTools.shared
+        _ = NativeTextSearch.shared
         YabApp.main()
     }
 }
