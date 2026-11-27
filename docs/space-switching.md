@@ -613,3 +613,84 @@ in by 85 to 130 ms; settled by 230 to 300 ms, as Dia (265 to 300).
 
 Not verified: a real trackpad (posted scroll events), hover in dark
 (the pointer state was not caught in that film).
+
+## The foot's floats, one phase, caught landings
+
+Four reports on the column's row of spaces, each filmed before and after
+in a probe world (window-server recordings of the probe's window; the
+pager's track at 120 samples a second for the curves).
+
+**A download's file cut in half.** With a finished download waiting over
+the downloads button, a change of space between spaces whose plates
+differ (a pinned extension showing in one and not the other, a split, Mail)
+cut the file's icon at the band's floor for the whole slide: its top half
+slid away with the space, its bottom stayed. On that route the band is
+pictured and the column's own drawing of it masked (`raise`), and the
+file's layer reaches up out of the foot over the floor, so it was both.
+
+**The island's card gone mid-switch.** The same route hid the open Now
+Playing card for the length of the slide, its buttons left under the floor:
+the card stands over the foot and up into the band.
+
+Both are AppKit views of the foot's (`BandView`, `HoardBadgeView`). As
+`ColumnFloat`s they say where they draw; the band's picture leaves them out,
+the mask leaves them live and the stage leaves them clear
+(`ColumnView.floats`, `PagerStage.keepClear`), so they stand still and on top
+while the row slides under them, as the island and the downloads button do
+at rest.
+
+**Stuck mid-swipe.** The row's state was four flags and a counter that had
+to agree (`holding`, `switching`, `pendingTarget`, `landings`). It is now one
+`SpacePaging.Phase` (idle, held, turning, releasing, landing) changed only by
+`SpacePaging.next`, with stale spring completions dropped by generation
+(`SpacePagingTests`). Fuzzing interleaved swipes, keys, touches, clicks,
+desktop changes and wheels found no stuck state but one: a lift that never
+came with nothing else happening held the row part way, the pointer moving
+freely. Two fingers on a trackpad can't move the pointer, so while the row
+is held a pointer that moved after the last scroll, with the scrolls quiet
+0.3 s, now lets it go as a still lift (`SpacePaging.liftedUnseen`).
+
+**The landing.** The spring stays response 0.2 s, critically damped. The
+fingers' speed goes to the landing spring only when it heads where the
+row lands (`SpacePaging.handOff`): a flick past the first or last space no
+longer throws the row further out first (27 pt before, 17 now, the fingers'
+own reach). A cancelled gesture goes back where it began, still. A second
+swipe while the row lands takes it where it is drawn and carries it on
+from there (`catchLanding`, `SpacePaging.travel`), where before the landing
+jumped to its end first.
+
+**New tab lit late.** Into a space with nothing in front, its New tab row
+lit only once the row had landed, 330 to 430 ms after the key, and later
+still after a few switches in a row, each adding its spring before the
+pages came down. The space beside was drawn as it would be with the space
+on screen's state: the pictured page (`PagedSpace`) never lit New tab, and
+an AppKit page laid ahead lit it as the space then in front had it. Both now
+light it from the space's own row, nothing in front meaning lit
+(`ColumnCell.Context.newTabLit`), so it slides in lit, as the tab in front
+of a space does.
+
+**The plate and the top's blur stand still.** Between spaces whose plates
+differ (a pinned extension in one and not the other, the bar shown in one
+and hidden in the other) the plate went with its page: the row was
+pictured, plate and all. The picture can't hold the live blur under the
+pins, so the rows scrolled under them showed through as the row set off,
+and the blur went with the space. Every change of space but Mail's now
+slides the column's own pages (`raiseLive`): the plate stays where it is,
+as the lights do, and its address and pins turn to the next space's on the
+row's spring, faded and blurred in (`SidePlate.turn`, through the switch's
+quiet transaction). Each page's blur over the top is drawn down the column
+only. While the row slides every page wears the strongest of the row's
+pages (`ColumnPages.stillTop`), so it reads as one layer standing still
+and no page's scrolled rows show through as a weaker one passes; at the
+landing it eases to the new page's own. A mix of the two pages under the
+row was tried first: it uncovered the leaving page's scrolled rows as the
+row headed to an unscrolled space.
+
+**The rows stay put under a sideways swipe.** The glide a trackpad sends
+after two fingers lift went on to the rows' scroll view, free to scroll
+with its up and down drift as the row of spaces landed. The column's catch
+now keeps a sideways gesture's glide to itself
+(`SpaceSwipe.Catch.gliding`).
+
+Not verified: a real trackpad (posted scroll events), the card brought out
+over the page, Reduce Motion.

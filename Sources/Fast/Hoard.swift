@@ -1559,7 +1559,7 @@ struct HoardBadge: NSViewRepresentable {
 
 /// The badge's layers. It listens to the Gauge itself, ten plain steps a
 /// second, and its pop and the file's rise play in the render server.
-final class HoardBadgeView: NSView {
+final class HoardBadgeView: NSView, ColumnFloat {
     enum State: Equatable {
         case none
         case going(Int)
@@ -1630,6 +1630,12 @@ final class HoardBadgeView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// The waiting file and its shadow.
+    var standing: [CGRect] {
+        guard let layer, file.opacity > 0 else { return [] }
+        return [file.convert(file.bounds, to: layer).insetBy(dx: -5, dy: -5)]
+    }
 
     func wear(_ inks: HoardDialInks) {
         guard dial.inks != inks else { return }

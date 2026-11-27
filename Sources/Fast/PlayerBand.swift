@@ -413,7 +413,7 @@ final class BarsLayer: CALayer {
 // MARK: - the view
 
 @MainActor
-final class BandView: NSView {
+final class BandView: NSView, ColumnFloat {
     /// The last one made, for the bench.
     static weak var last: BandView?
 
@@ -1469,6 +1469,9 @@ final class BandView: NSView {
     }
 
     /// Where the glass is, the island's and the buds', for the pointer.
+    /// The glass and its shadow, open or at rest.
+    var standing: [CGRect] { shapes().map { $0.0.insetBy(dx: -6, dy: -6) } }
+
     private func shapes() -> [(CGRect, Spot?)] {
         guard up else { return [] }
         var out: [(CGRect, Spot?)] = []

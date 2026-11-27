@@ -1099,6 +1099,7 @@ struct SidePlate: View {
     static let glyph: CGFloat = 13
     /// How long the fade is at the end of a name too long for the plate.
     static let fade: CGFloat = 20
+    static let turn = Animation.spring(response: SpacePaging.response, dampingFraction: SpacePaging.damping)
 
     static func pinsHeight(in browser: Browser) -> CGFloat {
         pinsHeight(in: browser, space: browser.spaceID, tab: browser.active ?? SpacePager.shared.keptPlate(in: browser))
@@ -1300,6 +1301,9 @@ struct SidePlate: View {
                         }
                     }
             }
+            // A change of space brings its address in for the last one's.
+            .id(tab.id)
+            .transition(.opacity.combined(with: .blurred(3)))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }

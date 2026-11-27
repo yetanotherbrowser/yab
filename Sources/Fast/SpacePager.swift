@@ -36,21 +36,22 @@ final class SpacePager {
     private var order: [UUID] = []
     /// Which of them stands at no offset: the one on screen when it came up.
     private var home = 0
+    /// The space the fingers measure from: `home`, or the one a caught landing was going to.
+    private var rest = 0
+    /// The fingers' travel a caught landing started them with (SpacePaging.travel).
+    private var seed: Double = 0
     /// How far the row of pages is slid, the model's value, negative
     /// toward the spaces after.
     private var offset: CGFloat = 0
     private var page: CGFloat = 0
+    private(set) var phase: SpacePaging.Phase = .idle
     /// Fingers on the column.
-    private(set) var holding = false
-    /// Springs still landing, of this coming up of the pages.
-    private var landings = 0
+    var holding: Bool { phase.held }
+    /// Bumped whenever the pages go down, so their springs' completions turn stale.
     private var generation = 0
     /// The color over the window while the fingers hold: the space they
     /// are taking it to, and how much of it shows.
     private var wash: (index: Int, opacity: Swift.Float)?
-    /// Set while a let-go switches the space itself, so the switch doesn't
-    /// start a turn of its own.
-    private var switching = false
     /// The column is a card over the page.
     private var floating = false
     /// Its ground is laid once under the row, not carried by each page.
@@ -60,10 +61,12 @@ final class SpacePager {
     /// still. Zero with no pins over it.
     private(set) var band: CGRect = .zero
     private var underPins: CGFloat = 0
-    /// The band takes in the plate: Mail, or spaces with different plate heights.
+    /// The band takes in the plate: Mail is in the change.
     private var plate = false
     /// What each page's grid shows, by its place in the order.
     private var pins: [Int: [Tab.ID]] = [:]
+    /// Where the foot's floats stand over the band (ColumnFloat): live over the row.
+    private var kept: [CGRect] = []
 
     /// With the AppKit column (ColumnKit), the row of pages is the column's
     /// own live pages (ColumnPages), slid in place: no picture, no mask.
@@ -112,15 +115,15 @@ final class SpacePager {
     /// the space on screen and lay out the ones it will slide past. False
     /// when the column isn't there to slide, or shouldn't.
     func turn(_ browser: Browser, to id: UUID) -> Bool {
-        if switching { return false }
+        if case .releasing = phase { return false }
         guard Self.allowed(browser), let target = browser.turnOrder.firstIndex(where: { $0.id == id }) else {
             if active { finish() }
             return false
         }
         if holding { finish() }
-        // A changing plate goes with its page, including a key that turns
-        // a still-landing live row toward a differently plated space.
-        let movingPlate = Self.movesPlate(browser, toward: target) ?? true
+        // Mail's head goes with its page, including a key that turns a
+        // still-landing live row toward Mail.
+        let movingPlate = Self.movesPlate(browser, toward: target)
         // Where the live row is drawn from the space it lands on: the
         // pictured row starts there, not snapped to that space.
         var carried: CGFloat = 0
@@ -143,16 +146,13 @@ final class SpacePager {
         hold(same(min(home, now, target)...max(home, now, target)))
         doors(toward: Array(min(home, now, target)...max(home, now, target)))
         SpaceShown.shared.pulled = true
-        pendingTarget = target
+        step(.turn(target: target))
         return true
     }
 
-    private var pendingTarget: Int?
-
     /// The switch has been made: the row lands on its space.
     func land() {
-        guard let target = pendingTarget else { return }
-        pendingTarget = nil
+        guard let target = phase.target else { return }
         animate(to: -CGFloat(target - home) * page, velocity: 0)
     }
 
@@ -162,35 +162,55 @@ final class SpacePager {
     /// they took the row with.
     func grab(_ browser: Browser, by event: NSEvent) -> Bool {
         guard Self.allowed(browser), browser.turnOrder.count > 1 else { return false }
-        // A landing still under way lands now; the fingers start from the
-        // space it brought.
         ColumnSpaceCarry.of(browser)?.willPage()
+        if catchLanding(browser) {
+            step(.grab(at: event.timestamp))
+            watchLift()
+            return true
+        }
         if active { finish() }
         guard raise(browser) else { return false }
-        holding = true
-        heldSince = event.timestamp
+        step(.grab(at: event.timestamp))
+        watchLift()
         return true
     }
 
-    /// When the move that took the row was made: what came before it, or
-    /// with it, is the gesture holding the row, not fingers down anew.
-    private var heldSince: TimeInterval = 0
+    /// Fingers take a landing row where it is drawn, measured from the space it was going to; false past a page.
+    private func catchLanding(_ browser: Browser) -> Bool {
+        guard case .landing = phase, self.browser === browser, page > 0, order == browser.turnOrder.map(\.id),
+              let to = order.firstIndex(of: browser.spaceID) else { return false }
+        let restX = -CGFloat(to - home) * page
+        let x = drawn
+        guard abs(x - restX) <= page else { return false }
+        // Mail beside the new space needs its head carried, which live or plateless pages can't.
+        if live != nil || !plate, Self.movesPlate(browser, toward: nil) { return false }
+        // The caught springs' completions turn stale.
+        generation += 1
+        live?.catchRow(at: x)
+        stage?.catchRow(at: x)
+        offset = x
+        rest = to
+        seed = SpacePaging.travel(for: Double(x - restX), page: Double(page), back: to > 0, forward: to < order.count - 1)
+        SpaceSwipe.note("caught at \(Int(x - restX)) of \(to)")
+        return true
+    }
 
     /// The fingers have gone `travel` points, negative toward the next space.
     func follow(_ travel: CGFloat) {
         guard holding, let browser else { return }
-        let back = home > 0, forward = home < order.count - 1
-        let x = CGFloat(SpacePaging.offset(travel: Double(travel), page: Double(page), back: back, forward: forward))
+        let back = rest > 0, forward = rest < order.count - 1
+        let x = CGFloat(SpacePaging.offset(travel: Double(travel) + seed, page: Double(page), back: back, forward: forward))
         // The space it is going toward drawn beside it, its page woken.
-        if x < 0, forward { build(home + 1) }
-        if x > 0, back { build(home - 1) }
-        let toward = x < 0 ? home + 1 : home - 1
+        if x < 0, forward { build(rest + 1) }
+        if x > 0, back { build(rest - 1) }
+        let toward = x < 0 ? rest + 1 : rest - 1
         // Toward a space that shows the same pins they stand still, toward
         // one with others, or none, they go with their page; past the first
         // or the last space, where the row only gives, they stay.
-        if x != 0 { hold(!order.indices.contains(toward) || same(toward...toward)) }
-        if x != 0 { doors(toward: [toward]) }
-        set(x)
+        if x != 0 { hold(!order.indices.contains(toward) || same(min(rest, toward)...max(rest, toward))) }
+        if x != 0 { doors(toward: [rest, toward]) }
+        set(x - CGFloat(rest - home) * page)
+        refreshKept()
         // The window takes on that space's color as far as the row has gone,
         // and a card's ground with it (SpaceWash's grounds).
         let share = Swift.Float(min(1, abs(x) / max(page, 1)))
@@ -204,15 +224,17 @@ final class SpacePager {
     }
 
     /// The fingers have lifted, going `speed` points a second.
-    func release(speed: CGFloat) {
+    /// The fingers have lifted at `speed` points a second; `cancelled` sends the row back where it began.
+    func release(speed: CGFloat, cancelled: Bool = false) {
         guard holding, let browser else { return }
-        holding = false
-        let back = home > 0, forward = home < order.count - 1
-        let to = SpacePaging.landing(offset: Double(offset), speed: Double(speed), page: Double(page), back: back, forward: forward)
-        let target = -CGFloat(to) * page
-        SpaceSwipe.note("release offset=\(Int(offset)) speed=\(Int(speed)) to=\(to)")
-        // The row goes on as fast as it was going, toward where it lands.
-        let velocity = speed * CGFloat(SpacePaging.follow)
+        let back = rest > 0, forward = rest < order.count - 1
+        let restX = -CGFloat(rest - home) * page
+        let to = cancelled ? 0 : SpacePaging.landing(offset: Double(offset - restX), speed: Double(speed), page: Double(page), back: back, forward: forward)
+        step(.lift(switching: to != 0))
+        let target = restX - CGFloat(to) * page
+        SpaceSwipe.note("release offset=\(Int(offset - restX)) speed=\(Int(speed)) to=\(to)\(cancelled ? " cancelled" : "")")
+        // The row goes on as fast as it was going, when that is toward where it lands.
+        let velocity = cancelled ? 0 : CGFloat(SpacePaging.handOff(Double(speed) * SpacePaging.follow, from: Double(offset), to: Double(target)))
         let showing = wash
         wash = nil
         if to == 0 {
@@ -224,7 +246,7 @@ final class SpacePager {
         }
         // Gone: the space comes at once, as Arc's page does, under a spring
         // the render server plays while its row is laid out.
-        let id = order[home + to]
+        let id = order[rest + to]
         let old = SpaceWash.grounded(in: browser)
         let shown = showing?.opacity ?? 0
         // How fast the row sets off, of its whole way a second, as its
@@ -237,7 +259,7 @@ final class SpacePager {
         // stood still while the row landed and came 100 to 200 ms after it,
         // more out of Mail (wash_matrix.py).
         var went = false
-        if old != nil, let new = paint(home + to, browser) {
+        if old != nil, let new = paint(rest + to, browser) {
             browser.spaceWash.go(new, from: shown, velocity: pace)
             went = true
         }
@@ -248,9 +270,8 @@ final class SpacePager {
         // When the two set off, the row's spring's own start when it has one.
         let began = went ? slideBegan ?? CACurrentMediaTime() : nil
         SpaceShown.shared.pulled = true
-        switching = true
         browser.switchSpace(to: id, washed: true)
-        switching = false
+        step(.switched)
         // The new color is the window's now; the old one over it clears from
         // as much of it as still showed, on the spring the row and the color
         // set off on before the switch, where it has got to: the same mix.
@@ -299,9 +320,10 @@ final class SpacePager {
         // the press with the throw. A click while the row was held did
         // nothing, the page's own click with it, and the row stayed up.
         let scroll = event.type == .scrollWheel
+        guard case .held(let since) = self.phase else { return }
         let phase: NSEvent.Phase = scroll ? event.phase : []
         switch Self.parting(scroll: scroll, phase: phase, momentum: scroll ? event.momentumPhase : [],
-                            at: event.timestamp, heldSince: heldSince) {
+                            at: event.timestamp, heldSince: since) {
         case .now:
             SpaceSwipe.note("let go by type=\(event.type.rawValue) phase=\(phase.rawValue)")
             lost(run)
@@ -335,6 +357,37 @@ final class SpacePager {
         if phase == .began || phase == .mayBegin { return .now }
         if phase == .ended || phase == .cancelled || momentum != [] { return .afterSwipe }
         return .no
+    }
+
+    private var liftWatch: Timer?
+
+    /// While fingers hold the row, a pointer that moves after their last scroll lets it go.
+    private func watchLift() {
+        liftWatch?.invalidate()
+        let run = generation
+        let grabbed = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 0.25, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                let pager = SpacePager.shared
+                guard pager.holding, pager.generation == run else { return timer.invalidate() }
+                let source = CGEventSourceStateID.combinedSessionState
+                let pointer = min(CGEventSource.secondsSinceLastEventType(source, eventType: .mouseMoved),
+                                  CGEventSource.secondsSinceLastEventType(source, eventType: .leftMouseDragged))
+                let scroll = CGEventSource.secondsSinceLastEventType(source, eventType: .scrollWheel)
+                guard SpacePaging.liftedUnseen(sincePointer: pointer, sinceScroll: scroll, heldFor: CACurrentMediaTime() - grabbed) else { return }
+                SpaceSwipe.note("let go by the pointer moving")
+                pager.lost(run)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        liftWatch = timer
+    }
+
+    private var springs: Int {
+        switch phase {
+        case .turning(_, let springs), .releasing(let springs), .landing(let springs): springs
+        case .idle, .held: 0
+        }
     }
 
     /// Let go where it is, as fingers lifted still.
@@ -389,23 +442,10 @@ final class SpacePager {
         return near.contains { order.indices.contains($0) && order[$0] == Space.mailID }
     }
 
-    /// Nil until setup has restored an unknown row. Diagnostics and
-    /// picture-ahead checks never restore tabs or their configurations.
-    private static func movesPlate(_ browser: Browser, toward target: Int?, load: Bool = false) -> Bool? {
-        if withMail(browser, toward: target) { return true }
-        guard ColumnKit.on else { return false }
-        let order = browser.turnOrder.map(\.id)
-        guard let home = order.firstIndex(of: browser.spaceID) else { return nil }
-        let current = SidePlate.extensionPlate(in: browser, space: browser.spaceID, tab: browser.active, shown: browser.sidePlated)
-        let travelling = browser.tabs.filter(browser.travels)
-        let plates: [SpacePlateRouting.Plate?] = SpacePlateRouting.places(home: home, count: order.count, toward: target).map { index in
-            let id = order[index]
-            if load, browser.parked[id] == nil { browser.parked[id] = browser.loadRow(id) }
-            guard let row = browser.parked[id].map({ browser.withShared($0, in: id) }) else { return nil }
-            let tab = (row.tabs + travelling).first { $0.id == row.active }
-            return SidePlate.extensionPlate(in: browser, space: id, tab: tab, shown: browser.sidePlated(row))
-        }
-        return SpacePlateRouting.moves(from: current, to: plates)
+    /// Only Mail's head goes with the pages: every other plate stands
+    /// still and changes what it shows when the space does (SidePlate).
+    private static func movesPlate(_ browser: Browser, toward target: Int?) -> Bool {
+        withMail(browser, toward: target)
     }
 
     /// The same plate-inclusive band for the picture, prepared pages and
@@ -428,7 +468,7 @@ final class SpacePager {
     /// drawing masked out.
     private func raise(_ browser: Browser, toward target: Int? = nil, movingPlate: Bool? = nil) -> Bool {
         let mail = Self.withMail(browser, toward: target)
-        let carriesPlate = movingPlate ?? Self.movesPlate(browser, toward: target) ?? true
+        let carriesPlate = movingPlate ?? Self.movesPlate(browser, toward: target)
         if ColumnKit.on && !carriesPlate { return raiseLive(browser) }
         // Out over the page as a card, the column stands in from the
         // window's edges and paints a ground of its own, cut out of the
@@ -440,8 +480,8 @@ final class SpacePager {
         let floating = browser.prefs.sideShut && browser.sideCard
         guard let column = browser.column, var band = column.spaceBand(browser), band.width > 20, band.height > 20 else { return false }
         let top = (floating ? Metrics.floatInset : 0) + browser.menuDown
-        // Different plate heights travel with their pages, as Mail's do:
-        // the native rows and the stationary SwiftUI plate share one mask.
+        // Mail's head travels with its page: the native rows and the
+        // stationary SwiftUI plate share one mask.
         if carriesPlate { band = Self.plateBand(band, top: top) }
         let height = column.bounds.height - top - (floating ? Metrics.floatInset : 0)
         // Where the pointer is, for the pages to come in under it as the
@@ -467,9 +507,10 @@ final class SpacePager {
         self.browser = browser
         self.order = order
         self.home = home
+        rest = home
+        seed = 0
         page = band.width
         offset = 0
-        landings = 0
         generation += 1
         wash = nil
         self.floating = floating
@@ -509,6 +550,8 @@ final class SpacePager {
             }
         }
         column.raise(stage)
+        kept = column.floats(over: band).rects
+        stage.keepClear(kept)
         // A row's card was over the space that slides away: gone with it.
         if browser.glance.shown != nil { browser.glance.drop() }
         // The card's blur and its row's in one backdrop group, one picture
@@ -530,9 +573,10 @@ final class SpacePager {
         self.browser = browser
         self.order = order
         self.home = home
+        rest = home
+        seed = 0
         page = pages.bounds.width
         offset = 0
-        landings = 0
         generation += 1
         wash = nil
         floating = browser.prefs.sideShut && browser.sideCard
@@ -549,6 +593,16 @@ final class SpacePager {
         return true
     }
 
+    /// The floats' openings as they stand now: the island opened or closed, a download landed.
+    private func refreshKept() {
+        guard let stage, let column = browser?.column else { return }
+        let now = column.floats(over: band).rects
+        guard now != kept else { return }
+        kept = now
+        stage.keepClear(now)
+        mask()
+    }
+
     /// The column's own drawing of the band hidden while the row is up: a
     /// card's hairline down either edge stays live, out of the mask and
     /// the window onto the row, and so do the pins while they stand still.
@@ -557,7 +611,7 @@ final class SpacePager {
         var hidden = floating ? band.insetBy(dx: PagerStage.rim, dy: 0) : band
         hidden.origin.y += stage.cut
         hidden.size.height -= stage.cut
-        browser?.column?.maskSpace(hidden, also: stage.hasDoors && stage.doorsGo ? stage.doorsFrame : nil)
+        browser?.column?.maskSpace(hidden, also: stage.hasDoors && stage.doorsGo ? stage.doorsFrame : nil, keep: kept)
     }
 
     /// The pins over the row stand still, or go with their pages. Still
@@ -804,14 +858,14 @@ final class SpacePager {
             if browser.parked[id] == nil { browser.parked[id] = browser.loadRow(id) }
             guard let row = browser.parked[id].map({ browser.withShared($0, in: id) }) else { continue }
             let started = CACurrentMediaTime()
-            let direct = Self.movesPlate(browser, toward: order.firstIndex(of: id), load: false)
-            let gesture = Self.movesPlate(browser, toward: nil, load: false)
+            let direct = Self.movesPlate(browser, toward: order.firstIndex(of: id))
+            let gesture = Self.movesPlate(browser, toward: nil)
             // The column's own page always: the switch adopts it whether
             // the row slides live or pictured, or it makes the space's rows
-            // in the switch's pass. A route that carries the plate also
-            // gets its pictured page. One a quiet turn.
+            // in the switch's pass. A route past Mail also gets its
+            // pictured page. One a quiet turn.
             let native = pages.ready(id, row: row, travelling: travelling)
-            let pictured = !native && (direct != false || gesture != false)
+            let pictured = !native && (direct || gesture)
                 && preparePlate(browser, id: id, row: row, travelling: travelling)
             guard native || pictured else { continue }
             Self.madeAhead += 1
@@ -821,7 +875,7 @@ final class SpacePager {
         }
     }
 
-    /// A pictured page for a plate-changing route. Its band, paint and
+    /// A pictured page for a route past Mail. Its band, paint and
     /// plate flag match build/page, including the page cache identity.
     private func preparePlate(_ browser: Browser, id: UUID, row: Parked, travelling: [Tab]) -> Bool {
         guard let column = browser.column, let window = column.window,
@@ -930,12 +984,10 @@ final class SpacePager {
     private func pictureAhead(_ browser: Browser) {
         guard !active, let column = browser.column, !(browser.prefs.sideShut && browser.sideCard),
               let band = column.spaceBand(browser), band.width > 20, band.height > 20 else { return }
-        // Only a route that carries the plate wants a picture with the
-        // AppKit column. Missing rows are restored by prepare/setup, never
-        // by this check; a later quiet turn can picture them.
+        // Only a route past Mail wants a picture with the AppKit column.
         let movingPlate = Self.movesPlate(browser, toward: nil)
-        if ColumnKit.on, movingPlate != true { return }
-        let picturedBand = movingPlate == true ? Self.plateBand(band, top: browser.menuDown) : band
+        if ColumnKit.on, !movingPlate { return }
+        let picturedBand = movingPlate ? Self.plateBand(band, top: browser.menuDown) : band
         _ = picture(column, band: picturedBand, card: nil, own: Self.ownGround(browser), browser: browser)
     }
 
@@ -1072,28 +1124,25 @@ final class SpacePager {
     /// fast as `velocity` adds: a spring added to whatever is still
     /// landing, so a second key turns it without a jolt.
     private func animate(to target: CGFloat, velocity: CGFloat) {
-        if let live {
-            let from = offset
-            offset = target
-            let run = generation
-            landings += 1
-            live.land(from: from, to: target, velocity: velocity) { [weak self] in
-                guard let self, self.generation == run else { return }
-                self.landings -= 1
-                if self.landings <= 0, !self.holding, self.pendingTarget == nil { self.finish() }
-            }
-            return
-        }
-        guard let stage else { return }
+        guard live != nil || stage != nil, step(.send) else { return finish() }
         let from = offset
         offset = target
         let run = generation
-        landings += 1
-        stage.land(from: from, to: target, velocity: velocity) { [weak self] in
+        let landed = { [weak self] in
             guard let self, self.generation == run else { return }
-            self.landings -= 1
-            if self.landings <= 0, !self.holding, self.pendingTarget == nil { self.finish() }
+            self.step(.landed)
         }
+        if let live { live.land(from: from, to: target, velocity: velocity, done: landed) } else { stage?.land(from: from, to: target, velocity: velocity, done: landed) }
+    }
+
+    /// One change of phase; the pages go down once the last spring of a landing is in.
+    @discardableResult
+    private func step(_ event: SpacePaging.Event) -> Bool {
+        guard let next = SpacePaging.next(phase, event) else { return false }
+        let was = phase
+        phase = next
+        if next == .idle, was != .idle, event != .finish { finish() }
+        return true
     }
 
     /// The pages down and the column's own drawing back: it is the space
@@ -1101,9 +1150,11 @@ final class SpacePager {
     func finish() {
         generation += 1
         livePlateTab = nil
-        landings = 0
-        holding = false
-        pendingTarget = nil
+        phase = .idle
+        kept = []
+        seed = 0
+        liftWatch?.invalidate()
+        liftWatch = nil
         if wash != nil {
             browser?.spaceWash.hide()
             wash = nil
@@ -1209,8 +1260,8 @@ final class SpacePager {
 
     /// Where the row is drawn now and where it is going, for the bench.
     var state: [String: Any] {
-        ["active": active, "holding": holding, "offset": Double(offset), "page": Double(page), "home": home,
-         "drawn": Double(drawn), "pages": live != nil ? livePages.sorted() : stage.map { $0.pages.keys.sorted() } ?? [], "landings": landings,
+        ["active": active, "holding": holding, "offset": Double(offset), "page": Double(page), "home": home, "rest": rest,
+         "drawn": Double(drawn), "pages": live != nil ? livePages.sorted() : stage.map { $0.pages.keys.sorted() } ?? [], "landings": springs, "phase": "\(phase)",
          "live": live != nil,
          // How far down the band the row's window starts: the pins over it
          // standing still, and where they would.
@@ -1423,6 +1474,17 @@ final class PagerStage: NSView {
     }
 
     private let shadows = Clip()
+
+    /// Nothing of the row drawn over `rects`: the foot's floats show through, live.
+    func keepClear(_ rects: [CGRect]) {
+        guard let layer else { return }
+        guard !rects.isEmpty else { return layer.mask = nil }
+        let mask = CAShapeLayer()
+        mask.frame = layer.bounds
+        mask.path = rects.reduce(CGPath(rect: layer.bounds, transform: nil)) { $0.subtracting(CGPath(rect: $1, transform: nil)) }
+        mask.fillColor = NSColor.black.cgColor
+        layer.mask = mask
+    }
 
     /// The head's doors, a row of their own over the band, on the way to
     /// or from Mail: back, forward and reload in a space, New Mail in Mail,
@@ -1677,6 +1739,17 @@ final class PagerStage: NSView {
     }
 
     /// From `from` to `to` on the spring, added to whatever still lands.
+    /// Held at `x` where it is drawn, its landing springs stopped: fingers caught it.
+    func catchRow(at x: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for each in sliding {
+            for key in each.animationKeys() ?? [] where key.hasPrefix("pager.") || key.hasPrefix("doors.") { each.removeAnimation(forKey: key) }
+            each.sublayerTransform = CATransform3DMakeTranslation(x, 0, 0)
+        }
+        CATransaction.commit()
+    }
+
     func land(from: CGFloat, to: CGFloat, velocity: CGFloat, done: @escaping () -> Void) {
         guard let layer = clip.layer else { return done() }
         let delta = from - to

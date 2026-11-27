@@ -295,6 +295,13 @@ struct ColumnHost: NSViewRepresentable {
     }
 }
 
+/// A view of the foot's that stands up over the space's band: kept live over the sliding row, never pictured.
+@MainActor
+protocol ColumnFloat: NSView {
+    /// Where it draws now, in its own layer's space.
+    var standing: [CGRect] { get }
+}
+
 final class ColumnView: NSView {
     private typealias Host = ColumnHoverHost<ColumnRoot>
     private let host: Host
@@ -481,6 +488,8 @@ final class ColumnView: NSView {
         // of the Now Playing island put away (PlayerBand) came out under its
         // own clear.
         let unseen = Self.unseen(in: layer)
+        // Live over the row instead (SpacePager.kept): pictured, they slid away with the space.
+        let floating = floats(over: band).layers
         let parts = Self.split(layer, band: band)
         func draw(hiding: [CALayer]) -> CGImage? {
             context.clear(band)
@@ -496,7 +505,7 @@ final class ColumnView: NSView {
             }
             return context.makeImage()
         }
-        let image = draw(hiding: ground + unseen + parts.outside)
+        let image = draw(hiding: ground + unseen + parts.outside + floating)
         // Only what stands beside the band and casts into it, each drawn
         // on its own where it stands. Drawn as the column with the band's
         // own layers hidden, a layer holding both kinds kept what it drew
@@ -505,11 +514,14 @@ final class ColumnView: NSView {
         // row as it slid, the next space's drawn through them (a tester,
         // 2026-10-10: "the tabs sort of overlap").
         var beside: CGImage?
-        if !parts.casting.isEmpty {
+        let casting = parts.casting.filter { part in
+            !floating.contains { float in sequence(first: part, next: \.superlayer).contains { $0 === float } }
+        }
+        if !casting.isEmpty {
             context.clear(band)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            for part in parts.casting {
+            for part in casting {
                 let origin = part.convert(part.bounds.origin, to: layer)
                 var alpha: Float = 1
                 var up = part.superlayer
@@ -680,15 +692,35 @@ final class ColumnView: NSView {
         }
     }
 
+    /// The foot's floats where they stand in `band`, in the host layer's space, and their layers.
+    func floats(over band: CGRect) -> (rects: [CGRect], layers: [CALayer]) {
+        guard let root = host.layer else { return ([], []) }
+        var rects: [CGRect] = [], layers: [CALayer] = []
+        func walk(_ view: NSView) {
+            guard !view.isHidden, !(view is ColumnPages) else { return }
+            if let float = view as? ColumnFloat {
+                guard let layer = view.layer else { return }
+                let mine = float.standing.map { layer.convert($0, to: root).intersection(band) }.filter { !$0.isEmpty }
+                if !mine.isEmpty {
+                    rects += mine
+                    layers.append(layer)
+                }
+                return
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(host)
+        return (rects, layers)
+    }
+
     func raise(_ stage: PagerStage) {
         stage.frame = bounds
         stage.autoresizingMask = [.width, .height]
         addSubview(stage, positioned: .above, relativeTo: host)
     }
 
-    /// The column's own drawing of `band` hidden, the rest of it as it is;
-    /// nil shows all of it again.
-    func maskSpace(_ band: CGRect?, also: CGRect? = nil) {
+    /// The column's own drawing of `band` hidden, `keep` (the foot's floats) left live; nil shows all of it again.
+    func maskSpace(_ band: CGRect?, also: CGRect? = nil, keep: [CGRect] = []) {
         guard let layer = host.layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -701,13 +733,10 @@ final class ColumnView: NSView {
         mask.frame = layer.bounds
         // Far past the window on every side, for the island's card out over
         // the page, with the band cut out of it.
-        let path = CGMutablePath()
-        path.addRect(layer.bounds.insetBy(dx: -4000, dy: -4000))
-        path.addRect(band)
-        // Apart from the band, or the even-odd fill shows their overlap.
-        if let also { path.addRect(also) }
-        mask.path = path
-        mask.fillRule = .evenOdd
+        var hidden = CGPath(rect: band, transform: nil)
+        if let also { hidden = hidden.union(CGPath(rect: also, transform: nil)) }
+        for rect in keep { hidden = hidden.subtracting(CGPath(rect: rect, transform: nil)) }
+        mask.path = CGPath(rect: layer.bounds.insetBy(dx: -4000, dy: -4000), transform: nil).subtracting(hidden)
         mask.fillColor = NSColor.black.cgColor
         layer.mask = mask
     }

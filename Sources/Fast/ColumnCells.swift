@@ -20,6 +20,8 @@ final class ColumnCell: NSHostingView<AnyView> {
         let look: ColumnPages.Look
         /// The tab the column lights: none while New tab's row is lit.
         let liveID: Tab.ID?
+        /// New tab's row lit: the space on screen's own state, or nothing in front of a space beside it.
+        var newTabLit = false
         /// The row the pointer is on, by its item's id (ColumnPage.point).
         var pointedID: String? = nil
     }
@@ -259,7 +261,7 @@ final class ColumnCell: NSHostingView<AnyView> {
         case .pair(let first, let second):
             tab = ObjectIdentifier(first)
             other = ObjectIdentifier(second)
-            lit = browser.newTabLit
+            lit = context.newTabLit
         case .nest(let nest, let n, let pose):
             tab = ObjectIdentifier(nest)
             count = n
@@ -270,7 +272,7 @@ final class ColumnCell: NSHostingView<AnyView> {
         case .more(_, let n):
             count = n
         case .newTab:
-            lit = browser.newTabLit
+            lit = context.newTabLit
         case .pin(let pin):
             tab = ObjectIdentifier(pin)
             // A pinned pair's square is lit with either half in front.
@@ -312,7 +314,7 @@ final class ColumnCell: NSHostingView<AnyView> {
         itemID = item.id
         binds += 1
         ColumnCell.bound += 1
-        let root = AnyView(Self.row(item, browser: browser, live: live, picked: picked, hold: hold, look: context.look, size: size,
+        let root = AnyView(Self.row(item, browser: browser, live: live, picked: picked, lit: lit, hold: hold, look: context.look, size: size,
                                     generation: generation, pointed: look.pointed))
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, hold.choice != nil || hold.compact {
             var transaction = Transaction()
@@ -370,8 +372,8 @@ final class ColumnCell: NSHostingView<AnyView> {
     }
 
     /// The row as SideBar draws it, in the column's words.
-    private static func row(_ item: ColumnItem, browser: Browser, live: Bool, picked: Bool, hold: Hold, look: ColumnPages.Look, size: CGSize,
-                            generation: Int, pointed: Bool) -> some View {
+    private static func row(_ item: ColumnItem, browser: Browser, live: Bool, picked: Bool, lit: Bool, hold: Hold, look: ColumnPages.Look,
+                            size: CGSize, generation: Int, pointed: Bool) -> some View {
         let prefs = browser.prefs
         return Group {
             switch item.kind {
@@ -395,7 +397,7 @@ final class ColumnCell: NSHostingView<AnyView> {
                         }
                     }
             case .pair(let first, let second):
-                PairRow(browser: browser, prefs: prefs, first: first, second: second, lifted: hold.lifted, shown: browser.newTabLit ? false : nil)
+                PairRow(browser: browser, prefs: prefs, first: first, second: second, lifted: hold.lifted, shown: lit ? false : nil)
                     .opacity(hold.choice == nil && !hold.compact ? 1 : 0)
                     .overlay(alignment: .leading) {
                         if hold.compact {
@@ -419,7 +421,7 @@ final class ColumnCell: NSHostingView<AnyView> {
                 KeptLine(browser: browser)
                     .allowsHitTesting(false)
             case .newTab:
-                Quiet(icon: "plus", title: "New tab", height: SideBar.row, news: true, lit: browser.newTabLit, prefs: prefs, browser: browser) { browser.newTab() }
+                Quiet(icon: "plus", title: "New tab", height: SideBar.row, news: true, lit: lit, prefs: prefs, browser: browser) { browser.newTab() }
                     // It raises the field: not away and back (Browser.fieldAway).
                     .background(ClickZone(away: browser.fieldAway))
             case .gap:

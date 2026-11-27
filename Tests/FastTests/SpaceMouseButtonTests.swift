@@ -20,6 +20,48 @@ struct SpaceMouseButtonTests {
         override var deltaY: CGFloat { 0 }
     }
 
+    private final class TrackpadMove: NSEvent {
+        var target: NSWindow!
+        var point = NSPoint.zero
+        var move = CGVector.zero
+        var fingers: NSEvent.Phase = []
+        var glide: NSEvent.Phase = []
+        var time: TimeInterval = 0
+        override var type: NSEvent.EventType { .scrollWheel }
+        override var phase: NSEvent.Phase { fingers }
+        override var momentumPhase: NSEvent.Phase { glide }
+        override var scrollingDeltaX: CGFloat { move.dx }
+        override var scrollingDeltaY: CGFloat { move.dy }
+        override var hasPreciseScrollingDeltas: Bool { true }
+        override var window: NSWindow? { target }
+        override var locationInWindow: NSPoint { point }
+        override var timestamp: TimeInterval { time }
+    }
+
+    @Test func aSidewaysSwipesGlideNeverScrollsTheRows() throws {
+        try world(.left) { _, _, catcher, window, _ in
+            let move = TrackpadMove()
+            move.target = window
+            move.point = NSPoint(x: catcher.frame.midX, y: 300)
+            func hear(_ fingers: NSEvent.Phase, _ glide: NSEvent.Phase = [], dx: CGFloat = 0, dy: CGFloat = 0) -> Bool {
+                move.fingers = fingers; move.glide = glide; move.move = CGVector(dx: dx, dy: dy); move.time += 0.016
+                return catcher.heard(move) == nil
+            }
+            #expect(!hear(.began))
+            #expect(hear(.changed, dx: -3))
+            #expect(hear(.ended))
+            for glide: NSEvent.Phase in [.began, .changed, .changed, .ended] {
+                #expect(hear([], glide, dx: -8, dy: 2), "the glide after a sideways swipe is the row of spaces'")
+            }
+            // The rows' own scroll and its glide still reach them.
+            #expect(!hear(.began))
+            #expect(!hear(.changed, dy: 20))
+            #expect(!hear(.ended))
+            #expect(!hear([], .began, dy: 20))
+            #expect(!hear([], .changed, dy: 20))
+        }
+    }
+
     @Test(arguments: [Flank.left, .right])
     func mouseSwipesUseSidebarSpaceActions(_ flank: Flank) throws {
         try world(flank) { browser, column, catcher, window, ids in

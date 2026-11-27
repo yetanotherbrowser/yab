@@ -77,6 +77,7 @@ struct SideBar: View {
     /// The plate had no tab in front a moment ago: one coming in finds its
     /// address where the question was and slides it into place.
     @State private var plateAsking = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A tab just put down, still flying to its new place: hidden there until
     /// it arrives.
     @State private var settling: Tab.ID?
@@ -344,7 +345,7 @@ struct SideBar: View {
 
                 // The address, when nothing over the page has it.
                 if browser.sidePlated, !ColumnKit.cut.contains("plate") {
-                    Group {
+                    ZStack {
                         if let tab = plateTab {
                             // Still the last turn's answer as it is made.
                             SidePlate(browser: browser, tab: tab, near: near, width: prefs.sideWidth, fromAsking: plateAsking,
@@ -356,6 +357,12 @@ struct SideBar: View {
                     .padding(.top, -SidePlate.lift)
                     .padding(.bottom, SidePlate.below)
                     .transition(.opacity)
+                    // Still on every change of space; what it shows turns, past the switch's quiet transaction.
+                    .transaction(value: plateTab?.id) { [reduceMotion] change in
+                        guard SpacePager.shared.active, !reduceMotion else { return }
+                        change.disablesAnimations = false
+                        change.animation = SidePlate.turn
+                    }
                     .onChange(of: plateTab == nil, initial: true) { _, empty in plateAsking = empty }
                     .zIndex(1)
                 }
@@ -2904,10 +2911,10 @@ struct PagedSpace: View, Equatable {
                     ForEach(items) { item in
                         switch item {
                         case .newTab:
-                            comingNew
+                            comingNew(lit: row.active == nil)
                         case .line:
                             KeptLine(browser: browser)
-                            comingNew
+                            comingNew(lit: row.active == nil)
                         case .folder(let folder):
                             if let nest = folder.nest {
                                 NestRow(browser: browser, nest: nest, count: folder.members.count, over: folder.over)
@@ -2942,9 +2949,9 @@ struct PagedSpace: View, Equatable {
         }
     }
 
-    /// New Tab, heading today's as in the column.
-    private var comingNew: some View {
-        Quiet(icon: "plus", title: "New tab", height: SideBar.row, news: true) {}
+    /// New Tab, heading today's as in the column; lit when nothing is in front, as the space will land.
+    private func comingNew(lit: Bool) -> some View {
+        Quiet(icon: "plus", title: "New tab", height: SideBar.row, news: true, lit: lit, prefs: browser.prefs, browser: browser) {}
     }
 
     /// What the coming row draws, in order.

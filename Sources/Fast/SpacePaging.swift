@@ -65,6 +65,60 @@ enum SpacePaging {
         }
     }
 
+    /// The row's one state: every change goes through `next`.
+    enum Phase: Equatable {
+        case idle
+        /// Fingers carry the row, taken by a move made at `since`.
+        case held(since: TimeInterval)
+        /// A key, click or menu raised the row for `target`; its switch sends the spring.
+        case turning(target: Int, springs: Int)
+        /// A let-go is switching the space itself.
+        case releasing(springs: Int)
+        case landing(springs: Int)
+
+        var held: Bool { if case .held = self { true } else { false } }
+        var target: Int? { if case .turning(let target, _) = self { target } else { nil } }
+    }
+
+    enum Event: Equatable {
+        case grab(at: TimeInterval)
+        case turn(target: Int)
+        /// The fingers lifted, seen or lost; `switching` when the row goes to another space.
+        case lift(switching: Bool)
+        case send
+        case switched
+        case landed
+        case finish
+    }
+
+    /// The phase after `event`, or nil when `event` means nothing in `phase`.
+    static func next(_ phase: Phase, _ event: Event) -> Phase? {
+        switch (phase, event) {
+        case (_, .finish): return .idle
+        case (.releasing, .grab), (.releasing, .turn): return nil
+        case (_, .grab(let at)): return .held(since: at)
+        case (.idle, .turn(let target)), (.held, .turn(let target)): return .turning(target: target, springs: 0)
+        case (.turning(_, let springs), .turn(let target)), (.landing(let springs), .turn(let target)):
+            return .turning(target: target, springs: springs)
+        case (.held, .lift(let switching)): return switching ? .releasing(springs: 0) : .landing(springs: 0)
+        case (.turning(_, let springs), .send), (.landing(let springs), .send): return .landing(springs: springs + 1)
+        case (.releasing(let springs), .send): return .releasing(springs: springs + 1)
+        case (.releasing(let springs), .switched): return springs > 0 ? .landing(springs: springs) : .idle
+        case (.releasing(let springs), .landed): return .releasing(springs: max(0, springs - 1))
+        case (.turning(let target, let springs), .landed): return .turning(target: target, springs: max(0, springs - 1))
+        case (.landing(let springs), .landed): return springs > 1 ? .landing(springs: springs - 1) : .idle
+        default: return nil
+        }
+    }
+
+    /// Scrolls quieter than this, with the pointer moved since, mean the lift was lost.
+    static let quiet: TimeInterval = 0.3
+
+    /// Two fingers can't move the pointer: one moved after the grab and the last scroll, scrolls quiet, means they lifted.
+    static func liftedUnseen(sincePointer: TimeInterval, sinceScroll: TimeInterval, heldFor: TimeInterval) -> Bool {
+        sincePointer < heldFor && sincePointer < sinceScroll && sinceScroll > quiet
+    }
+
     /// How far the row goes for each point the fingers go.
     static let follow: Double = 0.5
     /// The spring every landing is on: its response, in seconds, and its
@@ -101,6 +155,26 @@ enum SpacePaging {
         if raw < low { return low - rubber(low - raw, page: page) }
         if raw > high { return high + rubber(raw - high, page: page) }
         return raw
+    }
+
+    /// The fingers' travel that holds the row at `offset`, the inverse of `offset(travel:)`.
+    static func travel(for offset: Double, page: Double, back: Bool, forward: Bool) -> Double {
+        guard page > 0 else { return 0 }
+        let low = forward ? -page : 0
+        let high = back ? page : 0
+        func unrubber(_ moved: Double) -> Double {
+            let share = min(moved / page, 0.999)
+            return (1 / (1 - share) - 1) * page / give
+        }
+        let raw: Double
+        if offset < low { raw = low - unrubber(low - offset) } else if offset > high { raw = high + unrubber(offset - high) } else { raw = offset }
+        return raw / follow
+    }
+
+    /// The row's speed for its landing spring, only when it heads where the row lands.
+    static func handOff(_ velocity: Double, from offset: Double, to target: Double) -> Double {
+        let way = target - offset
+        return way * velocity > 0 ? velocity : 0
     }
 
     /// The space the row goes to as the fingers lift: -1 the one before,

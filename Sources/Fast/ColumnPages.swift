@@ -449,6 +449,7 @@ final class ColumnPages: NSView {
         layer?.sublayerTransform = CATransform3DIdentity
         page.frame = bounds
         page.isHidden = false
+        stillTop()
         return true
     }
 
@@ -498,6 +499,7 @@ final class ColumnPages: NSView {
             }
         }
         if !order.contains(id) { order.insert(id, at: max(0, order.count - 1)) }
+        stillTop()
         return kept
     }
 
@@ -606,6 +608,25 @@ final class ColumnPages: NSView {
         CATransaction.commit()
     }
 
+    /// Held at `x` where it is drawn, its landing springs stopped: fingers caught it.
+    func catchRow(at x: CGFloat) {
+        guard let layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for key in layer.animationKeys() ?? [] where key.hasPrefix("pager.") { layer.removeAnimation(forKey: key) }
+        layer.sublayerTransform = CATransform3DMakeTranslation(x, 0, 0)
+        for page in pages.values { page.stopPins() }
+        stillPins(x, from: nil, velocity: 0)
+        CATransaction.commit()
+    }
+
+    /// The row's strongest top blur on every page: no scrolled rows show through, and it reads as one still layer.
+    private func stillTop() {
+        guard let slide else { return }
+        let strength = slide.order.compactMap { pages[$0]?.topDepth }.max() ?? 0
+        for page in pages.values { page.holdTop(strength) }
+    }
+
     /// The pins standing still over the row: the home page's head carried
     /// back as far as the row goes, the others' hidden.
     private func stillPins(_ x: CGFloat, from: CGFloat?, velocity: CGFloat) {
@@ -650,7 +671,10 @@ final class ColumnPages: NSView {
         layer?.sublayerTransform = CATransform3DIdentity
         layer?.masksToBounds = false
         mailPage?.isHidden = true
-        for page in pages.values { page.headPins(hidden: false, offset: 0, from: nil, velocity: 0) }
+        for page in pages.values {
+            page.headPins(hidden: false, offset: 0, from: nil, velocity: 0)
+            page.holdTop(nil, eased: true)
+        }
         // The page landed on put at no offset in the same commit as the row
         // comes off: committed first, from a landing's completion with no
         // transaction open, the row at rest showed the space it started
@@ -684,6 +708,8 @@ final class ColumnEndsLayers {
     private let grainMask = CALayer()
     private let grainTop = CAGradientLayer()
     private let grainFoot = CAGradientLayer()
+    /// The row's strength while it slides (ColumnPages.stillTop); nil, the page's own depth.
+    private var held: CGFloat?
 
     @MainActor func install(in host: NSView, over rows: NSView) {
         self.host = host
@@ -787,7 +813,7 @@ final class ColumnEndsLayers {
         }
         set(topFade, Self.stops(depth: max(0, depth.above), under: top / (top + fall), shown: ColumnEnds.shown), fromTop: true)
         set(footFade, Self.stops(depth: max(0, depth.below), under: low / (low + drop), shown: ColumnEnds.footShown), fromTop: false)
-        topBlur?.alphaValue = max(0, depth.above)
+        if held == nil { topBlur?.alphaValue = max(0, depth.above) }
         footBlur?.alphaValue = max(0, depth.below)
         grains.isHidden = grain <= 0
         if grain > 0 {
@@ -801,8 +827,29 @@ final class ColumnEndsLayers {
             grainFoot.frame = CGRect(x: 0, y: h - footH, width: grains.bounds.width, height: footH)
             set(grainTop, EdgeBlurView.curve(under: top / topH).map { ($0.alpha, $0.at) }, fromTop: true)
             set(grainFoot, EdgeBlurView.curve(under: low / (low + drop)).map { ($0.alpha, $0.at) }, fromTop: false)
-            grainTop.opacity = Float(max(0, depth.above))
+            grainTop.opacity = Float(held ?? max(0, depth.above))
             grainFoot.opacity = Float(max(0, depth.below))
+        }
+        CATransaction.commit()
+    }
+
+    @MainActor func hold(_ strength: CGFloat?, eased: Bool = false) {
+        let from = held ?? max(0, now.above)
+        held = strength
+        let to = strength ?? max(0, now.above)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        topBlur?.alphaValue = to
+        if grain > 0 { grainTop.opacity = Float(to) }
+        if eased, abs(from - to) > 0.01 {
+            for layer in [topBlur?.layer, grainTop].compactMap({ $0 }) {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = Float(from)
+                fade.toValue = Float(to)
+                fade.duration = SpacePaging.response
+                fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.add(fade, forKey: "settle")
+            }
         }
         CATransaction.commit()
     }

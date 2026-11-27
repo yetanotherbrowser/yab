@@ -456,8 +456,10 @@ final class ColumnPage: NSView {
         guard let browser, let look else { return nil }
         // A space not on screen lights the tab it was left on, as its page
         // beside the one on screen shows it (PagedSpace's `row.active`).
-        let live = space == browser.spaceID ? (browser.newTabLit ? nil : browser.activeID) : restingActive
-        return ColumnCell.Context(browser: browser, look: look, liveID: live, pointedID: pointedID)
+        let onScreen = space == browser.spaceID
+        let live = onScreen ? (browser.newTabLit ? nil : browser.activeID) : restingActive
+        return ColumnCell.Context(browser: browser, look: look, liveID: live, newTabLit: onScreen ? browser.newTabLit : restingActive == nil,
+                                  pointedID: pointedID)
     }
 
     /// The tab in front in this space's row as it was parked.
@@ -1193,9 +1195,23 @@ final class ColumnPage: NSView {
         return zip(next, items).contains { !$0.same($1) || $0.y != $1.y } || zip(nextHead, headItems).contains { !$0.same($1) || $0.y != $1.y }
     }
 
+    var topDepth: CGFloat { max(0, depth.above) }
+
+    func holdTop(_ strength: CGFloat?, eased: Bool = false) {
+        ends.hold(strength, eased: eased)
+    }
+
     /// The pins hidden, or carried `offset` across: standing still while
     /// the row of spaces moves the page under them. `from`: where the row
     /// was, to land the pins against it on the same spring.
+    /// The pins' landing springs stopped where they are drawn.
+    func stopPins() {
+        guard let layer = pinsView.layer else { return }
+        let drawn = layer.presentation()?.transform ?? layer.transform
+        for key in layer.animationKeys() ?? [] where key.hasPrefix("pager.") { layer.removeAnimation(forKey: key) }
+        layer.transform = drawn
+    }
+
     func headPins(hidden: Bool, offset: CGFloat, from: CGFloat?, velocity: CGFloat) {
         guard let layer = pinsView.layer else { return }
         if pinsView.isHidden != hidden { pinsView.isHidden = hidden }
