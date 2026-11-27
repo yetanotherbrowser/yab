@@ -102,7 +102,7 @@ enum SyncChats {
     /// Every model a chat may be put on, hidden or not.
     @MainActor
     static func every() -> [SyncMacModel] {
-        (AgentModels.claude + AgentModels.codex()).map {
+        (AgentModels.claude + AgentModels.codex() + OpenCodeRunner.models).map {
             SyncMacModel(cli: $0.cli, model: $0.model, name: $0.name, about: $0.about, efforts: $0.efforts)
         }
     }

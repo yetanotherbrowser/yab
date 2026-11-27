@@ -330,3 +330,95 @@ struct OpenCodeTests {
         #expect(Agents.preferred(connected: [], found: found) == "opencode")
     }
 }
+
+/// Real Chat coding, Chats store and Agents revival/follow-up, not a transport stub.
+@Suite(.serialized)
+@MainActor
+struct OpenCodeContinuationTests {
+    private func saved(textOnly: Bool, full: Bool = false, origin: Chat.Began = .other) throws -> Chat {
+        let session = Agents.Session(id: "opencode-resume-" + UUID().uuidString, cli: "opencode", name: "OpenCode",
+                                     prompt: "Remember plum", state: .done)
+        session.full = full
+        session.textOnly = textOnly
+        session.origin = origin
+        session.thread = "ses_kept"
+        session.model = "opencode/glm-5.3-flash"
+        session.result = "plum"
+        session.items = [ChatItem(id: "asked", kind: .asked, text: "Remember plum", state: .done),
+                         ChatItem(id: "answer", kind: .message, text: "plum", state: .done)]
+        return try JSONDecoder().decode(Chat.self, from: JSONEncoder().encode(Agents().chat(of: session)))
+    }
+
+    private func withOpenCodeConnected(_ work: () throws -> Void) rethrows {
+        let settings = Store.settings
+        let keys = ["agents.explicit-connections.v1", "agents.revoked-connections.v1",
+                    "agents.consent-migrated.v1", "agents.connection-generation.opencode"]
+        let previous = keys.map { settings.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, previous) {
+                if let value { settings.set(value, forKey: key) } else { settings.removeObject(forKey: key) }
+            }
+        }
+        var allowed = Set(settings.stringArray(forKey: keys[0]) ?? [])
+        var revoked = Set(settings.stringArray(forKey: keys[1]) ?? [])
+        allowed.insert("opencode"); revoked.remove("opencode")
+        settings.set(Array(allowed), forKey: keys[0])
+        settings.set(Array(revoked), forKey: keys[1])
+        settings.set(UUID().uuidString, forKey: keys[3])
+        try work()
+    }
+
+    @Test(arguments: [false, true])
+    func coldOpenCodeChatKeepsItsBoundaryAndOmitsMacAccessOnFollowUp(textOnly: Bool) throws {
+        let chat = try saved(textOnly: textOnly)
+        Chats.shared.keep(chat)
+        defer { Chats.shared.remove(chat.id) }
+        let agents = Agents()
+        let revived = try #require(agents.revive(chat.id))
+        #expect(!revived.full, "A saved OpenCode chat never inherits Mac access")
+        #expect(revived.textOnly == textOnly, "A text chat must not gain browser tools on restart")
+        #expect(revived.thread == "ses_kept")
+        #expect(revived.model == "opencode/glm-5.3-flash")
+        try withOpenCodeConnected {
+            defer { _ = agents.stop(chat.id) }
+            agents.followUp(chat.id, "What word did I ask you to remember?")
+            #expect(revived.state == .starting)
+            #expect(!revived.full)
+            #expect(revived.textOnly == textOnly)
+            let env = OpenCodeRunner.sessionEnvironment([:], textOnly: revived.textOnly, full: revived.full)
+            let expected = textOnly ? OpenCodeRunner.helperConfig : OpenCodeRunner.browserOnlyConfig
+            #expect(env["OPENCODE_CONFIG_CONTENT"] == expected)
+        }
+    }
+
+    @Test func previouslyGrantedFullOpenCodeChatRevivesBrowserOnly() throws {
+        let chat = try saved(textOnly: false, full: true)
+        Chats.shared.keep(chat)
+        defer { Chats.shared.remove(chat.id) }
+        let agents = Agents()
+        let revived = try #require(agents.revive(chat.id))
+        #expect(!revived.full)
+        #expect(!revived.textOnly)
+        try withOpenCodeConnected {
+            defer { _ = agents.stop(chat.id) }
+            agents.followUp(chat.id, "Continue in the browser")
+            #expect(revived.state == .starting)
+            #expect(!revived.full && !revived.textOnly)
+            let env = OpenCodeRunner.sessionEnvironment([:], textOnly: revived.textOnly, full: revived.full)
+            #expect(env["OPENCODE_CONFIG_CONTENT"] == OpenCodeRunner.browserOnlyConfig)
+        }
+    }
+
+    @Test(arguments: [Chat.Began.field, .here, .newTabs, .other])
+    func olderOpenCodeChatsWithoutTextOnlyFieldReviveWithoutMacAccess(origin: Chat.Began) throws {
+        let chat = try saved(textOnly: origin == .field, origin: origin)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(chat)) as? [String: Any])
+        object.removeValue(forKey: "textOnly")
+        let legacy = try JSONDecoder().decode(Chat.self, from: JSONSerialization.data(withJSONObject: object))
+        Chats.shared.keep(legacy)
+        defer { Chats.shared.remove(legacy.id) }
+        let revived = try #require(Agents().revive(legacy.id))
+        #expect(!revived.full)
+        #expect(revived.textOnly == (origin == .field))
+    }
+}

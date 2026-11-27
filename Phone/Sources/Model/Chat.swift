@@ -26,6 +26,7 @@ struct Chat: Identifiable, Codable, Hashable, Sendable {
         case "codex": "ChatGPT"
         case "cursor": "Cursor"
         case "gemini": "Gemini"
+        case "opencode": "OpenCode"
         default: nil
         }
     }

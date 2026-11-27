@@ -698,7 +698,7 @@ final class Agents: ObservableObject {
                     providerBackground: Agents.archivesProvider(session) ? true : nil,
                     mail: session.mail || old?.mail == true ? true : nil, remoteTask: session.remoteTask,
                     source: Agents.source(of: session) ?? old?.source, routine: session.routine ?? old?.routine,
-                    project: session.project, textOnly: session.cli == "gemini" ? session.textOnly : nil,
+                    project: session.project, textOnly: session.cli == "gemini" || session.cli == "opencode" ? session.textOnly : nil,
                     effort: session.cli == "gemini" ? session.effort : nil,
                     afterStop: session.afterStop || session.state == .stopped ? true : nil)
             // A name, pin or read chosen on another device outlives the
@@ -765,6 +765,9 @@ final class Agents: ObservableObject {
             session.full = false
             session.textOnly = chat.textOnly ?? (chat.began == .field)
             session.effort = chat.effort
+        } else if chat.cli == "opencode" {
+            session.full = false
+            session.textOnly = chat.textOnly ?? (chat.began == .field)
         }
         session.title = chat.title
         session.result = chat.answer

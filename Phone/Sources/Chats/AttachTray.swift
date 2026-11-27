@@ -393,7 +393,7 @@ private struct ModelPage: View {
         let id = app.chatSheet.chatID ?? ""
         let models = app.chatModels(id).models
         let pick = app.modelChoice(id)
-        let plans = ["claude", "codex"].filter { cli in models.contains { $0.cli == cli } }
+        let plans = ChatAgent.allCases.map(\.rawValue).filter { cli in models.contains { $0.cli == cli } }
         VStack(alignment: .leading, spacing: 14) {
             OptionCard {
                 OptionRow(title: "Default", about: "What your Mac uses for its chats", checked: pick.model == nil) {

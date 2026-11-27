@@ -76,7 +76,7 @@ struct Chat: Codable, Identifiable, Equatable {
     /// The project it is in (Projects), none for a chat on its own.
     /// Optional, so chats written before it read as they were.
     var project: String? = nil
-    /// Gemini never revives with Mac access; retain a text chat's narrower boundary.
+    /// Gemini and OpenCode never revive with Mac access; retain a text chat's narrower boundary.
     /// nil is a record from before this field existed.
     var textOnly: Bool? = nil
     /// Gemini's explicit reasoning choice, kept with its model across relaunch.
