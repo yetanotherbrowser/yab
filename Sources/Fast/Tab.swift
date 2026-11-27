@@ -2250,6 +2250,8 @@ final class Tab: ObservableObject, Identifiable, Relaying {
             configuration.perform(Tab.relatedSelector, with: spare)
         }
         let web = OpenTrace.time("build.webview") { PageView(frame: .zero, configuration: configuration) }
+        web.navigationEvents.keepsOpener = { [weak self] in self?.scripted != nil }
+        web.navigationEvents.sentByYab = { [weak self] in self?.engineSent }
         if engineFactory.kinds.contains(.chromium) {
             let originalProfile = chromiumProfile
             web.navigationEvents.routeSiteEngine = { [weak self] request, byPerson in

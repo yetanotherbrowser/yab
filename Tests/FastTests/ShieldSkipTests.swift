@@ -195,12 +195,43 @@ import Testing
         shield.skipper = Self.skipper
         shield.enabled = true
         shield.pause(host, false)
-        #expect(shield.skip(url, persistent: nil)?.absoluteString == "https://example.com/a")
-        #expect(shield.skip(url, persistent: true)?.absoluteString == "https://example.com/a")
+        #expect(shield.redirect(url, persistent: nil, cleaning: true)?.absoluteString == "https://example.com/a")
+        #expect(shield.redirect(url, persistent: true, cleaning: true)?.absoluteString == "https://example.com/a")
         shield.pause(host, true)
-        #expect(shield.skip(url, persistent: nil) == nil)
+        #expect(shield.redirect(url, persistent: nil, cleaning: true) == nil)
         shield.pause(host, false)
         shield.enabled = false
-        #expect(shield.skip(url, persistent: nil) == nil)
+        #expect(shield.redirect(url, persistent: nil, cleaning: true) == nil)
+    }
+
+    /// Opening a link drops what a copy drops (Diary.withoutSharing) and nothing else.
+    @MainActor @Test func openingDropsTheNamesACopyDrops() throws {
+        try #require(Store.testing)
+        let shield = Shield.shared
+        let enabled = shield.enabled, skipper = shield.skipper
+        let host = "httpbin.org", paused = shield.isPaused(on: host)
+        defer { shield.enabled = enabled; shield.skipper = skipper; shield.pause(host, paused) }
+        shield.skipper = nil
+        shield.enabled = true
+        shield.pause(host, false)
+        func open(_ address: String, cleaning: Bool = true) -> String? {
+            shield.redirect(URL(string: address)!, persistent: nil, cleaning: cleaning)?.absoluteString
+        }
+        #expect(open("https://httpbin.org/get?id=7&utm_source=x&fbclid=y") == "https://httpbin.org/get?id=7")
+        #expect(open("https://example.com/a?UTM_Medium=m&gclid=1&msclkid=2") == "https://example.com/a")
+        // Affiliate and page parameters stay.
+        #expect(open("https://www.amazon.com/dp/B0CX23V2ZK?tag=shop-20&ascsubtag=a1&utm_source=x&th=1")
+                == "https://www.amazon.com/dp/B0CX23V2ZK?tag=shop-20&ascsubtag=a1&th=1")
+        #expect(open("https://shop.example.com/p?aff_id=9&affiliate=x&ref=main&source=hp&feature=t&gbraid=0A") == nil)
+        // Fragment and encoding as written.
+        #expect(open("https://example.com/a%2Fb?q=%E2%9C%93&utm%5Fsource=x&v=a%2Bb#Part%202") == "https://example.com/a%2Fb?q=%E2%9C%93&v=a%2Bb#Part%202")
+        // Nothing to strip, back or forward, a paused site, Shield off: as it is.
+        #expect(open("https://example.com/a?id=7#utm_source=x") == nil)
+        #expect(open("https://httpbin.org/get?utm_source=x", cleaning: false) == nil)
+        shield.pause(host, true)
+        #expect(open("https://httpbin.org/get?utm_source=x") == nil)
+        shield.pause(host, false)
+        shield.enabled = false
+        #expect(open("https://httpbin.org/get?utm_source=x") == nil)
     }
 }

@@ -40,12 +40,13 @@ extension ChromiumPage {
                                 modifierFlags: kind == .linkActivated ? press?.flags ?? [] : [],
                                 buttonNumber: kind == .linkActivated ? press?.button ?? 0 : 0,
                                 shouldPerformDownload: false, userInitiated: gesture)
+        let navigation = TopRewrite.Navigation(url: url, method: request.httpMethod, kind: kind, redirect: redirect,
+                                               byPerson: gesture, inPlace: true)
         if let popupSource, let tab = navigationTab, popupSource.peek === tab {
             // Already placed from the native creation receipt, even when
             // this is a script or redirect navigation. Do not route it again
             // through the source tab's ordinary link policy.
-            acceptNavigation(request)
-            answerAction(token, remote: remote, allow: true, armed: true)
+            continueHeld(navigation, request, token: token, remote: remote)
             return
         }
         if kind == .linkActivated, requestedForeground != false, let popupSource, let tab = navigationTab,
@@ -54,8 +55,7 @@ extension ChromiumPage {
             // Keep the original native destination and let its held load
             // continue inside Peek. Reopening the URL loses its opener.
             popupForegroundFrom = nil
-            acceptNavigation(request)
-            answerAction(token, remote: remote, allow: true, armed: true)
+            continueHeld(navigation, request, token: token, remote: remote)
             return
         }
         resolvePopupForeground()
@@ -75,10 +75,8 @@ extension ChromiumPage {
             answered = true
             switch policy {
             case .allow:
-                if let skipped = self.skip(request) {
-                    // A click tracker with its destination inside: the
-                    // helper sends the request there instead (Shield.skip),
-                    // and that address is asked about in turn.
+                if let skipped = self.rewrites.next(navigation, Self.redirect).instead {
+                    // The helper sends the request there instead, and that address is asked about in turn.
                     self.acceptNavigation(URLRequest(url: skipped))
                     self.answerAction(token, remote: remote, allow: true, armed: false, to: skipped)
                     return
@@ -118,18 +116,19 @@ extension ChromiumPage {
     /// this page's commands run. Never for long: DevTools holds what it is sent
     /// while a page changes renderers, so a command waiting on it waits for the
     /// very navigation being held here. Whatever is late reaches the next agent.
-    /// Where a top document goes instead (Shield.skip), counting skips in
-    /// a row: rules that send a tab round in a circle end after a few, and
-    /// the address loads as it is. Chromium's own limit of redirects would
-    /// end one too, as a failure.
-    private func skip(_ request: URLRequest) -> URL? {
-        guard let url = request.url, (request.httpMethod ?? "GET").uppercased() == "GET", skips < 4,
-              let skipped = Shield.shared.skip(url, persistent: nil) else {
-            skips = 0
-            return nil
-        }
-        skips += 1
-        return skipped
+    /// Where a top document goes instead (Shield.redirect), at most
+    /// TopRewrite.cap times in a row; Chromium's own limit of redirects
+    /// would end a circle as a failure.
+    private static func redirect(_ url: URL, cleaning: Bool) -> URL? {
+        Shield.shared.redirect(url, persistent: nil, cleaning: cleaning)
+    }
+
+    /// An adopted popup or a Peek: its held load goes on, rewritten in place,
+    /// which keeps its opener.
+    private func continueHeld(_ navigation: TopRewrite.Navigation, _ request: URLRequest, token: String, remote: String?) {
+        let instead = rewrites.next(navigation, Self.redirect).instead
+        acceptNavigation(instead.map { URLRequest(url: $0) } ?? request)
+        answerAction(token, remote: remote, allow: true, armed: true, to: instead)
     }
 
     private func answerAction(_ token: String, remote: String?, allow: Bool, armed: Bool, to skipped: URL? = nil) {

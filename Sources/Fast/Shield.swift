@@ -475,15 +475,17 @@ final class Shield: ObservableObject {
     }
 
     /// Where a tab's top document goes instead of `url`, a click tracker
-    /// with its destination inside (Filters.Skip), while Shield blocks on
-    /// the tracker's site. `persistent`: a WebKit tab's kind, whose blocking
-    /// an extension may have; nil for a Chromium tab, which Shield always
-    /// blocks for.
-    func skip(_ url: URL, persistent: Bool?) -> URL? {
-        guard enabled, let skipper, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return nil }
+    /// with its destination inside (Filters.Skip), else, when `cleaning`,
+    /// `url` without the names a copy drops (Diary.withoutSharing), while
+    /// Shield blocks on the site. `persistent`: a WebKit tab's kind, whose
+    /// blocking an extension may have; nil for a Chromium tab, which Shield
+    /// always blocks for.
+    func redirect(_ url: URL, persistent: Bool?, cleaning: Bool) -> URL? {
+        guard enabled, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return nil }
         if let persistent, blocker(persistent: persistent) != nil { return nil }
-        guard !isOff(on: PageScripts.host(of: url)), let out = skipper.destination(url.absoluteString) else { return nil }
-        return URL(string: out)
+        guard !isOff(on: PageScripts.host(of: url)) else { return nil }
+        if let out = skipper?.destination(url.absoluteString) { return URL(string: out) }
+        return cleaning ? Diary.withoutSharing(url) : nil
     }
 
     private func readHidingSites() {

@@ -104,13 +104,25 @@ final class Diary: @unchecked Sendable {
     /// `source` and `feature` can be the page's own. Otherwise untouched,
     /// fragment and encoding as they were.
     static func shareable(_ url: URL) -> URL {
-        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let items = parts.percentEncodedQueryItems else { return url }
-        let decoded = parts.queryItems ?? []
-        let kept = zip(items, decoded).filter { !Diary.sharing($0.1.name) }.map(\.0)
-        guard kept.count < items.count else { return url }
-        parts.percentEncodedQueryItems = kept.isEmpty ? nil : kept
-        return parts.url ?? url
+        withoutSharing(url) ?? url
+    }
+
+    /// The same cleaning, nil when nothing goes: what a tab opens (Shield.redirect).
+    /// Cut from the address as written, since URLComponents' setters trap on
+    /// an escape they don't take ("%zz").
+    static func withoutSharing(_ url: URL) -> URL? {
+        let address = url.absoluteString
+        let end = address.firstIndex(of: "#") ?? address.endIndex
+        guard let mark = address[..<end].firstIndex(of: "?") else { return nil }
+        let pairs = address[address.index(after: mark)..<end].split(separator: "&", omittingEmptySubsequences: false)
+        let kept = pairs.filter { pair in
+            let name = pair.prefix { $0 != "=" }
+            return !Diary.sharing(name.removingPercentEncoding ?? String(name))
+        }
+        guard kept.count < pairs.count else { return nil }
+        let rest = kept.filter { !$0.isEmpty }
+        let query = rest.isEmpty ? "" : "?" + rest.joined(separator: "&")
+        return URL(string: String(address[..<mark]) + query + String(address[end...]))
     }
 
     /// Names removed by the sharing cleaner, once each and in address order.

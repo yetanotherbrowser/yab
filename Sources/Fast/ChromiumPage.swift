@@ -119,8 +119,8 @@ final class ChromiumPage: YabTextCheckingView, PageHandle, PageAudioControl {
     var popupForegroundFrom: Tab.ID?
     var popupRequestedForeground: Bool?
     var lastPress: (flags: NSEvent.ModifierFlags, button: Int, at: TimeInterval)?
-    /// Click trackers skipped in a row (receiveAction).
-    var skips = 0
+    /// Top-document rewrites in a row (receiveAction).
+    var rewrites = TopRewrite()
     /// ⇧ or ⌥ pressed on a link: Yab's click, never the page's or Chrome's.
     var modifiedLink: URL?
     var modifiedDown: NSEvent?

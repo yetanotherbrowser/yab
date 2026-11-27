@@ -129,9 +129,10 @@ struct PageAsking {
   bool stopped;
 };
 static std::map<std::string, PageAsking> pageAskings;
-// `to`: a click tracker's destination (Shield.skip in the app), where the
-// request goes instead, as a redirect, its own lists stopping it or not: the
-// tracker is never asked. That address is asked about in turn.
+// `to`: where the request goes instead (Shield.redirect in the app), a click
+// tracker's destination or the address without its tracking names, as a
+// redirect, its own lists stopping it or not: the first address is never
+// asked. That address is asked about in turn.
 static void PageActionAnswered(NSString* token, bool allow, NSString* to = nil) {
   auto found = pageAskings.find(Key(token));
   if (found == pageAskings.end()) return;

@@ -70,6 +70,10 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// A WebKit navigation committed: the page has its new address.
     var committed: ((URL?) -> Void)?
     var popups: [UUID: WebKitPopup] = [:]
+    /// A window.open window: loaded again by Yab, it would lose window.opener.
+    var keepsOpener: (() -> Bool)?
+    /// The address the tab last sent itself (typed, a bookmark, another app's link).
+    var sentByYab: (() -> URL?)?
     private var loadRetry = DNSRetry()
     private weak var recoveryPage: PageView?
     private var currentNavigation: PageNavigation?
@@ -140,19 +144,21 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
             listener.page(page, decide: PageAction(action)) { policy in
                 guard !answered else { return }
                 answered = true
-                if policy == .allow, action.targetFrame?.isMainFrame == true, let skipped = self.skip(action.request, in: page) {
-                    // A click tracker with its destination inside: never
-                    // asked, the tab goes there (Shield.skip). Before the
-                    // content rule list, which would stop the tracker.
+                let step = policy == .allow && action.targetFrame?.isMainFrame == true ? self.rewrite(action, in: page) : nil
+                if let skipped = step?.instead {
+                    // Before the content rules, which would stop a tracker; the first address is never asked.
                     decide(.cancel)
-                    page.load(URLRequest(url: skipped))
+                    var instead = action.request
+                    instead.url = skipped
+                    page.load(instead)
                     return
                 }
                 if policy == .allow, action.targetFrame?.isMainFrame == true,
                    let url = action.request.url, let prepare = self.prepareChromiumCookies {
+                    let byPerson = step?.byPerson ?? Self.byPerson(action)
                     Task { @MainActor [weak self, weak page] in
                         do {
-                            if let route = self?.routeSiteEngine, try await route(action.request, Self.byPerson(action)) {
+                            if let route = self?.routeSiteEngine, try await route(action.request, byPerson) {
                                 decide(.cancel)
                                 return
                             }
@@ -176,27 +182,29 @@ final class WebKitPageEvents: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// a server's redirect, which is a hop of a flow already under way (a
     /// sign-in's way out and back), nor a script running on its own.
     static func byPerson(_ action: WKNavigationAction) -> Bool {
-        let redirect = NSSelectorFromString("_isRedirect")
-        if action.responds(to: redirect) {
-            typealias Get = @convention(c) (AnyObject, Selector) -> Bool
-            if unsafeBitCast(action.method(for: redirect), to: Get.self)(action, redirect) { return false }
-        }
-        return action.navigationType == .linkActivated || WindowGate.gesture(action)
+        !isRedirect(action) && (action.navigationType == .linkActivated || WindowGate.gesture(action))
     }
 
-    /// Skips in a row: one skip's destination may be another tracker's
-    /// address, as a redirect would be, but rules that send a tab round in
-    /// a circle end after a few, and the address loads as it is.
-    private var skips = 0
+    static func isRedirect(_ action: WKNavigationAction) -> Bool {
+        let redirect = NSSelectorFromString("_isRedirect")
+        guard action.responds(to: redirect) else { return false }
+        typealias Get = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(action.method(for: redirect), to: Get.self)(action, redirect)
+    }
 
-    private func skip(_ request: URLRequest, in page: PageView) -> URL? {
-        guard let url = request.url, (request.httpMethod ?? "GET").uppercased() == "GET", skips < 4,
-              let skipped = Shield.shared.skip(url, persistent: page.configuration.websiteDataStore.isPersistent) else {
-            skips = 0
-            return nil
-        }
-        skips += 1
-        return skipped
+    private var rewrites = TopRewrite()
+
+    private func rewrite(_ action: WKNavigationAction, in page: PageView) -> TopRewrite.Step? {
+        guard let url = action.request.url else { return nil }
+        let source = WindowGate.source(action)
+        let origin = source.flatMap { URL(string: "\($0.securityOrigin.protocol)://\($0.securityOrigin.host)") }
+        let navigation = TopRewrite.Navigation(
+            url: url, method: action.request.httpMethod, kind: PageAction.Kind(rawValue: action.navigationType.rawValue),
+            redirect: Self.isRedirect(action), byYab: source == nil || TopRewrite.sameAddress(url, sentByYab?()),
+            byPerson: Self.byPerson(action),
+            keepsOpener: keepsOpener?() == true, shown: page.url, source: origin)
+        let persistent = page.configuration.websiteDataStore.isPersistent
+        return rewrites.next(navigation) { Shield.shared.redirect($0, persistent: persistent, cleaning: $1) }
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
