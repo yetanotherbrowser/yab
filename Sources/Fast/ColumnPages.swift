@@ -68,7 +68,7 @@ final class ColumnPages: NSView {
     private var order: [UUID] = []
     private var frame_ = Frame(lead: 0, footRoom: 0, top: 0, foot: true)
     var carryLook: Look { browser.flatMap { browser in browser.spaces.first { $0.id == browser.spaceID } }.map { look(of: $0) } ?? look }
-    private var look = Look(tone: nil, scheme: .light, titleSize: 13, grain: 0)
+    private(set) var look = Look(tone: nil, scheme: .light, titleSize: 13, grain: 0)
     private var watching: [AnyCancellable] = []
     private var pending = false
     private var observer: CFRunLoopObserver?

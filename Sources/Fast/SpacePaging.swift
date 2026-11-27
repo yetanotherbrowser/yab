@@ -83,6 +83,33 @@ enum SpacePaging {
     static let still: Double = 5
     /// Moves older than this as the fingers lift say nothing of their speed.
     static let recent: TimeInterval = 0.06
+    /// Past the last space Arc brings a "+" in at the column's edge, driven
+    /// by how far the row has given there: all the way in at 15 points, its
+    /// ring full at 22.5, and a new space only for fingers lifted after it
+    /// has been full more than a tenth of a second (Arc 1.173.1's
+    /// EdgeFeedbackView, as github.com/VictorKildahl/cra/pull/564 read it).
+    static let plusIn: Double = 15
+    static let plusFull: Double = 22.5
+    static let plusHeld: TimeInterval = 0.1
+
+    /// How far in the "+" is and how full its ring, 0 to 1, for the row
+    /// `past` points beyond the last space.
+    static func plus(_ past: Double) -> (shown: Double, ring: Double) {
+        (min(1, max(0, past / plusIn)), min(1, max(0, past / plusFull)))
+    }
+
+    /// Since when the ring has been full, the row now `past` points beyond
+    /// the last space at `time`: kept while it stays full, nil once it
+    /// isn't, so pulling back short of it and on again starts over.
+    static func fullSince(_ was: TimeInterval?, past: Double, at time: TimeInterval) -> TimeInterval? {
+        plus(past).ring >= 1 ? was ?? time : nil
+    }
+
+    /// Whether fingers lifted at `liftedAt` make a new space, the ring
+    /// full since `fullSince` (nil: not full).
+    static func makesSpace(fullSince: TimeInterval?, liftedAt: TimeInterval) -> Bool {
+        fullSince.map { liftedAt - $0 > plusHeld } ?? false
+    }
 
     /// What `past` points pushed beyond an end move, on a page `page` wide:
     /// nearly all of a small push's give, never a page.

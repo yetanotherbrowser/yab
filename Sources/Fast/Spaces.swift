@@ -660,13 +660,23 @@ extension Browser {
         return order
     }
 
+    /// One space of each set of sign-ins of their own, the first of each:
+    /// what a new space can share instead of the shared ones or its own.
+    var signInPeers: [Space] {
+        var seen = Set<UUID>()
+        return spaces.filter { $0.ownSignIns && seen.insert($0.profileID).inserted }
+    }
+
+    /// Whether swiping past the last space makes a new one.
+    var canSwipeNewSpace: Bool {
+        spacesShown && !blank
+    }
+
     /// Whether two fingers over the column have a space to go to: another
-    /// of yours with spaces on, or Mail's, which is gone in and out of with
-    /// spaces off too (switchSpace). With spaces off they did nothing in
-    /// Mail, nor into it (feedback #158).
+    /// of yours with spaces on, Mail's, or a new space past the last one.
     var swipesSpaces: Bool {
         let order = turnOrder
-        return order.count > 1 && (prefs.usesSpaces || order.contains { $0.id == Space.mailID })
+        return canSwipeNewSpace || (order.count > 1 && (prefs.usesSpaces || order.contains { $0.id == Space.mailID }))
     }
 
     /// Every tab of the spaces not on screen, for the sleep timer.
@@ -762,6 +772,8 @@ extension Browser {
         ColumnSpaceCarry.of(self)?.willPage()
         defer { ColumnSpaceCarry.of(self)?.switched() }
         if !washed { SpacePull.shared.interrupt(in: self) }
+        // A ring filled past the last space was for the space it filled on.
+        NewSpacePlus.shared.spend()
         SwitchMeter.start()
         defer { SwitchMeter.mark("done") }
         // A pair still coming together or apart finishes first, in this space.
@@ -1933,6 +1945,9 @@ struct SpaceSwipe: NSViewRepresentable {
         /// halfway sends them. The column's row lets itself go
         /// (SpacePager.lost).
         private func lose() {
+            // Fingers down anew, here or in another window: a "+" from a
+            // gesture whose end went elsewhere goes, and its ring with it.
+            MainActor.assumeIsolated { NewSpacePlus.shared.begin() }
             guard owned, sideways == true, !paging, !unpaged, !column else { return }
             MainActor.assumeIsolated { SpacePull.shared.cancel() }
         }
@@ -2057,7 +2072,8 @@ struct SpaceSwipe: NSViewRepresentable {
                     if mine, paging {
                         paging = false
                         let speed = SpacePaging.speed(recent.map { ($0.0, Double($0.1)) }, liftedAt: event.timestamp)
-                        MainActor.assumeIsolated { SpacePager.shared.release(speed: CGFloat(speed)) }
+                        let lifted = event.phase == .ended ? event.timestamp : nil
+                        MainActor.assumeIsolated { SpacePager.shared.release(speed: CGFloat(speed), liftedAt: lifted) }
                         return nil
                     }
                     // Gone quiet before lifting is no flick.
@@ -2067,7 +2083,9 @@ struct SpaceSwipe: NSViewRepresentable {
                         let flick = flicked()
                         let travelled = travel
                         let way = travel < 0 ? 1 : -1
+                        let lifted = event.phase == .ended ? event.timestamp : nil
                         MainActor.assumeIsolated {
+                            NewSpacePlus.shared.lift(at: lifted, browser: browser)
                             let far = abs(travelled) / SpacePull.reach
                             guard far >= SpacePull.enough || (flick && far >= SpacePull.flickEnough) else { return }
                             let order = browser.turnOrder
@@ -2105,10 +2123,18 @@ struct SpaceSwipe: NSViewRepresentable {
                 MainActor.assumeIsolated { SpaceSwipe.note("grab \(paging) \(SpacePager.refusal(browser) ?? "")") }
             }
             if paging {
-                MainActor.assumeIsolated { SpacePager.shared.follow(travelled) }
+                let time = event.timestamp
+                MainActor.assumeIsolated { SpacePager.shared.follow(travelled, at: time) }
                 return nil
             }
-            if unpaged { return nil }
+            if unpaged {
+                // With Reduce Motion the row stands still, but the "+" past
+                // the last space comes all the same, as far as the row
+                // would have given.
+                let time = event.timestamp
+                MainActor.assumeIsolated { NewSpacePlus.shared.pull(unpaged: travelled, at: time, browser: browser) }
+                return nil
+            }
             MainActor.assumeIsolated {
                 // All the way, it holds there: the space comes when the
                 // fingers lift, as a page's swipe back does, never while

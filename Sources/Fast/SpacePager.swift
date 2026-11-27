@@ -161,7 +161,7 @@ final class SpacePager {
     /// Two fingers have begun sideways over the column, `event` the move
     /// they took the row with.
     func grab(_ browser: Browser, by event: NSEvent) -> Bool {
-        guard Self.allowed(browser), browser.turnOrder.count > 1 else { return false }
+        guard Self.allowed(browser), browser.turnOrder.count > 1 || browser.canSwipeNewSpace else { return false }
         // A landing still under way lands now; the fingers start from the
         // space it brought.
         ColumnSpaceCarry.of(browser)?.willPage()
@@ -176,8 +176,9 @@ final class SpacePager {
     /// with it, is the gesture holding the row, not fingers down anew.
     private var heldSince: TimeInterval = 0
 
-    /// The fingers have gone `travel` points, negative toward the next space.
-    func follow(_ travel: CGFloat) {
+    /// The fingers have gone `travel` points, negative toward the next
+    /// space, the latest of them at `time`.
+    func follow(_ travel: CGFloat, at time: TimeInterval) {
         guard holding, let browser else { return }
         let back = home > 0, forward = home < order.count - 1
         let x = CGFloat(SpacePaging.offset(travel: Double(travel), page: Double(page), back: back, forward: forward))
@@ -191,6 +192,7 @@ final class SpacePager {
         if x != 0 { hold(!order.indices.contains(toward) || same(toward...toward)) }
         if x != 0 { doors(toward: [toward]) }
         set(x)
+        if !forward, browser.canSwipeNewSpace { NewSpacePlus.shared.pull(max(0, -x), at: time, browser: browser) }
         // The window takes on that space's color as far as the row has gone,
         // and a card's ground with it (SpaceWash's grounds).
         let share = Swift.Float(min(1, abs(x) / max(page, 1)))
@@ -203,10 +205,12 @@ final class SpacePager {
         }
     }
 
-    /// The fingers have lifted, going `speed` points a second.
-    func release(speed: CGFloat) {
+    /// The fingers have lifted at `liftedAt`, going `speed` points a
+    /// second; nil when they went without lifting over the column.
+    func release(speed: CGFloat, liftedAt: TimeInterval?) {
         guard holding, let browser else { return }
         holding = false
+        defer { NewSpacePlus.shared.lift(at: liftedAt, browser: browser) }
         let back = home > 0, forward = home < order.count - 1
         let to = SpacePaging.landing(offset: Double(offset), speed: Double(speed), page: Double(page), back: back, forward: forward)
         let target = -CGFloat(to) * page
@@ -340,7 +344,7 @@ final class SpacePager {
     /// Let go where it is, as fingers lifted still.
     private func lost(_ run: Int) {
         guard holding, generation == run else { return }
-        release(speed: 0)
+        release(speed: 0, liftedAt: nil)
     }
 
     /// The column as SwiftUI lays it now: pages up over a card that has
@@ -1102,6 +1106,7 @@ final class SpacePager {
         generation += 1
         livePlateTab = nil
         landings = 0
+        if holding { NewSpacePlus.shared.drop() }
         holding = false
         pendingTarget = nil
         if wash != nil {
@@ -1147,7 +1152,7 @@ final class SpacePager {
         if !(browser.prefs.usesSpaces || withMail(browser, toward: nil)) { return "no spaces" }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return "reduce motion" }
         if SpaceTurn.still { return "still" }
-        if browser.turnOrder.count < 2 { return "one space" }
+        if browser.turnOrder.count < 2 && !browser.canSwipeNewSpace { return "one space" }
         if browser.rowsClip == nil { return "no rows clip" }
         if browser.spaceFloor == nil { return "no floor" }
         guard let band = column.spaceBand(browser) else { return "no band" }

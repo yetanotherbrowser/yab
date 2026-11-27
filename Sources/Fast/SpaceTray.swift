@@ -37,6 +37,9 @@ final class SpaceDraft: ObservableObject {
     /// The window as Liquid Glass, the wave's step past its end.
     @Published var glass = false
     @Published var own = false
+    /// A space whose sign-ins of its own it shares, as Settings' New Space
+    /// offers (Browser.signInPeers); nil with `own` off: the shared ones.
+    @Published var peer: UUID?
     /// The tab to take along, when there is one to take.
     let tab: Tab?
     var taking = false
@@ -214,8 +217,8 @@ final class SpaceDraft: ObservableObject {
 enum SpaceAnchors {
     fileprivate static let marks = NSHashTable<SpaceAnchor.Mark>.weakObjects()
 
-    static var plus: NSView? { anchor(.plus) }
-    static var dot: NSView? { anchor(.dot) }
+    static var plus: NSView? { anchor(.plus, in: Links.window) }
+    static var dot: NSView? { anchor(.dot, in: Links.window) }
 
     /// The middle of a space's place in the foot's row, in the window.
     static func slotPoint(_ id: UUID) -> NSPoint? {
@@ -233,8 +236,9 @@ enum SpaceAnchors {
         return nil
     }
 
-    private static func anchor(_ kind: SpaceAnchor.Kind) -> NSView? {
-        let window = Links.window
+    /// The newest mark of `kind` on screen in `window`, or in any window
+    /// with none given.
+    static func anchor(_ kind: SpaceAnchor.Kind, in window: NSWindow?) -> NSView? {
         let placed = marks.allObjects.filter { mark in
             guard mark.kind == kind, let at = mark.window, at === window ?? at, !mark.isHiddenOrHasHiddenAncestor,
                   let content = at.contentView else { return false }
@@ -316,6 +320,17 @@ final class SpaceTray: NSView {
         else { SettingsWindow.shared.showNewSpace(for: browser) }
     }
 
+    /// Two fingers past the last space (NewSpacePlus): the chain from the
+    /// name, in the window they swiped over, key or not, and into the
+    /// space it makes.
+    static func openNamed(_ browser: Browser) {
+        guard let window = browser.column?.window else { return }
+        // Its name is typed next: the keys go where the tray is.
+        if !NSApp.isActive { NSApp.activate() }
+        window.makeKeyAndOrderFront(nil)
+        open(browser, at: .name, in: window)
+    }
+
     /// Tabs held over the capsule (SpaceDrop): the list, as where they go.
     static func openCarrying(_ browser: Browser, tabs: [Tab]) {
         guard shown == nil else { return }
@@ -342,12 +357,13 @@ final class SpaceTray: NSView {
     }
 
     private static func open(_ browser: Browser, at step: SpaceDraft.Step, tab taken: Tab? = nil, more: [Tab] = [], carrying: [Tab] = [], own: Bool = false,
-                             editing: Space? = nil, folder: Nest? = nil) {
+                             editing: Space? = nil, folder: Nest? = nil, in place: NSWindow? = nil) {
         // One taken out of its window without leaving, the window's view
         // made anew under it, is no tray: it doesn't stand in a new one's way.
         if shown?.window == nil { shown = nil }
-        guard shown == nil, let window = Links.window, let content = window.contentView,
-              let from = SpaceAnchors.plus?.window === window ? SpaceAnchors.plus : SpaceAnchors.dot else { return }
+        guard shown == nil, let window = place ?? Links.window, let content = window.contentView,
+              let from = SpaceAnchors.anchor(.plus, in: window)?.window === window
+                ? SpaceAnchors.anchor(.plus, in: window) : SpaceAnchors.anchor(.dot, in: window) else { return }
         let active = taken ?? browser.active.flatMap { $0.isBlank || $0.bench ? nil : $0 }
         let tray = SpaceTray(browser: browser, draft: SpaceDraft(prefs: browser.prefs, tab: active, free: browser.freeIcon))
         tray.draft.step = step
@@ -411,8 +427,23 @@ final class SpaceTray: NSView {
         // The look card's controls, as tall as they lay out: a second color
         // brings Shift with tabs, drawings their strength (refitLook).
         case .color: return Self.head + Self.strip + 10 + lookHeight + i + Self.foot
-        case .signIns: return Self.head + Self.strip + 10 + 2 * Self.row + 8 + i + Self.foot
+        case .signIns: return Self.signInsHeight(peers: browser.signInPeers.count, ceiling: ceiling)
         }
+    }
+
+    /// The Sign-ins step with `peers` spaces' sign-ins offered beside the
+    /// shared ones and its own: as tall as its choices, or, past what the
+    /// window has room for, `ceiling`, the choices scrolling inside it as
+    /// the list of spaces does.
+    static func signInsHeight(peers: Int, ceiling: CGFloat) -> CGFloat {
+        let rows = CGFloat(2 + peers)
+        return min(head + strip + 10 + rows * row + (rows - 1) * 8 + CardFrame.inset + foot, ceiling)
+    }
+    /// How tall its choices may stand, and whether they all fit.
+    var signInChoices: (height: CGFloat, fit: Bool) {
+        let rows = CGFloat(2 + browser.signInPeers.count)
+        let room = height(.signIns) - Self.head - Self.strip - 10 - CardFrame.inset - Self.foot
+        return (room, room >= rows * Self.row + (rows - 1) * 8)
     }
 
     private var inner: CGFloat { width - 2 * CardFrame.inset }
@@ -1108,7 +1139,7 @@ final class SpaceTray: NSView {
         // flight and the tray going start in this commit, and the space is
         // made on the next turn: its row can hold the main thread, and the
         // tray should never wait on it.
-        let landing = SpaceAnchors.dot
+        let landing = SpaceAnchors.anchor(.dot, in: window)
         let dot = landing.map { convert($0.bounds, from: $0) } ?? origin
         let target = dot
         CATransaction.begin()
@@ -1136,20 +1167,38 @@ final class SpaceTray: NSView {
         let (browser, draft, washed) = (browser, draft, previewing)
         previewing = false
         let taking = draft.taking ? [draft.tab].compactMap { $0 } + draft.more : []
-        DispatchQueue.main.async {
-            // The window already wears its look: worn under the preview, which
-            // then goes, with nothing to cross.
-            if !draft.colors.isEmpty { browser.prefs.backdrop = .color }
-            if let folder = draft.folder {
-                // Made, the folder sent there whole, then shown.
-                let made = browser.addSpace(named: draft.named, icon: draft.icon, ownSignIns: draft.own, paint: draft.paint, show: false)
-                browser.moveFolder(folder, to: made, say: false, ask: false, hand: true)
-                browser.switchSpace(to: made, washed: washed)
-            } else {
-                browser.addSpace(named: draft.named, icon: draft.icon, ownSignIns: draft.own, paint: draft.paint, taking: taking, washed: washed)
-            }
+        DispatchQueue.main.async { Self.make(draft, in: browser, taking: taking, washed: washed) }
+    }
+
+    /// The space the draft says, made and shown: its tabs or folder taken
+    /// along, and another space's sign-ins joined as Settings' New Space
+    /// joins them.
+    static func make(_ draft: SpaceDraft, in browser: Browser, taking: [Tab], washed: Bool) {
+        // The window already wears its look: worn under the preview, which
+        // then goes, with nothing to cross.
+        if !draft.colors.isEmpty { browser.prefs.backdrop = .color }
+        guard draft.folder != nil || draft.peer != nil else {
+            browser.addSpace(named: draft.named, icon: draft.icon, ownSignIns: draft.own, paint: draft.paint, taking: taking, washed: washed)
             if washed { browser.spaceWash.hide() }
+            return
         }
+        // Made, on the sign-ins it joins, before anything goes there: a tab
+        // already on them goes as it is, never closed and opened again
+        // (moveTabs); then the folder whole, or the tabs, and it is shown.
+        let made = browser.addSpace(named: draft.named, icon: draft.icon, ownSignIns: draft.own, paint: draft.paint, show: false)
+        if let peer = draft.peer { browser.setSpaceProfile(made, with: peer) }
+        let front = browser.active
+        var moved: SpaceMove?
+        if let folder = draft.folder {
+            browser.moveFolder(folder, to: made, say: false, ask: false, hand: true)
+        } else if !taking.isEmpty {
+            moved = browser.moveTabs(taking, to: made, say: false, step: false)
+        }
+        browser.switchSpace(to: made, washed: washed)
+        if let arrived = moved?.tabs.first(where: { $0.original == front?.id })?.now, browser.tabs.contains(where: { $0 === arrived }) {
+            browser.select(arrived)
+        }
+        if washed { browser.spaceWash.hide() }
     }
 
     // MARK: motion
@@ -1980,10 +2029,42 @@ struct TrayStep: View {
     // MARK: sign-ins
 
     private var signIns: some View {
-        VStack(spacing: 8) {
+        let choices = tray?.signInChoices ?? (height: 0, fit: true)
+        return VStack(spacing: 8) {
             strip.padding(.bottom, 2)
-            check("Shared Sign-ins", "Signed in wherever your other spaces are.", on: !draft.own) { draft.own = false }
-            check("Its Own Sign-ins", "Starts signed out, with cookies of its own.", on: draft.own) { draft.own = true }
+            if choices.fit {
+                signInChoices
+            } else {
+                ThreadScrollView(.vertical) {
+                    VStack(spacing: 8) { signInChoices }
+                }
+                // Faded where there are more, as the list of spaces is.
+                .modifier(ScrollEdges(more: $more, scrolled: { _ in }))
+                .overlay(alignment: .top) { haze(.top).opacity(more.above ? 1 : 0) }
+                .overlay(alignment: .bottom) { haze(.bottom).opacity(more.below ? 1 : 0) }
+                .animation(Motion.quick, value: more.above)
+                .animation(Motion.quick, value: more.below)
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollIndicators(.never)
+                .frame(height: choices.height)
+            }
+        }
+    }
+
+    @ViewBuilder private var signInChoices: some View {
+        check("Shared Sign-ins", "Signed in wherever your other spaces are.", on: !draft.own && draft.peer == nil) {
+            draft.own = false
+            draft.peer = nil
+        }
+        ForEach(tray?.browserForList.signInPeers ?? []) { space in
+            check("Same as \(space.name)", "Signed in wherever \(space.name) is.", on: draft.peer == space.id) {
+                draft.own = false
+                draft.peer = space.id
+            }
+        }
+        check("Its Own Sign-ins", "Starts signed out, with cookies of its own.", on: draft.own) {
+            draft.own = true
+            draft.peer = nil
         }
     }
 
