@@ -81,8 +81,19 @@ enum SiteProcesses {
     /// it has any media, playing, paused or muted.
     static func learn(from web: WKWebView) {
         guard on, let site = site(of: web.url), !mediaSites.contains(site) else { return }
+        ask(web)
+    }
+
+    /// The page's media state, learned for the site the page was on when
+    /// asked: a reply that comes after the view went to another site is
+    /// about the page it left.
+    static func ask(_ web: WKWebView, then answer: @escaping @MainActor (WKMediaPlaybackState) -> Void = { _ in }) {
+        let site = site(of: web.url)
         web.requestMediaPlaybackState { state in
-            MainActor.assumeIsolated { heard(state, on: site) }
+            MainActor.assumeIsolated {
+                if let site { heard(state, on: site) }
+                answer(state)
+            }
         }
     }
 

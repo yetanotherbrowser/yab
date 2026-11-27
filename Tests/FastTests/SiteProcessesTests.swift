@@ -94,23 +94,42 @@ struct SiteProcessesTests {
         tab.go(to: URL(string: "about:blank")!)
         let web = requireNativeWebKitFixture(tab, "SiteProcessesTests")
         let store = web.configuration.websiteDataStore
-        web.loadHTMLString("<!doctype html><title>t</title><p>words</p>", baseURL: URL(string: "https://words.test/a"))
-        try await until("the page without media") { web.url?.host == "words.test" }
-        // A site without media still shares, past the limit.
-        try await until("its page as the sibling") { SiteProcesses.sibling(for: URL(string: "https://words.test/b"), store: store) === web }
+        web.loadHTMLString("<!doctype html><title>t</title><p>words</p>", baseURL: URL(string: "https://videos.test/a"))
+        try await until("the page without media") { web.url?.host == "videos.test" }
+        // Until one of its pages has media, the site shares past the limit.
+        try await until("its page as the sibling") { SiteProcesses.sibling(for: URL(string: "https://videos.test/c"), store: store) === web }
         // WebKit counts media once an element has something to load.
         web.loadHTMLString("<!doctype html><title>t</title><audio preload=auto src='\(silence)'></audio>",
-                           baseURL: URL(string: "https://videos.test/a"))
-        try await until("the page with media") { web.url?.host == "videos.test" }
-        try await until("its page as the sibling, before it is known") {
-            SiteProcesses.sibling(for: URL(string: "https://videos.test/b"), store: store) === web
-        }
-        // Asked as a page load would ask it, until the audio is in.
+                           baseURL: URL(string: "https://videos.test/b"))
+        // The tab's own page load asks once it finishes; asked again here
+        // until the audio is in.
         try await until("the site known to have media") {
             SiteProcesses.learn(from: web)
             return SiteProcesses.mediaSites.contains("https://videos.test")
         }
-        #expect(SiteProcesses.sibling(for: URL(string: "https://videos.test/b"), store: store) == nil)
+        #expect(SiteProcesses.sibling(for: URL(string: "https://videos.test/c"), store: store) == nil)
+    }
+
+    /// Media heard for a page counts for the site it was on when asked,
+    /// not for the site the view went to before WebKit answered.
+    @Test func mediaCountsForTheSiteThePageWasOnWhenAsked() {
+        let web = Asked(frame: .zero, configuration: WKWebViewConfiguration())
+        web.shown = URL(string: "https://left.test/a")
+        SiteProcesses.ask(web)
+        web.shown = URL(string: "https://arrived.test/a")
+        web.reply?(.paused)
+        #expect(SiteProcesses.mediaSites.contains("https://left.test"))
+        #expect(!SiteProcesses.mediaSites.contains("https://arrived.test"))
+    }
+
+    /// A view whose address the test moves and whose media state it sends.
+    private final class Asked: WKWebView {
+        var shown: URL?
+        var reply: (@MainActor (WKMediaPlaybackState) -> Void)?
+        override var url: URL? { shown }
+        override func requestMediaPlaybackState(completionHandler: @escaping @MainActor (WKMediaPlaybackState) -> Void) {
+            reply = completionHandler
+        }
     }
 
     /// A tenth of a second of silence, a WAV file as a data address.
