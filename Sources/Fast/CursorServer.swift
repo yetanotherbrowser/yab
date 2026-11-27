@@ -140,7 +140,7 @@ final class CursorServer {
             return [.failed(words)]
         }
         guard let result = message["result"] as? [String: Any] else {
-            return [.failed("Cursor answered in a way Yab can't read. Try again.")]
+            return [.failed("\(name) answered in a way Yab can't read. Try again.")]
         }
         switch what {
         case .initialize:
@@ -163,9 +163,9 @@ final class CursorServer {
             thread = id
             opening = nil
             if textOnly {
-                guard let askMode, configModel == nil else {
-                    // No "ask" of its own (OpenCode), or a model asked for: a
-                    // text-only run takes the no-tools helper first, then its model.
+                guard let askMode else {
+                    // Providers with no `askMode` (OpenCode) take `helperMode`
+                    // first, then `configModel` if set.
                     loading = true
                     request("session/set_config_option",
                             ["sessionId": id, "configId": "mode", "value": Self.helperMode], .mode)

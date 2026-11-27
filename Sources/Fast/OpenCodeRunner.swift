@@ -11,13 +11,35 @@ enum OpenCodeRunner {
     static var models: [AgentModel] {
         parseModels(Store.settings.string(forKey: "agents.opencode.models") ?? "")
     }
-    /// Where OpenCode shows its plan's usage; it doesn't tell its CLI.
-    static let usage = URL(string: "https://opencode.ai")!
     /// The config content a text-only run launches with: a "helper" agent
     /// that answers in words with every tool off, merged over OpenCode's
     /// own config through `OPENCODE_CONFIG_CONTENT`.
     static let helperConfig =
         "{\"agent\":{\"helper\":{\"description\":\"Yab helper: answers in words, no tools\",\"mode\":\"primary\",\"build\":true,\"tools\":{\"*\":false}}}}"
+    /// The config content a browser-only run launches with: a "browser"
+    /// agent with every tool off except Yab's browser MCP tools, merged
+    /// over OpenCode's own config through `OPENCODE_CONFIG_CONTENT`.
+    static let browserOnlyConfig: String = {
+        let underscored = Mcp.name.replacingOccurrences(of: "-", with: "_")
+        let config: [String: Any] = [
+            "default_agent": "browser",
+            "agent": [
+                "browser": [
+                    "description": "Yab browser: browser tools only",
+                    "mode": "primary",
+                    "tools": [
+                        "*": false,
+                        "\(Mcp.name)_*": true,
+                        "\(underscored)_*": true,
+                    ],
+                ],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
+            return "{}"
+        }
+        return String(decoding: data, as: UTF8.self)
+    }()
     private static var refreshed = Date.distantPast
 
     static func refresh(binary: String, env: [String: String], permit: ProviderLaunchPermit) async {
@@ -44,7 +66,7 @@ enum OpenCodeRunner {
         }
     }
 
-    /// "opencode/glm-5.3-flash" reads "GLM-5.3-Flash": the part after the
+    /// "opencode/glm-5.3-flash" reads "Glm 5.3 Flash": the part after the
     /// provider, its dashes spaced, each word headed by a capital.
     static func modelName(_ id: String) -> String {
         let own = id.components(separatedBy: "/").last ?? id
@@ -76,12 +98,24 @@ enum OpenCodeRunner {
         URL(fileURLWithPath: env["HOME"] ?? AgentSetup.home.path).standardizedFileURL.path
     }
 
+    static func hasStoredCredentials(_ output: String) -> Bool {
+        let plain = output.replacingOccurrences(of: #"\x1B\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
+        let lines = plain.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.contains { line in
+            let lower = line.lowercased()
+            return lower.range(of: #"\S+\s+stored$"#, options: .regularExpression) != nil
+                && lower.range(of: #"^[^\p{L}\p{N}]*(?:0|no)\b"#, options: .regularExpression) == nil
+        }
+    }
+
     static func identify(binary: String, env: [String: String], permit: ProviderLaunchPermit? = nil) async -> Identity {
         guard let permit = permit ?? ProviderConsent.shared.permit("opencode") ?? ProviderConsent.shared.connectionPermit("opencode"), permit.valid else { return (false, nil, nil) }
         let key = identityKey(env)
         let result = await Shell.timed(binary, ["auth", "list"], env: environment(env), permit: permit)
         guard permit.valid else { return (false, nil, nil) }
-        let who: Identity = (result.code == 0 && result.output.lowercased().contains("stored"), nil, nil)
+        let who: Identity = (result.code == 0 && hasStoredCredentials(result.output), nil, nil)
         identities[key] = who
         if who.signedIn { await refresh(binary: binary, env: env, permit: permit) }
         guard permit.valid else { return (false, nil, nil) }
@@ -91,6 +125,16 @@ enum OpenCodeRunner {
     static func environment(_ base: [String: String]) -> [String: String] {
         let providerKeys = ["CLAUDE", "ANTHROPIC_", "CODEX_", "OPENAI_", "CURSOR_", "OPENCODE_"]
         return base.filter { key, _ in !providerKeys.contains(where: key.hasPrefix) }
+    }
+
+    static func sessionEnvironment(_ base: [String: String], textOnly: Bool, full: Bool) -> [String: String] {
+        var env = environment(base)
+        if textOnly {
+            env["OPENCODE_CONFIG_CONTENT"] = helperConfig
+        } else if !full {
+            env["OPENCODE_CONFIG_CONTENT"] = browserOnlyConfig
+        }
+        return env
     }
 
     /// One answer with no tools, for Yab's own helpers (PlanText): ACP, as
@@ -111,7 +155,7 @@ enum OpenCodeRunner {
         // merged over OpenCode's own config.
         let args = ["acp"]
         Agents.throughShell(process, binary, args)
-        process.environment = environment(base).merging(["OPENCODE_CONFIG_CONTENT": helperConfig]) { ours, _ in ours }
+        process.environment = sessionEnvironment(base, textOnly: true, full: false)
         process.currentDirectoryURL = room
         process.standardInput = input
         process.standardOutput = out

@@ -113,4 +113,29 @@ struct ProviderDisconnectTests {
         #expect(!permit.commit { try? "stale".write(to: config, atomically: true, encoding: .utf8) })
         #expect(try String(contentsOf: config, encoding: .utf8) == "new connection")
     }
+
+    @Test func oldDisconnectCannotClearReconnectedOpenCodeConnectionKey() async throws {
+        let (consent, settings, domain) = isolated()
+        defer { settings.removePersistentDomain(forName: domain) }
+        let prior = Store.settings.object(forKey: OpenCodeRunner.connectionKey)
+        defer {
+            if let prior { Store.settings.set(prior, forKey: OpenCodeRunner.connectionKey) }
+            else { Store.settings.removeObject(forKey: OpenCodeRunner.connectionKey) }
+        }
+        Store.settings.set(true, forKey: OpenCodeRunner.connectionKey)
+        consent.grant("opencode")
+        consent.revoke("opencode")
+        let staleDisconnect = try #require(consent.disconnectPermit("opencode"))
+        defer { staleDisconnect.revoke() }
+        consent.beginConnection("opencode")
+        let found = Shell.Found(claude: nil, codex: nil, opencode: "/oc", env: [:])
+        await AgentSetup.remove(found, only: ["opencode"], disconnects: ["opencode": staleDisconnect])
+        #expect(Store.settings.bool(forKey: OpenCodeRunner.connectionKey))
+
+        consent.revoke("opencode")
+        let validDisconnect = try #require(consent.disconnectPermit("opencode"))
+        defer { validDisconnect.revoke() }
+        await AgentSetup.remove(found, only: ["opencode"], disconnects: ["opencode": validDisconnect])
+        #expect(Store.settings.object(forKey: OpenCodeRunner.connectionKey) == nil)
+    }
 }

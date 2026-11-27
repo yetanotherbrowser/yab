@@ -35,7 +35,7 @@ public struct SyncMacModel: Equatable, Sendable, Identifiable {
     }
 
     /// The group a model is listed under, by its agent's plan.
-    public static func plan(_ cli: String) -> String { ["codex": "ChatGPT", "cursor": "Cursor", "gemini": "Gemini"][cli] ?? "Claude" }
+    public static func plan(_ cli: String) -> String { ["codex": "ChatGPT", "cursor": "Cursor", "gemini": "Gemini", "opencode": "OpenCode"][cli] ?? "Claude" }
 
     /// An effort as the Mac's picker says it: "Low", "Extra high".
     public static func effortTitle(_ effort: String) -> String {

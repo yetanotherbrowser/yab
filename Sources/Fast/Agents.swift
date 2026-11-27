@@ -1265,6 +1265,7 @@ final class Agents: ObservableObject {
         if mine.count == 1 { return mine[0] }
         if found?.claude == nil, found?.codex != nil { return "codex" }
         if found?.claude == nil, found?.codex == nil, found?.cursor != nil { return "cursor" }
+        if found?.claude == nil, found?.codex == nil, found?.cursor == nil, found?.opencode != nil { return "opencode" }
         return "claude"
     }
 
@@ -1401,7 +1402,8 @@ final class Agents: ObservableObject {
             }
         }
         // OpenCode's own config is left as it is: its ACP session is given
-        // Yab's tools as an MCP server of the task's own (start).
+        // Yab's tools as an MCP server of the task's own, and `start`
+        // overlays `OPENCODE_CONFIG_CONTENT` for text-only and browser-only runs.
         if session.agent == .opencode { session.env = OpenCodeRunner.environment(env) }
         guard dispatchAllowed(session) else { return }
         if session.agent == .codex { await Agents.learnServer(codex: binary, env: env, permit: session.providerPermit) }
@@ -1439,9 +1441,9 @@ final class Agents: ObservableObject {
     /// The model was turned away (ChatProblem): the same turn once more on
     /// the next one this agent has, its catalog asked again. Claude Code
     /// goes back to its own default; Codex to the first of its list it
-    /// wasn't refused. Twice a turn at most.
+    /// wasn't refused; Cursor and OpenCode do not retry. Twice a turn at most.
     func retryModel(_ session: Session, _ error: String) -> Bool {
-        guard session.agent != .cursor, !session.remembering, session.modelRetries < 2,
+        guard session.agent != .cursor, session.agent != .opencode, !session.remembering, session.modelRetries < 2,
               ChatProblem(error, agent: "").kind == .modelUnavailable else { return false }
         let was = session.agent == .codex ? session.ranModel ?? session.model : session.model
         if session.agent == .codex {
@@ -1988,6 +1990,9 @@ final class Agents: ObservableObject {
         // came back "No such tool available", and the chat kept a made-up name.
         if session.agent == .claude, !session.textOnly, env["MCP_CONNECTION_NONBLOCKING"] == nil {
             env["MCP_CONNECTION_NONBLOCKING"] = "false"
+        }
+        if session.agent == .opencode {
+            env = OpenCodeRunner.sessionEnvironment(env, textOnly: session.textOnly, full: session.full)
         }
         if Store.testing, session.agent == .codex {
             let source = session.env["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
@@ -3338,9 +3343,21 @@ final class Agents: ObservableObject {
     private func cursor(_ heard: [CursorServer.Heard], _ session: Session) {
         for event in heard {
             // A quiet memory turn's words stay out of the chat: only its
-            // end gets through, for the turn it closes.
+            // end gets through, while permissions are cancelled and failures
+            // still close the turn.
             if session.remembering {
-                guard case .ended = event else { continue }
+                switch event {
+                case .ended:
+                    break
+                case .permission(let id, _, _, _):
+                    session.cursor?.reply(id, option: nil)
+                    continue
+                case .failed:
+                    turned(session)
+                    continue
+                default:
+                    continue
+                }
             }
             switch event {
             case .ready(let thread):

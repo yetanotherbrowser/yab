@@ -161,6 +161,16 @@ extension PlanAccountsTests {
         ], on: "opencode.test01")
         #expect(accounts.out("opencode.test01", now: now))
         #expect(accounts.windows("opencode.test01", now: now).map(\.name) == ["five_hour"])
+        // A window flagged limited stops work even below 100%, using its
+        // own reset time rather than the fullest window's.
+        accounts.heard(opencodeUsage: [
+            "data": ["go": [
+                "rolling": ["percent": 92, "limited": false, "resetsAt": Int(hourly.timeIntervalSince1970 * 1000)],
+                "weekly": ["percent": 85, "limited": true, "resetsAt": Int(weekly.timeIntervalSince1970 * 1000)],
+            ]],
+        ], on: "opencode.test01")
+        #expect(accounts.out("opencode.test01", now: now))
+        #expect(accounts.quotas["opencode.test01"]?.out == weekly)
     }
 
     @Test func codexsReadSaysWhenThePlanStopsTakingWork() {

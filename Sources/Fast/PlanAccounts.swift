@@ -579,10 +579,16 @@ final class PlanAccounts: ObservableObject {
         guard let data = usage["data"] as? [String: Any], let go = data["go"] as? [String: Any] else { return }
         let named = ["rolling": "five_hour", "weekly": "seven_day", "monthly": "thirty_day"]
         var windows: [String: PlanWindow] = [:]
+        var limited = false
+        var limitedResets: Date?
         for (window, name) in named {
             guard let said = go[window] as? [String: Any], let percent = (said["percent"] as? NSNumber)?.doubleValue else { continue }
-            windows[name] = PlanWindow(used: percent / 100,
-                                       resets: (said["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) })
+            let resets = (said["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            windows[name] = PlanWindow(used: percent / 100, resets: resets)
+            if said["limited"] as? Bool == true {
+                limited = true
+                if let resets { limitedResets = max(limitedResets ?? resets, resets) }
+            }
         }
         guard let fullest = windows.max(by: { $0.value.used < $1.value.used }) else { return }
         var quota = PlanQuota()
@@ -590,7 +596,7 @@ final class PlanAccounts: ObservableObject {
         quota.used = fullest.value.used
         quota.resets = fullest.value.resets
         quota.window = fullest.key
-        if fullest.value.used >= 1 { quota.out = fullest.value.resets ?? Date().addingTimeInterval(3600) }
+        if fullest.value.used >= 1 || limited { quota.out = limitedResets ?? fullest.value.resets ?? Date().addingTimeInterval(3600) }
         quotas[id] = quota
         saveQuotas()
     }

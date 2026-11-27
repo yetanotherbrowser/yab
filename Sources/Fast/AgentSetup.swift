@@ -568,37 +568,56 @@ enum AgentSetup {
                 return addCodex()
             }) { troubles.append(trouble) }
         }
+        func setConnection(_ cli: String, key: String) async -> Bool {
+            // Checking the permit and writing Store.settings together under
+            // ProviderLaunchPermit.atomic on @MainActor eliminates the TOCTOU
+            // window against @MainActor ProviderConsent while avoiding the
+            // background-thread SwiftUI lock-inversion deadlock.
+            await MainActor.run {
+                ProviderLaunchPermit.atomic {
+                    guard permits == nil || permits?[cli]?.valid == true else { return false }
+                    Store.settings.set(true, forKey: key)
+                    return true
+                }
+            }
+        }
         if wanted("cursor"), found.cursor != nil || only != nil {
             if found.cursor == nil { troubles.append("Cursor isn't installed.") }
-            else if ProviderLaunchPermit.atomic({ permits == nil || permits?["cursor"]?.valid == true }) {
-                Store.settings.set(true, forKey: CursorRunner.connectionKey)
-            } else { troubles.append(ProviderConsent.refusal) }
+            else if !(await setConnection("cursor", key: CursorRunner.connectionKey)) {
+                troubles.append(ProviderConsent.refusal)
+            }
         }
         if wanted("opencode"), found.opencode != nil || only != nil {
             if found.opencode == nil { troubles.append("OpenCode isn't installed.") }
-            else if ProviderLaunchPermit.atomic({ permits == nil || permits?["opencode"]?.valid == true }) {
-                Store.settings.set(true, forKey: OpenCodeRunner.connectionKey)
-            } else { troubles.append(ProviderConsent.refusal) }
+            else if !(await setConnection("opencode", key: OpenCodeRunner.connectionKey)) {
+                troubles.append(ProviderConsent.refusal)
+            }
         }
         return troubles
     }
 
     static func remove(_ found: Shell.Found, only: Set<String>? = nil, disconnects: [String: ProviderDisconnectPermit]? = nil) async {
         func wanted(_ name: String) -> Bool { only?.contains(name) ?? true }
-        // The permit's say is taken under its lock; the work it lets through
-        // then runs outside it. A defaults write inside that lock tells
-        // SwiftUI to update on this task's thread, while the main thread
-        // updating its views wants the lock: the app deadlocked on Connect.
-        func commit(_ cli: String, _ work: () -> Void) {
-            if let disconnects, disconnects[cli]?.valid != true { return }
-            work()
+        func commitFiles(_ cli: String, _ work: () -> Void) {
+            if let disconnects { _ = disconnects[cli]?.commit(work) }
+            else { work() }
+        }
+        // Checking the permit and clearing Store.settings together under
+        // ProviderLaunchPermit.atomic on @MainActor eliminates the TOCTOU
+        // window while avoiding the background-thread SwiftUI lock-inversion
+        // deadlock.
+        func clearConnection(_ cli: String, key: String) async {
+            await MainActor.run {
+                if let disconnects { _ = disconnects[cli]?.commit { Store.settings.removeObject(forKey: key) } }
+                else { Store.settings.removeObject(forKey: key) }
+            }
         }
         if wanted("claude"), disconnects == nil || disconnects?["claude"]?.valid == true {
             await removeClaude(found, disconnect: disconnects?["claude"])
         }
-        if wanted("codex") { commit("codex") { removeCodex() } }
-        if wanted("cursor") { commit("cursor") { Store.settings.removeObject(forKey: CursorRunner.connectionKey) } }
-        if wanted("opencode") { commit("opencode") { Store.settings.removeObject(forKey: OpenCodeRunner.connectionKey) } }
+        if wanted("codex") { commitFiles("codex") { removeCodex() } }
+        if wanted("cursor") { await clearConnection("cursor", key: CursorRunner.connectionKey) }
+        if wanted("opencode") { await clearConnection("opencode", key: OpenCodeRunner.connectionKey) }
         if wanted("command") {
             ProviderLaunchPermit.atomic {
                 guard disconnects == nil || (disconnects?.isEmpty == false && disconnects?.values.allSatisfy({ $0.valid }) == true) else { return }

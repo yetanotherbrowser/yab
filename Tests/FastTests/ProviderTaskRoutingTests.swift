@@ -232,6 +232,8 @@ struct ProviderTaskRoutingTests {
         #expect(ModelDefaults.autoTasks(text: "gemini", preferred: "codex", toolsHere: true, geminiTools: true) == ("gemini", nil))
         #expect(ModelDefaults.autoTasks(text: "cursor", preferred: "claude", toolsHere: true, cursorHere: true) == ("cursor", nil))
         #expect(ModelDefaults.autoTasks(text: "cursor", preferred: "claude", toolsHere: true, cursorHere: false) == ("claude", nil))
+        #expect(ModelDefaults.autoTasks(text: "opencode", preferred: "claude", toolsHere: true, opencodeHere: true) == ("opencode", nil))
+        #expect(ModelDefaults.autoTasks(text: "opencode", preferred: "claude", toolsHere: true, opencodeHere: false) == ("claude", nil))
         // A build whose Gemini has no tools still says who stood in.
         let standIn = ModelDefaults.autoTasks(text: "gemini", preferred: "codex", toolsHere: true, geminiTools: false)
         #expect(standIn.cli == "codex" && standIn.line?.hasSuffix("so ChatGPT took this task.") == true)
@@ -241,9 +243,9 @@ struct ProviderTaskRoutingTests {
         #expect(GeminiSupport.launchRefusal("gemini", textOnly: false, remote: true) == nil)
     }
 
-    /// The iPhone's chats and tasks name all four plans.
+    /// The iPhone's chats and tasks name all five plans.
     @Test func theIPhoneKnowsEveryPlan() {
         #expect(Set(ChatAgent.allCases.map(\.rawValue)) == Set(AgentPlan.clis))
-        #expect(SyncMacModel.plan("gemini") == "Gemini" && SyncMacModel.plan("cursor") == "Cursor")
+        #expect(SyncMacModel.plan("gemini") == "Gemini" && SyncMacModel.plan("cursor") == "Cursor" && SyncMacModel.plan("opencode") == "OpenCode")
     }
 }

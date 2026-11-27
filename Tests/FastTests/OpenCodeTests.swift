@@ -72,6 +72,72 @@ struct OpenCodeTests {
         #expect((helper?["tools"] as? [String: Any])?["*"] as? Bool == false)
     }
 
+    @Test func theBrowserOnlyConfigLimitsToolsToYabBrowser() throws {
+        let config = try JSONSerialization.jsonObject(with: Data(OpenCodeRunner.browserOnlyConfig.utf8)) as? [String: Any]
+        #expect(config?["default_agent"] as? String == "browser")
+        let browser = (config?["agent"] as? [String: Any])?["browser"] as? [String: Any]
+        #expect(browser?["mode"] as? String == "primary")
+        let tools = browser?["tools"] as? [String: Any]
+        #expect(tools?["*"] as? Bool == false)
+        #expect(tools?["yab-browser_*"] as? Bool == true)
+        #expect(tools?["yab_browser_*"] as? Bool == true)
+    }
+
+    @Test func opencodeSessionEnvironmentSetsConfigPerAccessModeAndStripsProviderKeys() {
+        let base = [
+            "HOME": "/test",
+            "PATH": "/bin",
+            "OPENCODE_API_KEY": "test-only",
+            "OPENCODE_CONFIG_CONTENT": "{\"stale\":true}",
+            "CLAUDE_CODE_OAUTH_TOKEN": "test-only",
+            "ANTHROPIC_API_KEY": "test-only",
+            "CODEX_HOME": "/other",
+            "OPENAI_API_KEY": "test-only",
+            "CURSOR_AUTH_TOKEN": "test-only",
+        ]
+
+        let textOnlyEnv = OpenCodeRunner.sessionEnvironment(base, textOnly: true, full: false)
+        #expect(textOnlyEnv["HOME"] == "/test")
+        #expect(textOnlyEnv["PATH"] == "/bin")
+        #expect(textOnlyEnv["OPENCODE_API_KEY"] == nil)
+        #expect(textOnlyEnv["CLAUDE_CODE_OAUTH_TOKEN"] == nil)
+        #expect(textOnlyEnv["ANTHROPIC_API_KEY"] == nil)
+        #expect(textOnlyEnv["CODEX_HOME"] == nil)
+        #expect(textOnlyEnv["OPENAI_API_KEY"] == nil)
+        #expect(textOnlyEnv["CURSOR_AUTH_TOKEN"] == nil)
+        #expect(textOnlyEnv["OPENCODE_CONFIG_CONTENT"] == OpenCodeRunner.helperConfig)
+
+        let browserOnlyEnv = OpenCodeRunner.sessionEnvironment(base, textOnly: false, full: false)
+        #expect(browserOnlyEnv["HOME"] == "/test")
+        #expect(browserOnlyEnv["PATH"] == "/bin")
+        #expect(browserOnlyEnv["OPENCODE_API_KEY"] == nil)
+        #expect(browserOnlyEnv["OPENCODE_CONFIG_CONTENT"] == OpenCodeRunner.browserOnlyConfig)
+
+        let fullEnv = OpenCodeRunner.sessionEnvironment(base, textOnly: false, full: true)
+        #expect(fullEnv["HOME"] == "/test")
+        #expect(fullEnv["PATH"] == "/bin")
+        #expect(fullEnv["OPENCODE_API_KEY"] == nil)
+        #expect(fullEnv["OPENCODE_CONFIG_CONTENT"] == nil)
+    }
+
+    @Test func opencodeStoredCredentialsIgnoreEmptyAndZeroCounts() {
+        let table = """
+        ┌ Credentials ~/.local/share/opencode/auth.json
+        │ OpenCode  api     stored
+        │ Anthropic oauth   stored
+        └ 2 credentials stored
+        """
+        #expect(OpenCodeRunner.hasStoredCredentials(table))
+        #expect(OpenCodeRunner.hasStoredCredentials("\u{1B}[32mOpenCode\u{1B}[0m  \u{1B}[2mstored\u{1B}[0m\n"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("No authenticated integrations"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("0 credentials stored"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("No credentials stored"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("└ 0 credentials stored"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("└ No credentials stored"))
+        #expect(!OpenCodeRunner.hasStoredCredentials("No stored credentials"))
+        #expect(!OpenCodeRunner.hasStoredCredentials(""))
+    }
+
     /// OpenCode's ACP has no "ask" mode: a text-only run takes its
     /// no-tools helper through session/set_config_option first, then
     /// prompts, and its words carry OpenCode's own id and name.
@@ -172,6 +238,7 @@ struct OpenCodeTests {
 
         // The extraction prompt is told to the CLI, but never shows as yours.
         agents.send(session, Agents.extractionPrompt(session))
+        let promptId = wire.lines.last?["id"] ?? 0
         #expect(session.items.map(\.id) == ["q1"])
         #expect(wire.lines.last?["method"] as? String == "session/prompt")
         #expect(session.result.isEmpty)
@@ -188,14 +255,78 @@ struct OpenCodeTests {
         #expect(session.items.map(\.id) == ["q1"])
         #expect(session.result.isEmpty)
 
+        // A permission ask during the quiet turn is cancelled without an alert or chat item.
+        agents.hear(["id": 9, "method": "session/request_permission", "params": [
+            "sessionId": "ses_1", "toolCall": ["title": "Write a file"], "options": [
+                ["optionId": "yes", "name": "Allow once", "kind": "allow_once"]]]], on: session)
+        let outcome = (wire.lines.last?["result"] as? [String: Any])?["outcome"] as? [String: Any]
+        #expect(outcome?["outcome"] as? String == "cancelled")
+        #expect(session.cursorAlert == nil)
+        #expect(session.items.map(\.id) == ["q1"])
+        #expect(session.result.isEmpty)
+
         // Its end does get through: the stdin it closes is how the quiet
         // turn's process goes, and its exit ends the remembering.
         let pipe = Pipe()
         session.input = pipe.fileHandleForWriting
         let reader = pipe.fileHandleForReading.fileDescriptor
         _ = fcntl(reader, F_SETFL, fcntl(reader, F_GETFL) | O_NONBLOCK)
-        agents.hear(["jsonrpc": "2.0", "id": wire.lines.last?["id"] ?? 0, "result": [:]], on: session)
+        agents.hear(["jsonrpc": "2.0", "id": promptId, "result": [:]], on: session)
         var byte: UInt8 = 0
         #expect(read(reader, &byte, 1) == 0)
+    }
+
+    @Test @MainActor func theQuietMemoryTurnFailureClosesInputWithoutFailingSession() throws {
+        let fixture = IsolatedProviderConsent("opencode")
+        defer { fixture.close() }
+        @MainActor final class Wire {
+            var lines: [[String: Any]] = []
+            lazy var server = CursorServer(write: { [unowned self] data in
+                if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
+            }, name: "OpenCode", askMode: nil)
+            func reply(_ result: [String: Any]) -> [CursorServer.Heard] {
+                server.heard(["jsonrpc": "2.0", "id": lines.last?["id"] ?? 0, "result": result])
+            }
+        }
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [])
+        _ = wire.reply(["protocolVersion": 1])
+        guard case .ready = wire.reply(["sessionId": "ses_1"]).first else { Issue.record("no conversation"); return }
+        let agents = Agents()
+        let session = Agents.Session(id: "quiet-fail-" + UUID().uuidString.prefix(6), cli: "opencode", name: "OpenCode", prompt: "Fix it", state: .done)
+        session.providerPermit = try #require(fixture.consent.permit("opencode"))
+        session.cursor = wire.server
+        session.quiet = true
+        session.items = [ChatItem(id: "q1", kind: .asked, text: "Fix it", state: .done)]
+        session.remembering = true
+
+        agents.send(session, Agents.extractionPrompt(session))
+        let promptId = wire.lines.last?["id"] ?? 0
+        session.result = "Original answer"
+        let pipe = Pipe()
+        session.input = pipe.fileHandleForWriting
+        let reader = pipe.fileHandleForReading.fileDescriptor
+        _ = fcntl(reader, F_SETFL, fcntl(reader, F_GETFL) | O_NONBLOCK)
+
+        agents.hear(["jsonrpc": "2.0", "id": promptId, "error": ["code": -32001, "message": "memory extraction failed"]], on: session)
+        var byte: UInt8 = 0
+        #expect(read(reader, &byte, 1) == 0)
+        #expect(session.input == nil)
+        #expect(session.result == "Original answer")
+        #expect(session.state == .done)
+    }
+
+    @Test @MainActor func opencodeDoesNotRetryModel() {
+        let agents = Agents()
+        let session = Agents.Session(id: "retry-" + UUID().uuidString.prefix(6), cli: "opencode", name: "OpenCode", prompt: "Hi", state: .running)
+        session.model = "opencode/glm-5.3-flash"
+        #expect(!agents.retryModel(session, "model_not_found"))
+        #expect(session.model == "opencode/glm-5.3-flash")
+        #expect(session.modelRetries == 0)
+    }
+
+    @Test func preferredFallsBackToOpenCodeWhenOnlyOpenCodeIsFound() {
+        let found = Shell.Found(claude: nil, codex: nil, cursor: nil, gemini: nil, opencode: "/opt/homebrew/bin/opencode", env: [:])
+        #expect(Agents.preferred(connected: [], found: found) == "opencode")
     }
 }
