@@ -52,7 +52,7 @@ struct ThreadForm<Content: View>: View {
 }
 
 /// A header, row or footer as one lazy item; rows are keyed by search anchor so scrollTo finds them unbuilt.
-private struct FormPiece: View, Identifiable {
+struct FormPiece: View, Identifiable {
     enum Kind {
         case header(SectionConfiguration)
         case row(Subview, first: Bool, last: Bool)
@@ -72,6 +72,7 @@ private struct FormPiece: View, Identifiable {
 
     static func all(_ sections: [SectionConfiguration]) -> [FormPiece] {
         var pieces: [FormPiece] = []
+        var usedAnchors: Set<String> = []
         for (at, section) in sections.enumerated() {
             let start = pieces.count
             if !section.header.isEmpty {
@@ -80,7 +81,11 @@ private struct FormPiece: View, Identifiable {
                 pieces.append(FormPiece(id: Part.header(section.id), kind: .header(section), top: top))
             }
             for row in section.content {
-                let key = row.containerValues.settingsAnchor.map(AnyHashable.init) ?? AnyHashable(row.id)
+                // A Section with .settingsAnchor passes the same anchor to every row inside it;
+                // only the first row takes it so ForEach keeps unique ids while scrollTo still finds it.
+                let key = row.containerValues.settingsAnchor
+                    .flatMap { usedAnchors.insert($0).inserted ? AnyHashable($0) : nil }
+                    ?? AnyHashable(row.id)
                 pieces.append(FormPiece(id: key, kind: .row(row, first: row.id == section.content.first?.id,
                                                             last: row.id == section.content.last?.id)))
             }
