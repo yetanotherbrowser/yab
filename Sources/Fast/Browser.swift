@@ -10456,6 +10456,8 @@ extension Browser: PageEvents {
             return
         }
         if floating == tab.id, floater.kind == .video, picturing == nil { refloat(tab) }
+        // A site with media keeps its pages in processes of their own.
+        if let web = page.webKit { SiteProcesses.learn(from: web) }
         tab.uncover()
         tab.returnToPlace()
         tab.retone()
