@@ -1,0 +1,211 @@
+import Foundation
+
+/// OpenCode is a connected AI plan. Its CLI owns authentication and billing,
+/// and its turns run through `opencode acp`, the Agent Client Protocol.
+@MainActor
+enum OpenCodeRunner {
+    nonisolated static let connectionKey = "agents.opencode.connected"
+    nonisolated static var connected: Bool { Store.settings.bool(forKey: connectionKey) }
+    static var available: Bool { connected && Shell.cached?.opencode != nil }
+    static var chatClis: [String] { AgentSetupModel.clis }
+    static var models: [AgentModel] {
+        parseModels(Store.settings.string(forKey: "agents.opencode.models") ?? "")
+    }
+    /// The config content a text-only run launches with: a "helper" agent
+    /// that answers in words with every tool off, merged over OpenCode's
+    /// own config through `OPENCODE_CONFIG_CONTENT`.
+    static let helperConfig =
+        "{\"agent\":{\"helper\":{\"description\":\"Yab helper: answers in words, no tools\",\"mode\":\"primary\",\"build\":true,\"tools\":{\"*\":false}}}}"
+    /// The config content a browser-only run launches with: a "browser"
+    /// agent with every tool off except Yab's browser MCP tools, merged
+    /// over OpenCode's own config through `OPENCODE_CONFIG_CONTENT`.
+    static let browserOnlyConfig: String = {
+        let underscored = Mcp.name.replacingOccurrences(of: "-", with: "_")
+        let config: [String: Any] = [
+            "default_agent": "browser",
+            "agent": [
+                "browser": [
+                    "description": "Yab browser: browser tools only",
+                    "mode": "primary",
+                    "tools": [
+                        "*": false,
+                        "\(Mcp.name)_*": true,
+                        "\(underscored)_*": true,
+                    ],
+                ],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
+            return "{}"
+        }
+        return String(decoding: data, as: UTF8.self)
+    }()
+    private static var refreshed = Date.distantPast
+
+    static func refresh(binary: String, env: [String: String], permit: ProviderLaunchPermit) async {
+        guard permit.valid else { return }
+        guard Date().timeIntervalSince(refreshed) > 300 else { return }
+        refreshed = Date()
+        let result = await Shell.timed(binary, ["models"], env: environment(env), permit: permit)
+        guard permit.valid, result.code == 0, !parseModels(result.output).isEmpty else { return }
+        AgentSetupModel.shared.objectWillChange.send()
+        Store.settings.set(result.output, forKey: "agents.opencode.models")
+    }
+
+    /// `opencode models` prints one id a line, `provider/model`, where the
+    /// provider may itself carry slashes or a `~` mark. The model's own
+    /// name, after the last slash, is what people read.
+    static func parseModels(_ text: String) -> [AgentModel] {
+        let plain = text.replacingOccurrences(of: #"\x1B\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
+        var seen: Set<String> = []
+        return plain.components(separatedBy: .newlines).compactMap { line in
+            let id = line.trimmingCharacters(in: .whitespaces)
+            guard id.contains("/"), id.range(of: #"^[A-Za-z0-9][A-Za-z0-9._~:/-]*$"#, options: .regularExpression) != nil,
+                  seen.insert(id).inserted else { return nil }
+            return AgentModel(cli: "opencode", model: id, name: Self.modelName(id), about: "", efforts: [])
+        }
+    }
+
+    /// "opencode/glm-5.3-flash" reads "Glm 5.3 Flash": the part after the
+    /// provider, its dashes spaced, each word headed by a capital.
+    static func modelName(_ id: String) -> String {
+        let own = id.components(separatedBy: "/").last ?? id
+        return own.components(separatedBy: ["-", "_"]).map { part in
+            part.prefix(1).uppercased() + part.dropFirst()
+        }.joined(separator: " ")
+    }
+
+    /// What an id's provider part reads as: everything before the model's
+    /// own name, as the id spells it, its `~` mark taken off. Rows use it
+    /// to say which part of the plan a model comes from.
+    static func providerName(_ id: String) -> String {
+        var parts = id.components(separatedBy: "/")
+        if parts.count > 1 { parts.removeLast() }
+        return parts.joined(separator: "/").replacingOccurrences(of: "~", with: "")
+    }
+
+    typealias Identity = (signedIn: Bool, email: String?, plan: String?)
+    private static var identities: [String: Identity] = [:]
+
+    /// Passive reads reuse only the official CLI's verified public answer.
+    /// `opencode auth list` names every provider with a stored credential;
+    /// it prints no secret, and nothing here asks it to.
+    static func identity(env: [String: String]) -> Identity {
+        identities[identityKey(env)] ?? (false, nil, nil)
+    }
+
+    private static func identityKey(_ env: [String: String]) -> String {
+        URL(fileURLWithPath: env["HOME"] ?? AgentSetup.home.path).standardizedFileURL.path
+    }
+
+    static func hasStoredCredentials(_ output: String) -> Bool {
+        let plain = output.replacingOccurrences(of: #"\x1B\[[0-9;?]*[A-Za-z]"#, with: "", options: .regularExpression)
+        let lines = plain.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.contains { line in
+            let lower = line.lowercased()
+            return lower.range(of: #"\S+\s+stored$"#, options: .regularExpression) != nil
+                && lower.range(of: #"^[^\p{L}\p{N}]*(?:0|no)\b"#, options: .regularExpression) == nil
+        }
+    }
+
+    static func identify(binary: String, env: [String: String], permit: ProviderLaunchPermit? = nil) async -> Identity {
+        guard let permit = permit ?? ProviderConsent.shared.permit("opencode") ?? ProviderConsent.shared.connectionPermit("opencode"), permit.valid else { return (false, nil, nil) }
+        let key = identityKey(env)
+        let result = await Shell.timed(binary, ["auth", "list"], env: environment(env), permit: permit)
+        guard permit.valid else { return (false, nil, nil) }
+        let who: Identity = (result.code == 0 && hasStoredCredentials(result.output), nil, nil)
+        identities[key] = who
+        if who.signedIn { await refresh(binary: binary, env: env, permit: permit) }
+        guard permit.valid else { return (false, nil, nil) }
+        return who
+    }
+
+    static func environment(_ base: [String: String]) -> [String: String] {
+        let providerKeys = ["CLAUDE", "ANTHROPIC_", "CODEX_", "OPENAI_", "CURSOR_", "OPENCODE_"]
+        return base.filter { key, _ in !providerKeys.contains(where: key.hasPrefix) }
+    }
+
+    static func sessionEnvironment(_ base: [String: String], textOnly: Bool, full: Bool) -> [String: String] {
+        var env = environment(base)
+        if textOnly {
+            env["OPENCODE_CONFIG_CONTENT"] = helperConfig
+        } else if !full {
+            env["OPENCODE_CONFIG_CONTENT"] = browserOnlyConfig
+        }
+        return env
+    }
+
+    /// One answer with no tools, for Yab's own helpers (PlanText): ACP, as
+    /// a text command runs, in a room of the helper's own. OpenCode's ACP
+    /// has no "ask" mode; the run launches as its no-tools helper agent,
+    /// and a tool it still wants is turned down instead. "" when it fails
+    /// or takes past `limit`.
+    static func once(binary: String, message: String, model: String? = nil, environment base: [String: String],
+                     room: URL, limit: Double = 120, permit: ProviderLaunchPermit? = nil) async -> String {
+        guard let permit, permit.valid else { return "" }
+        try? FileManager.default.createDirectory(at: room, withIntermediateDirectories: true)
+        final class Heard { var answer = ""; var over = false; var buffer = Data() }
+        let heard = Heard()
+        let process = Process(), input = Pipe(), out = Pipe()
+        // The model asked for goes through `session/set_config_option`
+        // once the ACP session is open, so the CLI takes no model flag.
+        // A text-only run also launches as the no-tools helper agent,
+        // merged over OpenCode's own config.
+        let args = ["acp"]
+        Agents.throughShell(process, binary, args)
+        process.environment = sessionEnvironment(base, textOnly: true, full: false)
+        process.currentDirectoryURL = room
+        process.standardInput = input
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let writer = input.fileHandleForWriting
+        let server = CursorServer(write: { try? writer.write(contentsOf: $0) }, name: "OpenCode", askMode: nil)
+        return await withCheckedContinuation { (done: CheckedContinuation<String, Never>) in
+            let finish = { (words: String) in
+                guard !heard.over else { return }
+                heard.over = true
+                out.fileHandleForReading.readabilityHandler = nil
+                if process.isRunning { Shell.end(process, grace: 2) }
+                done.resume(returning: words)
+            }
+            out.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard !heard.over else { return }
+                        if data.isEmpty { finish(""); return }
+                        heard.buffer.append(data)
+                        while let newline = heard.buffer.firstIndex(of: 0x0A) {
+                            let line = Data(heard.buffer[..<newline])
+                            heard.buffer.removeSubrange(...newline)
+                            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+                            for event in server.heard(message) {
+                                switch event {
+                                case .delta(_, let words, let thinking): if !thinking { heard.answer += words }
+                                case .permission(let id, _, _, _): server.reply(id, option: nil)
+                                case .ended: finish(heard.answer)
+                                case .failed: finish("")
+                                default: break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            do { guard try permit.start(process) else { finish(""); return } } catch { finish(""); return }
+            server.open(thread: nil, cwd: room.path, mcp: [], textOnly: true, model: model)
+            server.say(message)
+            DispatchQueue.main.asyncAfter(deadline: .now() + limit) {
+                MainActor.assumeIsolated { finish("") }
+            }
+        }
+    }
+
+    static func unavailable(textOnly: Bool, unattended: Bool, fork: Bool) -> String? {
+        if fork { return "OpenCode can't carry this chat into a new one. Start a new chat on your OpenCode plan." }
+        return nil
+    }
+}

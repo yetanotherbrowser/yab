@@ -5,7 +5,7 @@ import Testing
 @Suite(.serialized)
 struct GeminiDefaultTests {
     @Test @MainActor func everyProviderIsOfferedAtConnect() {
-        #expect(AgentSetupModel.clis == ["claude", "codex", "cursor", "gemini"])
+        #expect(AgentSetupModel.clis == ["claude", "codex", "cursor", "gemini", "opencode"])
         #expect(AgentPlan.connectable.map(\.cli) == AgentSetupModel.clis)
     }
 
@@ -56,7 +56,7 @@ struct GeminiDefaultTests {
     @Test @MainActor func choosingAProviderReplacesThePreviousChoice() {
         let setup = AgentSetupModel.shared, previous = AgentSetupModel.shared.picks
         defer { setup.picks = previous }
-        for cli in ["claude", "codex", "cursor", "gemini"] {
+        for cli in ["claude", "codex", "cursor", "gemini", "opencode"] {
             setup.selectProvider(cli)
             #expect(setup.picks == [cli])
         }

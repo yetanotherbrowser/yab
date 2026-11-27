@@ -91,8 +91,8 @@ private struct ModelPicker: View {
 
     /// How far the list moves left so the card beside it stays in the
     /// window: none while the middle leaves it room.
-    private var shift: CGFloat {
-        guard info, current != nil, cardFits else { return 0 }
+    private func shift(under model: AgentModel?) -> CGFloat {
+        guard info, model != nil, cardFits else { return 0 }
         let cardEdge = room / 2 + Self.width / 2 + Self.gap + Self.side
         return max(0, cardEdge - (room - Self.margin))
     }
@@ -121,7 +121,9 @@ private struct ModelPicker: View {
         }
         let words = query.lowercased().split(separator: " ")
         func matches(_ model: AgentModel) -> Bool {
-            let text = (model.name + " " + AgentModels.agentName(model.cli) + " " + AgentSetupModel.tool(model.cli) + " " + ModelPicker.planName(model.cli)).lowercased()
+            // The raw id finds the provider: "openrouter", "z-ai".
+            let text = (model.name + " " + AgentModels.agentName(model.cli) + " " + AgentSetupModel.tool(model.cli) + " " + ModelPicker.planName(model.cli)
+                        + (model.cli == "mac" ? "" : " " + model.model)).lowercased()
             return words.allSatisfy { text.contains($0) }
         }
         var out: [Line] = []
@@ -156,22 +158,28 @@ private struct ModelPicker: View {
         return out
     }
 
-    private var models: [AgentModel] {
+    // Lines and models: a recent model is listed twice, once in each place.
+    private func models(in lines: [Line]) -> [AgentModel] {
         lines.compactMap { if case .model(let model, _) = $0 { return model } else { return nil } }
     }
-
-    private var current: AgentModel? {
-        let all = models
-        return all.indices.contains(spot) ? all[spot] : nil
+    private func modelIDs(_ lines: [Line]) -> [String] {
+        lines.compactMap { if case .model = $0 { return $0.id } else { return nil } }
     }
 
 
     // MARK: the view
 
     var body: some View {
+        // The filter pass, and the index the pointer and the keys walk,
+        // once per rendering: moving through the list never filters again.
+        let all = lines
+        let listed = models(in: all)
+        let ids = modelIDs(all)
+        let current = listed.indices.contains(spot) ? listed[spot] : nil
+        let shift = shift(under: current)
         // The list alone in the middle; what the model is, held to its
         // right, out of the centering.
-        list
+        return list(all, listed: listed, ids: ids)
             .overlay(alignment: .topTrailing) {
                 if info, cardFits, let model = current {
                     ModelInfo(model: model)
@@ -186,11 +194,10 @@ private struct ModelPicker: View {
         .animation(Motion.chatQuick, value: shift)
         .onAppear {
             // Up on the one in use, in its plan's place, its effort with it.
-            let ids = modelLineIDs
-            if let chosen = models.first(where: isChosen) {
+            if let chosen = listed.first(where: isChosen) {
                 spot = ids.firstIndex(of: "m:" + chosen.id) ?? ids.firstIndex(of: "r:" + chosen.id) ?? 0
             }
-            scrollTo = spotLineID.map { "open:" + $0 }
+            scrollTo = ids.indices.contains(spot) ? "open:" + ids[spot] : nil
             effort = PickerEffort(picked: request.choice.effort)
             if !request.query.isEmpty { query = request.query }
         }
@@ -209,11 +216,12 @@ private struct ModelPicker: View {
         }
     }
 
-    private var list: some View {
+    private func list(_ all: [Line], listed: [AgentModel], ids: [String]) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 PickerSearch(text: $query, placeholder: "Search models\u{2026}",
-                             move: move, side: turn, pick: take, close: { browser.modelPicker = nil })
+                             move: { move($0, ids: ids) }, side: { turn($0, listed: listed) },
+                             pick: { take(listed) }, close: { browser.modelPicker = nil })
                     .frame(height: 22)
                 Button { info.toggle(); ModelPicker.infoShown = info } label: { Symbol("info.circle", size: 14) }
                     .buttonStyle(.yab(info ? .secondary : .quiet, .small, icon: .square))
@@ -226,27 +234,29 @@ private struct ModelPicker: View {
             Rectangle().fill(Palette.ink.opacity(0.07)).frame(height: 1)
             ScrollViewReader { reader in
                 ThreadScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+                    // Lazy, so a plan with hundreds of models opens at once
+                    // and builds only the rows in view.
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         Text(request.title)
                             .font(.system(size: 12))
                             .foregroundStyle(Palette.muted)
                             .padding(.horizontal, 16)
                             .padding(.top, 10)
                             .padding(.bottom, 2)
-                        ForEach(lines) { line in
+                        ForEach(all) { line in
                             switch line {
                             case .head(let title, let cli):
                                 ModelPlanHead(title: title, cli: cli)
                             case .model(let model, _):
-                                let hot = spotLineID == line.id
+                                let hot = ids.indices.contains(spot) && ids[spot] == line.id
                                 ModelPickerRow(model: model, chosen: isChosen(model), hot: hot,
                                                dim: model.cli != "mac" && !accounts.hasRoom(model.cli),
                                                effort: hot ? effort.on(model) : nil) {
-                                    spot = modelIndex(of: line)
-                                    take()
+                                    spot = ids.firstIndex(of: line.id) ?? 0
+                                    take(listed)
                                 }
                                 .id(line.id)
-                                .onHover { inside in if inside { spot = modelIndex(of: line) } }
+                                .onHover { inside in if inside { spot = ids.firstIndex(of: line.id) ?? 0 } }
                             case .note(let words):
                                 Text(words)
                                     .font(.system(size: 12.5))
@@ -273,16 +283,6 @@ private struct ModelPicker: View {
         .modifier(PickerPlate())
     }
 
-    // Lines and models: a recent model is listed twice, once in each place.
-    private var modelLineIDs: [String] {
-        lines.compactMap { if case .model = $0 { return $0.id } else { return nil } }
-    }
-    private var spotLineID: String? {
-        let ids = modelLineIDs
-        return ids.indices.contains(spot) ? ids[spot] : nil
-    }
-    private func modelIndex(of line: Line) -> Int { modelLineIDs.firstIndex(of: line.id) ?? 0 }
-
     /// The one in use; with no model of its own, the plan's default,
     /// the first its agent lists.
     private func isChosen(_ model: AgentModel) -> Bool {
@@ -294,21 +294,21 @@ private struct ModelPicker: View {
 
     // MARK: keys
 
-    private func move(_ by: Int) {
-        let count = modelLineIDs.count
-        guard count > 0 else { return }
-        spot = (spot + by + count) % count
-        scrollTo = spotLineID
+    private func move(_ by: Int, ids: [String]) {
+        guard !ids.isEmpty else { return }
+        spot = (spot + by + ids.count) % ids.count
+        scrollTo = ids.indices.contains(spot) ? ids[spot] : nil
     }
 
     /// ← → : the effort of the model under the pointer, Auto first.
-    private func turn(_ by: Int) {
-        guard let model = current else { return }
-        effort.turn(model, by: by)
+    private func turn(_ by: Int, listed: [AgentModel]) {
+        guard listed.indices.contains(spot) else { return }
+        effort.turn(listed[spot], by: by)
     }
 
-    private func take() {
-        guard let model = current else { return }
+    private func take(_ listed: [AgentModel]) {
+        guard listed.indices.contains(spot) else { return }
+        let model = listed[spot]
         let choice = ModelChoice(cli: model.cli, model: model.model.isEmpty ? nil : model.model, effort: effort.on(model))
         ModelPicker.used(model)
         browser.modelPicker = nil
@@ -504,7 +504,13 @@ private struct ModelPickerRow: View {
         default:
             // A plan's own words, when they are few enough for the row.
             let about = model.about.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-            return about.split(separator: " ").count <= 4 ? about : ""
+            let short = about.split(separator: " ").count <= 4 ? about : ""
+            // An OpenCode model has no words of its own, so it says which
+            // part of the plan it comes from: the head says "OpenCode
+            // plan", so "opencode-go", "openrouter" read as where in it
+            // the model is.
+            if model.cli == "opencode" { return short.isEmpty ? OpenCodeRunner.providerName(model.model) : short }
+            return short
         }
     }
 }
@@ -520,6 +526,14 @@ private struct ModelInfo: View {
             HStack(spacing: 8) {
                 Symbol(FieldAnswer.mark(model.cli), size: 13.5)
                 Text(model.name).font(.system(size: 13.5, weight: .semibold))
+            }
+            // Which exact model it is: an OpenCode id names the provider
+            // the row's word only gestures at.
+            if model.cli == "opencode" {
+                Text(model.model)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.faint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(model.cli == "mac" ? "On this Mac: free, and nothing leaves it. For short text."
                  : model.about.isEmpty ? "Runs on your \(AgentModels.agentName(model.cli)) plan." : model.about)

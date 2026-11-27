@@ -260,6 +260,7 @@ final class PlanAccounts: ObservableObject {
     static func environment(_ account: PlanAccount, base: [String: String],
                             secret: ((String) -> String?)?) -> [String: String] {
         if account.cli == "cursor" { return CursorRunner.environment(base) }
+        if account.cli == "opencode" { return OpenCodeRunner.environment(base) }
         var env = base
         if account.cli == "claude", !account.usual {
             env[Shell.claudeToken] = nil
@@ -428,6 +429,14 @@ final class PlanAccounts: ObservableObject {
             await remember(account, binary: binary, base: found.env, permit: permit)
             return
         }
+        if cli == "opencode" {
+            // OpenCode's catalog is its account's, and its auth list says
+            // nothing of quotas. Refresh its login as Cursor's is, then
+            // read its plan's usage as the others' is read.
+            let account = account("opencode") ?? PlanAccount(id: "opencode", cli: "opencode")
+            await remember(account, binary: binary, base: found.env, permit: permit)
+            guard permit.valid else { return }
+        }
         let now = Date()
         let due = all(cli).filter { account in
             !account.keyed && !signedOut.contains(account.id)
@@ -449,7 +458,9 @@ final class PlanAccounts: ObservableObject {
             let task = Task {
                 guard permit.valid else { asking[account.id] = nil; return }
                 if let said = await Self.usage(cli, binary: binary, env: env, in: folder, permit: permit), permit.valid {
-                    if cli == "codex" { heard(codexAsked: said, on: account.id) } else { heard(claudeUsage: said, on: account.id) }
+                    if cli == "codex" { heard(codexAsked: said, on: account.id) }
+                    else if cli == "opencode" { heard(opencodeUsage: said, on: account.id) }
+                    else { heard(claudeUsage: said, on: account.id) }
                 }
                 if cli == "codex", permit.valid { await renew(account.id, binary: binary, env: env, in: folder, permit: permit) }
                 asking[account.id] = nil
@@ -506,9 +517,20 @@ final class PlanAccounts: ObservableObject {
     /// a few seconds. Claude Code: a get_usage control request on its
     /// stream, no hooks, servers or tools of anyone's (--safe-mode), and no
     /// message, so no model runs. Codex: its server's
-    /// account/rateLimits/read, with no thread opened.
+    /// account/rateLimits/read, with no thread opened. OpenCode: one
+    /// `api get` of its plan's usage limits.
     nonisolated static func usage(_ cli: String, binary: String, env: [String: String], in folder: URL, permit: ProviderLaunchPermit? = nil) async -> [String: Any]? {
         guard let permit, permit.valid else { return nil }
+        if cli == "opencode" {
+            // One JSON document on stdout: the CLI asks its background
+            // service what the plan's usage is, says it and goes. Nothing
+            // said (the service away, or the read late) keeps the ring as
+            // it was.
+            let (code, said) = await Shell.run(binary, ["api", "get", "/api/experimental/usage/limits"], env: env, limit: 5, permit: permit)
+            guard code == 0, permit.valid,
+                  let usage = try? JSONSerialization.jsonObject(with: Data(said.utf8)) as? [String: Any] else { return nil }
+            return usage
+        }
         if cli == "codex" {
             let said = await Shell.talk(binary, ["app-server"], env: env, in: folder, saying: [
                 ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["clientInfo": ["name": "yab", "version": "1"]]],
@@ -545,6 +567,36 @@ final class PlanAccounts: ObservableObject {
         quota.resets = fullest.value.resets
         quota.window = fullest.key
         if fullest.value.used >= 1 { quota.out = fullest.value.resets ?? Date().addingTimeInterval(3600) }
+        quotas[id] = quota
+        saveQuotas()
+    }
+
+    /// OpenCode's `api get` of its plan's usage limits: each window's
+    /// percent and when it starts over, in milliseconds since 1970, under
+    /// data.go (the plan). Its windows are named as the others' are, for
+    /// the ring's titles.
+    func heard(opencodeUsage usage: [String: Any], on id: String) {
+        guard let data = usage["data"] as? [String: Any], let go = data["go"] as? [String: Any] else { return }
+        let named = ["rolling": "five_hour", "weekly": "seven_day", "monthly": "thirty_day"]
+        var windows: [String: PlanWindow] = [:]
+        var limited = false
+        var limitedResets: Date?
+        for (window, name) in named {
+            guard let said = go[window] as? [String: Any], let percent = (said["percent"] as? NSNumber)?.doubleValue else { continue }
+            let resets = (said["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            windows[name] = PlanWindow(used: percent / 100, resets: resets)
+            if said["limited"] as? Bool == true {
+                limited = true
+                if let resets { limitedResets = max(limitedResets ?? resets, resets) }
+            }
+        }
+        guard let fullest = windows.max(by: { $0.value.used < $1.value.used }) else { return }
+        var quota = PlanQuota()
+        quota.windows = windows
+        quota.used = fullest.value.used
+        quota.resets = fullest.value.resets
+        quota.window = fullest.key
+        if fullest.value.used >= 1 || limited { quota.out = limitedResets ?? fullest.value.resets ?? Date().addingTimeInterval(3600) }
         quotas[id] = quota
         saveQuotas()
     }
@@ -784,6 +836,7 @@ final class PlanAccounts: ObservableObject {
             return (named, account["emailAddress"]?.nilIfEmpty, nil)
         }
         if cli == "cursor" { return CursorRunner.identity(env: env) }
+        if cli == "opencode" { return OpenCodeRunner.identity(env: env) }
         let given = { (key: String) in !(env[key] ?? "").isEmpty }
         if cli == "codex" { return codexAuth(home: env["CODEX_HOME"]) }
         let folder = env["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
@@ -900,6 +953,7 @@ final class PlanAccounts: ObservableObject {
     static func identify(_ account: PlanAccount, binary: String, env: [String: String], permit: ProviderLaunchPermit? = nil) async -> (signedIn: Bool, email: String?, plan: String?) {
         guard let permit = permit ?? ProviderConsent.shared.permit(account.cli) ?? ProviderConsent.shared.connectionPermit(account.cli), permit.valid else { return (false, nil, nil) }
         if account.cli == "cursor" { return await CursorRunner.identify(binary: binary, env: env, permit: permit) }
+        if account.cli == "opencode" { return await OpenCodeRunner.identify(binary: binary, env: env, permit: permit) }
         if account.cli == "codex" {
             let (code, _) = await Shell.run(binary, ["login", "status"], env: env, permit: permit)
             guard permit.valid else { return (false, nil, nil) }
@@ -926,7 +980,7 @@ final class PlanAccounts: ObservableObject {
     /// Renewals write to a fresh folder. Neither cancellation nor a
     /// different identity can replace the account whose login was renewed.
     func prepareSignIn(_ cli: String, replacing id: String? = nil) -> PlanAccount {
-        if cli == "cursor" { return account("cursor") ?? PlanAccount(id: "cursor", cli: "cursor") }
+        if cli == "cursor" || cli == "opencode" { return account(cli) ?? PlanAccount(id: cli, cli: cli) }
         // A first-ever login can still connect the CLI on this Mac. Once
         // its identity is known, every renewal gets a separate folder.
         if let first = account(id), first.email == nil, first.home == nil { return first }
@@ -1023,7 +1077,7 @@ final class PlanAccounts: ObservableObject {
     /// (so the account the site already knows you by doesn't answer), and
     /// the new one last in the order.
     func add(_ cli: String, _ browser: Browser) {
-        if cli == "cursor" { AgentSetupModel.shared.connect([cli], browser); return }
+        if cli == "cursor" || cli == "opencode" { AgentSetupModel.shared.connect([cli], browser); return }
         guard adding == nil else { return }
         let authority = consent ?? ProviderConsent.shared
         authority.beginConnection(cli)

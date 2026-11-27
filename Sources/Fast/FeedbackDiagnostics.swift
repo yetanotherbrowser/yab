@@ -16,7 +16,7 @@ final class FeedbackDiagnostics {
         /// (TabImport.Trouble.code).
         case importFailed
         /// The actual runner that failed, with only its HTTP status as code.
-        case claudeRequestFailed, codexRequestFailed, cursorRequestFailed, geminiRequestFailed
+        case claudeRequestFailed, codexRequestFailed, cursorRequestFailed, geminiRequestFailed, opencodeRequestFailed
         /// Chromium's helper (YabCore) went away, and with it every Chromium
         /// page; those on screen load again by themselves (helperExited).
         /// `reason` says how (HelperEnd), `code` its exit status or signal.
@@ -26,7 +26,8 @@ final class FeedbackDiagnostics {
         /// Events a site older than this build may not know yet, and
         /// turn the whole of the diagnostics down for (`snapshots`).
         static let newer: Set<Kind> = [.importFailed, .chatClose, .systemWoke, .helperLost,
-                                      .claudeRequestFailed, .codexRequestFailed, .cursorRequestFailed, .geminiRequestFailed]
+                                      .claudeRequestFailed, .codexRequestFailed, .cursorRequestFailed, .geminiRequestFailed,
+                                      .opencodeRequestFailed]
     }
     /// Only phases and two booleans, never a chat, tab, provider or its words.
     enum ChatClosePhase: Int, CaseIterable {
@@ -162,6 +163,7 @@ final class FeedbackDiagnostics {
         case "codex": kind = .codexRequestFailed
         case "cursor": kind = .cursorRequestFailed
         case "gemini": kind = .geminiRequestFailed
+        case "opencode": kind = .opencodeRequestFailed
         default: return
         }
         record(kind, code: status.flatMap { (400...599).contains($0) ? $0 : nil })

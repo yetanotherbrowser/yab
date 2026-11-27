@@ -6,9 +6,15 @@ import Testing
 struct CursorServerTests {
     @MainActor final class Wire {
         var lines: [[String: Any]] = []
-        lazy var server = CursorServer { [unowned self] data in
-            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
+        private let name: String
+        private let askMode: String?
+        init(name: String = "Cursor", askMode: String? = "ask") {
+            self.name = name
+            self.askMode = askMode
         }
+        lazy var server = CursorServer(write: { [unowned self] data in
+            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { lines.append(object) }
+        }, name: name, askMode: askMode)
         func reply(_ result: [String: Any]) -> [CursorServer.Heard] {
             server.heard(["jsonrpc": "2.0", "id": lines.last?["id"] ?? 0, "result": result])
         }
@@ -66,6 +72,78 @@ struct CursorServerTests {
         let heard = wire.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "new"]])
         guard case .delta(_, "new", false) = heard.first else { Issue.record("no new text"); return }
         #expect(wire.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "other"]], thread: "other").isEmpty)
+    }
+
+    @Test func theModelAskedForGoesThroughSetConfigOption() {
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [], model: "opencode-go/glm-5.3-flash")
+        wire.server.say("hello")
+        _ = wire.reply(["protocolVersion": 1])
+        _ = wire.reply(["sessionId": "C1"])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        var args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["sessionId"] as? String == "C1")
+        #expect(args?["configId"] as? String == "model")
+        #expect(args?["value"] as? String == "opencode-go/glm-5.3-flash")
+        let events = wire.reply([:])
+        guard case .ready("C1") = events.first else { Issue.record("no conversation"); return }
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+        let prompt = (wire.lines.last?["params"] as? [String: Any])?["prompt"] as? [[String: Any]]
+        #expect(prompt?.first?["text"] as? String == "hello")
+    }
+
+    @Test func aServerWithNoModelSendsNoConfigOption() {
+        let wire = Wire()
+        wire.server.open(thread: nil, cwd: "/test", mcp: [])
+        _ = wire.reply(["protocolVersion": 1])
+        let events = wire.reply(["sessionId": "C1"])
+        guard case .ready("C1") = events.first else { Issue.record("no conversation"); return }
+        #expect(!wire.lines.contains { $0["method"] as? String == "session/set_config_option" })
+    }
+
+    @Test func aTextOnlyRunTakesTheNoToolsHelperThenTheModel() {
+        let wire = Wire(name: "OpenCode", askMode: nil)
+        wire.server.open(thread: nil, cwd: "/test", mcp: [], textOnly: true, model: "opencode-go/glm-5.3-flash")
+        wire.server.say("text only")
+        _ = wire.reply(["protocolVersion": 1])
+        _ = wire.reply(["sessionId": "C1"])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        var args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "mode")
+        #expect(args?["value"] as? String == CursorServer.helperMode)
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "model")
+        #expect(args?["value"] as? String == "opencode-go/glm-5.3-flash")
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+    }
+
+    @Test func aTextOnlyRunWithAskModeAndModelSetsModeThenModel() {
+        let wire = Wire(name: "Cursor", askMode: "ask")
+        wire.server.open(thread: nil, cwd: "/test", mcp: [], textOnly: true, model: "gpt-test")
+        wire.server.say("text only")
+        _ = wire.reply(["protocolVersion": 1])
+        _ = wire.reply(["sessionId": "C1"])
+        #expect(wire.lines.last?["method"] as? String == "session/set_mode")
+        #expect((wire.lines.last?["params"] as? [String: Any])?["modeId"] as? String == "ask")
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/set_config_option")
+        let args = wire.lines.last?["params"] as? [String: Any]
+        #expect(args?["configId"] as? String == "model")
+        #expect(args?["value"] as? String == "gpt-test")
+        _ = wire.reply([:])
+        #expect(wire.lines.last?["method"] as? String == "session/prompt")
+        #expect(!wire.lines.contains { ($0["params"] as? [String: Any])?["value"] as? String == CursorServer.helperMode })
+    }
+
+    @Test func malformedResponseUsesProviderName() {
+        let wire = Wire(name: "OpenCode", askMode: nil)
+        wire.server.open(thread: nil, cwd: "/test", mcp: [])
+        let heard = wire.server.heard(["jsonrpc": "2.0", "id": wire.lines.last?["id"] ?? 0])
+        guard case .failed(let message) = heard.first else { Issue.record("failure missing"); return }
+        #expect(message == "OpenCode answered in a way Yab can't read. Try again.")
     }
 
     @Test func permissionsRequireAnExactOnceOnlyChoice() {

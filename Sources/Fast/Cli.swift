@@ -67,7 +67,7 @@ enum Cli {
         case "files": return CliFiles.filesWords(words) ? first : ""
         // "yab settings show theme"; "yab settings make it dark" is a task.
         case "settings": return fits(CliSettings.verbs) ? first : ""
-        case "setup", "remove": return words.allSatisfy { ["claude", "codex", "cursor", "command"].contains($0.lowercased()) } ? first : ""
+        case "setup", "remove": return words.allSatisfy { ["claude", "codex", "cursor", "opencode", "command"].contains($0.lowercased()) } ? first : ""
         default: return first
         }
     }
@@ -233,12 +233,12 @@ enum Cli {
           \(c) quit [--force]                quit hidden Yab; --force stops active tasks
           \(c) import [BROWSER]              list browsers or import sign-ins (user approval required)
           \(c) https://example.com           open a page in the user's window
-          \(c) setup [claude|codex|cursor|command]   install integrations or just the command
-          \(c) remove [claude|codex|cursor|command]  remove installed integrations
+          \(c) setup [claude|codex|cursor|opencode|command]   install integrations or just the command
+          \(c) remove [claude|codex|cursor|opencode|command]  remove installed integrations
           \(c) --version                     print this app's version
 
         Task options:
-          --cli claude|codex|cursor    choose the task's AI plan
+          --cli claude|codex|cursor|opencode    choose the task's AI plan
           -m MODEL / --model MODEL    choose a model
           --effort low|medium|high|xhigh|max
           --access browser|full       browser tools, or files and terminal too (may need approval)
@@ -541,9 +541,9 @@ enum Cli {
     // MARK: - setup
 
     private static func setup(_ args: [String], removing: Bool) -> Never {
-        let known: Set = ["claude", "codex", "cursor", "command"]
+        let known: Set = ["claude", "codex", "cursor", "opencode", "command"]
         let asked = Set(args.map { $0.lowercased() })
-        if let odd = asked.subtracting(known).first { fail("No \(odd) to set up. There are: claude, codex, cursor, command.", code: 2) }
+        if let odd = asked.subtracting(known).first { fail("No \(odd) to set up. There are: claude, codex, cursor, opencode, command.", code: 2) }
         let only = asked.isEmpty ? nil : asked
         Task { @MainActor in
             let found = await Shell.find()

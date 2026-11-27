@@ -48,7 +48,7 @@ enum GeminiSupport {
     nonisolated static func launchRefusal(_ cli: String, textOnly: Bool = true, remote: Bool = false,
                                           tools: Bool = toolsProven) -> String? {
         switch cli {
-        case "claude", "codex", "cursor": return nil
+        case "claude", "codex", "cursor", "opencode": return nil
         case "gemini":
             if !textOnly && !tools { return remote ? fromPhone : noTools }
             return nil

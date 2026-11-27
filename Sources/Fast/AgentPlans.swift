@@ -71,8 +71,15 @@ struct AgentPlan {
         needs: "Gemini runs on your Google AI plan, within its limits.",
         binary: \.gemini, connected: \.gemini, tools: GeminiSupport.toolsProven)
 
+    static let opencode = AgentPlan(
+        cli: "opencode", name: "OpenCode", tool: "OpenCode CLI", mark: "brand.opencode", maker: "OpenCode", skilled: false,
+        install: "curl -fsSL https://opencode.ai/install | bash", signIn: ["auth", "login"],
+        apps: [], tile: ("brand.opencode", .systemTeal), listedAway: false,
+        needs: "OpenCode runs on your OpenCode plan, within its limits.",
+        binary: \.opencode, connected: \.opencode)
+
     /// In the order every list shows them.
-    static let all = [claude, codex, cursor, gemini]
+    static let all = [claude, codex, cursor, gemini, opencode]
     static let clis = all.map(\.cli)
     /// The plans Settings' Connect and the welcome connect.
     static let connectable = all.filter(\.connects)
@@ -88,6 +95,7 @@ struct AgentPlan {
     @MainActor var models: [AgentModel] {
         switch cli {
         case "cursor": CursorRunner.models
+        case "opencode": OpenCodeRunner.models
         case "codex": AgentModels.codex()
         case "gemini": GeminiAccount.shared.models
         default: AgentModels.claude

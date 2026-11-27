@@ -89,7 +89,7 @@ extension Mcp {
         },
         McpTool("task", .risky("Run Task"),
                 "Hand a whole browser job to an agent Yab runs itself (Claude Code, or Codex), and wait for its answer. Cheaper on your context than driving tabs step by step. Pass `session` to continue an earlier task with a follow-up.",
-                ["prompt": ["type": "string"], "session": ["type": "string"], "cli": ["type": "string", "enum": ["claude", "codex", "cursor"]], "model": ["type": "string"],
+                ["prompt": ["type": "string"], "session": ["type": "string"], "cli": ["type": "string", "enum": ["claude", "codex", "cursor", "opencode"]], "model": ["type": "string"],
                       "effort": ["type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]],
                       "access": ["type": "string", "enum": ["browser", "full"], "description": "browser (default): only Yab's tabs; full: request files and terminal access before the task starts (Ask/Auto ask the person; Bypass skips the question)"]],
                 required: ["prompt"],

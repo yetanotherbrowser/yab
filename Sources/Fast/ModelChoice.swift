@@ -112,13 +112,17 @@ enum AgentModels {
     /// Whether this Mac has the agent; not looked for yet counts as yes.
     static func here(_ cli: String) -> Bool {
         guard let plan = AgentPlan.of(cli) else { return true }
-        // Gemini is here once signed in (GeminiAccount); Cursor once
-        // connected: their models are their account's.
+        // Gemini is here once signed in (GeminiAccount); Cursor and OpenCode
+        // once connected: their models are their account's.
         if cli == "gemini" { return GeminiAccount.shared.ready }
         // Before the login shell has been asked (just after launch), a
         // connected Cursor counts as here, as the others do: else the first
         // task after a restart fell to Claude (evals/agent-providers).
-        if !plan.listedAway { return CursorRunner.connected && (Shell.cached.map { $0.cursor != nil } ?? true) }
+        if !plan.listedAway {
+            let runnerConnected = cli == "opencode" ? OpenCodeRunner.connected : CursorRunner.connected
+            let binaryThere = { (found: Shell.Found) in cli == "opencode" ? found.opencode != nil : found.cursor != nil }
+            return runnerConnected && (Shell.cached.map { binaryThere($0) } ?? true)
+        }
         if let assumed = Agents.assumedInTests, Store.testing { return assumed }
         return AgentLaunch.here(cli) ?? true
     }
@@ -312,16 +316,18 @@ final class ModelDefaults: ObservableObject {
 
     /// Who a task runs on when Tasks is Auto, and the line its chat opens
     /// with when that isn't your provider. `text` is your provider, the
-    /// Chats default's plan. Gemini and Cursor, yours,
+    /// Chats default's plan. Gemini, Cursor and OpenCode, yours,
     /// take your tasks with Yab's tools as Claude and ChatGPT do (Cursor
-    /// once connected here). A build whose Gemini can't use Yab's tools
-    /// (`geminiTools` false) sends its tasks to `preferred` when a plan
-    /// with tools is here, saying why, else Gemini answers without them
-    /// and says that. Never silently Claude.
+    /// and OpenCode once connected here). A build whose Gemini can't use
+    /// Yab's tools (`geminiTools` false) sends its tasks to `preferred` when
+    /// a plan with tools is here, saying why, else Gemini answers without
+    /// them and says that. Never silently Claude.
     nonisolated static func autoTasks(text: String, preferred: String, toolsHere: Bool,
                                       geminiTools: Bool = GeminiSupport.toolsProven,
-                                      cursorHere: Bool = false) -> (cli: String, line: String?) {
+                                      cursorHere: Bool = false,
+                                      opencodeHere: Bool = false) -> (cli: String, line: String?) {
         if text == "cursor", cursorHere { return ("cursor", nil) }
+        if text == "opencode", opencodeHere { return ("opencode", nil) }
         guard text == "gemini" else { return (preferred, nil) }
         if geminiTools { return ("gemini", nil) }
         guard toolsHere else { return ("gemini", geminiAloneLine) }
@@ -329,11 +335,11 @@ final class ModelDefaults: ObservableObject {
     }
 
     nonisolated static let geminiAloneLine = "Gemini can\u{2019}t use Yab\u{2019}s tools in tasks yet, so it answered without your tabs. "
-        + "Connect Claude, ChatGPT or Cursor in Settings \u{203A} AI for tasks done in tabs."
+        + "Connect Claude, ChatGPT, Cursor or OpenCode in Settings \u{203A} AI for tasks done in tabs."
     /// A task nobody watches (a routine, a boost, getting to know you) that
     /// only Gemini could take: it fails saying so rather than answering blind.
     nonisolated static let geminiUnattended = "Gemini can\u{2019}t use Yab\u{2019}s tools yet, so it can\u{2019}t do this on its own. "
-        + "Connect Claude, ChatGPT or Cursor in Settings \u{203A} AI for it."
+        + "Connect Claude, ChatGPT, Cursor or OpenCode in Settings \u{203A} AI for it."
 
     /// A plan that can use Yab's tools is on this Mac: connected in Yab, or
     /// its CLI found (not looked for yet counts as yes), as Agents.preferred
@@ -352,7 +358,8 @@ final class ModelDefaults: ObservableObject {
     /// `autoTasks` for this Mac, your provider as the Chats default picks it.
     var tasksRoute: (cli: String, line: String?) {
         Self.autoTasks(text: pick(.chats).cli, preferred: Agents.preferred, toolsHere: Self.toolPlanHere,
-                       cursorHere: CursorRunner.connected && AgentModels.here("cursor"))
+                       cursorHere: CursorRunner.connected && AgentModels.here("cursor"),
+                       opencodeHere: OpenCodeRunner.connected && AgentModels.here("opencode"))
     }
 
     /// The line a new task on `cli` opens with when Auto put it there in
@@ -635,23 +642,21 @@ private struct ModelList: View {
         return all
     }
 
-    private var groups: [Group] {
-        let all = every
+    private func filteredGroups(from all: [Group]) -> [Group] {
         let words = query.lowercased().split(separator: " ")
         guard !words.isEmpty else { return all }
         return all.map { group in
             Group(id: group.id, title: group.title, cli: group.cli, allHidden: group.allHidden, models: group.models.filter { model in
                 // The tools' names find them too: "codex", "claude code".
+                // The raw id finds the provider: "openrouter", "z-ai".
                 let text = (model.name + " " + group.title + " " + AgentModels.agentName(model.cli)
-                            + (model.cli == "mac" ? "" : " " + AgentSetupModel.tool(model.cli))).lowercased()
+                            + (model.cli == "mac" ? "" : " " + model.model + " " + AgentSetupModel.tool(model.cli))).lowercased()
                 return words.allSatisfy { text.contains($0) }
             })
         }.filter { !$0.models.isEmpty }
     }
 
-    /// What the keys walk, in the order shown: Auto with no search, then
-    /// every model of a plan that is here.
-    private var rows: [(id: String, choice: ModelChoice, model: AgentModel?)] {
+    private func listedRows(from groups: [Group]) -> [(id: String, choice: ModelChoice, model: AgentModel?)] {
         var out: [(id: String, choice: ModelChoice, model: AgentModel?)] = []
         if query.isEmpty { out.append((id: "auto", choice: ModelChoice(), model: nil)) }
         for group in groups where pickable(group.cli) {
@@ -660,6 +665,12 @@ private struct ModelList: View {
             }
         }
         return out
+    }
+
+    /// What the keys walk, in the order shown: Auto with no search, then
+    /// every model of a plan that is here.
+    private var rows: [(id: String, choice: ModelChoice, model: AgentModel?)] {
+        listedRows(from: filteredGroups(from: every))
     }
 
     private func note(_ words: String) -> some View {
@@ -677,6 +688,15 @@ private struct ModelList: View {
         ModelField.isChosen(model, choice: choice)
     }
 
+    /// Who runs the model, as a row says it: the plan's agent, or for
+    /// OpenCode the provider its id names, so "Beam Free" from OpenRouter
+    /// reads apart from Zen's own.
+    private func source(_ model: AgentModel) -> String {
+        model.cli == "mac" ? "This Mac"
+            : model.cli == "opencode" ? OpenCodeRunner.providerName(model.model)
+            : AgentModels.agentName(model.cli)
+    }
+
     private func move(_ by: Int) {
         let all = rows
         guard !all.isEmpty else { return }
@@ -690,12 +710,12 @@ private struct ModelList: View {
         if all.indices.contains(spot) { pick(all[spot].choice) }
     }
 
-    private func light(_ id: String) {
-        if let at = rows.firstIndex(where: { $0.id == id }) { spot = at }
-    }
-
     var body: some View {
-        let lit = rows.indices.contains(spot) ? rows[spot].id : nil
+        let allGroups = every
+        let shownGroups = filteredGroups(from: allGroups)
+        let listed = listedRows(from: shownGroups)
+        let rowIndex = Dictionary(listed.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        let lit = listed.indices.contains(spot) ? listed[spot].id : nil
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Symbol("magnifyingglass", size: 12)
@@ -710,21 +730,23 @@ private struct ModelList: View {
             Divider()
             ScrollViewReader { reader in
             ThreadScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                // Lazy, so a plan with hundreds of models opens at once
+                // and builds only the rows in view.
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if query.isEmpty {
                         ModelRow(cli: nil, name: automatic.title, source: automatic.detail, chosen: choice.cli == nil, lit: lit == "auto") {
                             pick(ModelChoice())
                         }
                         .id("auto")
-                        .onHover { if $0 { light("auto"); hovered = nil } }
-                    } else if groups.isEmpty {
+                        .onHover { if $0 { if let at = rowIndex["auto"] { spot = at }; hovered = nil } }
+                    } else if shownGroups.isEmpty {
                         Text("No model called “\(query.trimmingCharacters(in: .whitespaces))”")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                     }
-                    ForEach(groups) { group in
+                    ForEach(shownGroups) { group in
                         // The plan and how much of it is used, as the
                         // picker in the middle of the window heads it.
                         ModelPlanHead(title: group.title, cli: group.cli, size: 11)
@@ -733,7 +755,7 @@ private struct ModelList: View {
                             // just not one this work runs on.
                             note(refusal)
                             ForEach(group.models) { model in
-                                ModelRow(cli: model.cli, name: model.name, source: AgentModels.agentName(model.cli),
+                                ModelRow(cli: model.cli, name: model.name, source: source(model),
                                          chosen: false) {}
                                     .disabled(true)
                                     .opacity(0.45)
@@ -745,13 +767,18 @@ private struct ModelList: View {
                         } else {
                             ForEach(group.models) { model in
                                 ModelRow(cli: model.cli, name: model.name,
-                                         source: model.cli == "mac" ? "This Mac" : AgentModels.agentName(model.cli),
+                                         source: source(model),
                                          chosen: isChosen(model), lit: lit == model.id) {
                                     pick(ModelChoice(cli: model.cli, model: model.model.isEmpty ? nil : model.model))
                                 }
                                 .id(model.id)
                                 .onHover { inside in
-                                    if inside { hovered = model; light(model.id) } else if hovered == model { hovered = nil }
+                                    if inside {
+                                        hovered = model
+                                        if let at = rowIndex[model.id] { spot = at }
+                                    } else if hovered == model {
+                                        hovered = nil
+                                    }
                                 }
                             }
                         }
@@ -763,7 +790,7 @@ private struct ModelList: View {
             .onChange(of: scrollTo) { _, id in if let id { reader.scrollTo(id) } }
             }
             Divider()
-            about
+            about(allGroups)
                 .padding(12)
         }
         .frame(width: 360)
@@ -781,15 +808,21 @@ private struct ModelList: View {
     }
 
     /// What the model under the pointer is, else the chosen one, at the
-    /// height of the longest it can say, so the list's foot stands still
+    /// height of the tallest listed model so the list's foot stands still
     /// as the pointer runs down it.
-    private var about: some View {
+    private func about(_ allGroups: [Group]) -> some View {
         let shown = hovered ?? AgentModels.find(choice.cli, choice.model)
+        let allModels = allGroups.flatMap(\.models)
+        let fullest = allModels.max { $0.about.count < $1.about.count }
+        let widestOpenCode = allModels.filter { $0.cli == "opencode" }.max { $0.model.count < $1.model.count }
         return ZStack(alignment: .topLeading) {
             facts(nil).hidden()
-            ForEach(every.flatMap(\.models)) { model in
-                facts(model).hidden()
-            }
+            // The card's height varies through the about text's lines and
+            // the extra OpenCode id line. Keeping both hidden stand-ins
+            // independent of `hovered` holds the foot still without
+            // rendering every model.
+            if let fullest { facts(fullest).hidden() }
+            if let widestOpenCode, widestOpenCode.id != fullest?.id { facts(widestOpenCode).hidden() }
             facts(shown)
         }
         .font(.system(size: 12))
@@ -802,6 +835,13 @@ private struct ModelList: View {
                 Text(model.name).font(.system(size: 12.5, weight: .semibold))
                 if !model.about.isEmpty {
                     Text(model.about).foregroundStyle(.secondary)
+                }
+                // Which exact model it is: an OpenCode id names the
+                // provider the row's word only gestures at.
+                if model.cli == "opencode" {
+                    Text(model.model)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
                 Text(model.cli == "mac" ? "Nothing leaves this Mac."
                      : "Runs on your \(AgentModels.agentName(model.cli)) plan.")
@@ -1235,7 +1275,7 @@ private struct PlanAccountRow: View {
         if signedOut {
             entries.append(.item("Sign In", enabled: !setup.busy) { setup.connect([account.cli], browser, account: account.id) })
         }
-        if account.cli != "cursor" {
+        if account.cli != "cursor" && account.cli != "opencode" {
             entries.append(.item("Add Another \(AgentSetupModel.plan(account.cli)) Account", enabled: accounts.adding == nil) {
                 accounts.add(account.cli, browser)
             })
@@ -1537,7 +1577,7 @@ private struct ModelsInLists: View {
                 }
             } footer: {
                 if shown.id == plans.last?.id {
-                    SettingsNote("Available GPT and Cursor models depend on your connected subscriptions.")
+                    SettingsNote("Available GPT, Cursor and OpenCode models depend on your connected subscriptions.")
                 }
             }
             .settingsAnchor(shown.id == plans.first?.id ? "models-lists" : "models-lists-" + shown.id)
@@ -1546,20 +1586,21 @@ private struct ModelsInLists: View {
 
     private func row(_ model: AgentModel) -> some View {
         let opacity = defaults.hidden.contains(model.id) ? 0.45 : 1.0
+        let detail = model.about.isEmpty && model.cli == "opencode" ? model.model : model.about
         return HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if !model.about.isEmpty {
+                if !detail.isEmpty {
                     // A description that fits needs no tip over the next model.
                     ViewThatFits(in: .horizontal) {
-                        Text(model.about)
+                        Text(detail)
                             .fixedSize(horizontal: true, vertical: false)
-                        Text(model.about)
+                        Text(detail)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .pointerTip(model.about)
+                            .pointerTip(detail)
                     }
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
@@ -1572,7 +1613,7 @@ private struct ModelsInLists: View {
                 .monospacedDigit()
                 .frame(width: 64, alignment: .trailing)
                 .opacity(opacity)
-            Toggle(model.name, isOn: Binding(
+            Toggle(model.cli == "opencode" ? "\(model.name), \(detail)" : model.name, isOn: Binding(
                 get: { !defaults.hidden.contains(model.id) },
                 set: { on in
                     if on { defaults.hidden.remove(model.id) } else { defaults.hidden.insert(model.id) }
@@ -1625,7 +1666,7 @@ extension ModelField {
                              automatic: offersMac ? ("Default", ModelDefaults.shared.name(.commands))
                                  : ("Auto", work.map { ModelDefaults.autoDetail($0, writer: writer, preferred: ModelDefaults.shared.automatic($0)) }
                                      ?? AgentModels.agentName(Agents.preferred)),
-                             offersMac: offersMac, plans: plans ?? work?.plans ?? ["claude", "codex", "cursor"], work: work,
+                             offersMac: offersMac, plans: plans ?? work?.plans ?? ["claude", "codex", "cursor", "opencode"], work: work,
                              trouble: work.flatMap { ModelDefaults.autoTrouble($0, writer: writer) }, pick: { _ in })
             .background(Color(nsColor: .windowBackgroundColor))
         let view = NSHostingView(rootView: list)

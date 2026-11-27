@@ -129,6 +129,50 @@ extension PlanAccountsTests {
         #expect(accounts.out("claude.test04", now: now))
     }
 
+    /// OpenCode's `api get` of its plan's usage: each window's percent and
+    /// when it starts over (milliseconds), named as the others' windows
+    /// are, for the ring's titles.
+    @Test func opencodesUsageSaysItInPercentToo() throws {
+        let accounts = PlanAccounts.shared
+        let now = Date()
+        let hourly = Date(timeIntervalSince1970: Double(Int((now.addingTimeInterval(3 * 3600)).timeIntervalSince1970 * 1000)) / 1000)
+        let weekly = Date(timeIntervalSince1970: Double(Int((now.addingTimeInterval(2 * 86_400)).timeIntervalSince1970 * 1000)) / 1000)
+        // As the CLI says it: the rest of the document (location, the
+        // workspace's own windows, budgets) says nothing to the ring.
+        accounts.heard(opencodeUsage: [
+            "location": [:], "budgets": [],
+            "data": ["workspace": [:], "go": [
+                "rolling": ["percent": 92, "limited": false, "resetsAt": Int(hourly.timeIntervalSince1970 * 1000)],
+                "weekly": ["percent": 42, "limited": false, "resetsAt": Int(weekly.timeIntervalSince1970 * 1000)],
+                "monthly": ["percent": 21, "limited": false, "resetsAt": Int(now.addingTimeInterval(20 * 86_400).timeIntervalSince1970 * 1000)],
+            ]],
+        ], on: "opencode.test01")
+        let quota = try #require(accounts.quotas["opencode.test01"])
+        #expect(quota.used == 0.92 && quota.window == "five_hour" && quota.resets == hourly)
+        #expect(quota.windows?["seven_day"] == PlanWindow(used: 0.42, resets: weekly))
+        #expect(quota.windows?["thirty_day"]?.used == 0.21)
+        #expect(accounts.words("opencode.test01", now: now) == "92% of 5 hours used")
+        #expect(accounts.windows("opencode.test01", now: now).map(\.name) == ["five_hour", "seven_day", "thirty_day"])
+        #expect(!accounts.out("opencode.test01", now: now))
+        // A window out of room drives the quota; one with no percent to
+        // say is skipped.
+        accounts.heard(opencodeUsage: [
+            "data": ["go": ["rolling": ["percent": 100, "resetsAt": Int(weekly.timeIntervalSince1970 * 1000)], "monthly": NSNull()]],
+        ], on: "opencode.test01")
+        #expect(accounts.out("opencode.test01", now: now))
+        #expect(accounts.windows("opencode.test01", now: now).map(\.name) == ["five_hour"])
+        // A window flagged limited stops work even below 100%, using its
+        // own reset time rather than the fullest window's.
+        accounts.heard(opencodeUsage: [
+            "data": ["go": [
+                "rolling": ["percent": 92, "limited": false, "resetsAt": Int(hourly.timeIntervalSince1970 * 1000)],
+                "weekly": ["percent": 85, "limited": true, "resetsAt": Int(weekly.timeIntervalSince1970 * 1000)],
+            ]],
+        ], on: "opencode.test01")
+        #expect(accounts.out("opencode.test01", now: now))
+        #expect(accounts.quotas["opencode.test01"]?.out == weekly)
+    }
+
     @Test func codexsReadSaysWhenThePlanStopsTakingWork() {
         let accounts = PlanAccounts.shared
         let now = Date()

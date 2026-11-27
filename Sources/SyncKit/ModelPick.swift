@@ -34,8 +34,24 @@ public struct SyncMacModel: Equatable, Sendable, Identifiable {
                   efforts: o["efforts"]?.array?.compactMap(\.string) ?? [])
     }
 
+    /// What a model picker row shows under its name: the agent's own
+    /// description, or for OpenCode the raw model id (which names the
+    /// provider) when no description was sent.
+    public var detail: String {
+        about.isEmpty && cli == "opencode" ? model : about
+    }
+
+    /// The selected model as a one-line summary: its name, with the
+    /// OpenCode provider prefix when the id carries one so two
+    /// providers for the same model read apart.
+    public var choiceLabel: String {
+        guard cli == "opencode", let slash = model.lastIndex(of: "/") else { return name }
+        let provider = model[..<slash].replacingOccurrences(of: "~", with: "")
+        return provider.isEmpty ? model : "\(name) · \(provider)"
+    }
+
     /// The group a model is listed under, by its agent's plan.
-    public static func plan(_ cli: String) -> String { ["codex": "ChatGPT", "cursor": "Cursor", "gemini": "Gemini"][cli] ?? "Claude" }
+    public static func plan(_ cli: String) -> String { ["codex": "ChatGPT", "cursor": "Cursor", "gemini": "Gemini", "opencode": "OpenCode"][cli] ?? "Claude" }
 
     /// An effort as the Mac's picker says it: "Low", "Extra high".
     public static func effortTitle(_ effort: String) -> String {

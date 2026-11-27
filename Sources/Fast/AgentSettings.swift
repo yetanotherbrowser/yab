@@ -645,6 +645,15 @@ final class AgentSetupModel: ObservableObject {
                 guard identityLook == mine, attempt == readingAttempt else { return }
                 if let permit, !permit.valid { continue }
                 signedIn[cli] = who.signedIn
+            } else if cli == "opencode" {
+                // OpenCode, as Cursor: its CLI's own answer, in the
+                // environment its tasks run in.
+                let permit = whereTasksRun ? consent.permit(cli) : nil
+                let who = permit != nil ? await OpenCodeRunner.identify(binary: launch.binary, env: launch.env, permit: permit)
+                    : OpenCodeRunner.identity(env: launch.env)
+                guard identityLook == mine, attempt == readingAttempt else { return }
+                if let permit, !permit.valid { continue }
+                signedIn[cli] = who.signedIn
             } else if !AgentFixture.requested, AgentLaunch.byHarness(cli) {
                 // A probe's stand-in Claude or Codex (YAB_AGENT_CLAUDE) is
                 // signed in by its harness: the Mac running the probe may
@@ -799,12 +808,12 @@ final class AgentSetupModel: ObservableObject {
         GeminiChoices.shared.showing = true
     }
 
-    /// Gemini and Cursor have one profile. Adding them again reconnects
-    /// that profile through setup rather than creating a second account.
+    /// Gemini, Cursor and OpenCode have one profile. Adding them again
+    /// reconnects that profile through setup rather than creating a second account.
     func addAccount(_ cli: String, _ browser: Browser) {
         if !installed(cli) { install(cli, browser) }
         else if cli == "gemini" { chooseGemini(browser) }
-        else if !connected(cli) || cli == "cursor" { connect([cli], browser) }
+        else if !connected(cli) || cli == "cursor" || cli == "opencode" { connect([cli], browser) }
         else { PlanAccounts.shared.add(cli, browser) }
     }
 
@@ -1437,7 +1446,7 @@ final class AgentSetupModel: ObservableObject {
             }
         }()
         return ["flow": flow.map { "\($0)" } ?? "page", "claude": status.claude, "codex": status.codex,
-                "cursor": status.cursor, "gemini": connected("gemini"), "geminiRow": showsGemini, "providers": Self.clis, "selectedProviders": Array(picks).sorted(), "arriving": arriving, "command": status.command, "signedIn": signedIn.mapValues { $0 },
+                "cursor": status.cursor, "opencode": status.opencode, "gemini": connected("gemini"), "geminiRow": showsGemini, "providers": Self.clis, "selectedProviders": Array(picks).sorted(), "arriving": arriving, "command": status.command, "signedIn": signedIn.mapValues { $0 },
                 "lookedInTerminal": lookedInTerminal,
                 "found": [found?.claude ?? "", found?.codex ?? ""],
                 "page": place, "trouble": trouble?.words ?? "", "renewing": renewing ?? "", "slow": slow,

@@ -163,6 +163,8 @@ struct SettingsItem: Identifiable, Hashable {
                      words: "codex openai connect sign in plan subscription plus pro skill mcp install"),
         SettingsItem(id: "agents-cursor", page: .models, title: "Cursor",
                      words: "cursor plan subscription account connect login models"),
+        SettingsItem(id: "agents-opencode", page: .models, title: "OpenCode",
+                     words: "opencode plan subscription account connect login models"),
         SettingsItem(id: "agents-details", page: .agents, title: "How to Ask",
                      words: "disconnect remove how to ask connection details"),
 
