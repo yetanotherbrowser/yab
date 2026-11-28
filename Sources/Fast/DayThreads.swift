@@ -274,7 +274,13 @@ enum DayThreads {
             .filter { !$0.isEmpty }.joined(separator: " ") + " "
         let today = calendar.startOfDay(for: now)
         func day(_ offset: Int) -> Date { calendar.date(byAdding: .day, value: offset, to: today)! }
-        func at(_ base: Date, _ hour: Int) -> Date { calendar.date(byAdding: .hour, value: hour, to: base)! }
+        // Hours on the clock, not hours since midnight: the day the clocks
+        // change has 23 or 25 of them, and its morning still ends at noon.
+        func at(_ base: Date, _ hour: Int) -> Date {
+            if hour == 0 { return base }
+            if hour == 24 { return calendar.date(byAdding: .day, value: 1, to: base)! }
+            return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: base)!
+        }
         func cut(_ phrase: String) -> String {
             lower.replacingOccurrences(of: " " + phrase + " ", with: " ").trimmingCharacters(in: .whitespaces)
         }

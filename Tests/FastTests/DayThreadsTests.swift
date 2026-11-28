@@ -344,4 +344,20 @@ struct DayThreadsTests {
         #expect(DayThreads.span(from: Self.at(11, 40), to: Self.at(12, 30), open: false) == "11:40 AM to 12:30 PM")
         #expect(DayThreads.span(from: Self.at(14, 0), to: Self.at(15, 0), open: true) == "2:00 PM to now")
     }
+
+    @Test func aMorningEndsAtNoonOnTheDaysTheClocksChange() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        // March 8 and November 1, 2026 are 23 and 25 hours long there.
+        for (month, day) in [(3, 8), (11, 1)] {
+            let changed = calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: 18))!
+            let morning = try #require(DayThreads.span("this morning", now: changed, calendar: calendar))
+            #expect(calendar.component(.hour, from: morning.to) == 12)
+            let afternoon = try #require(DayThreads.span("this afternoon", now: changed, calendar: calendar))
+            #expect(calendar.component(.hour, from: afternoon.from) == 12)
+            let next = calendar.date(byAdding: .day, value: 1, to: changed)!
+            let evening = try #require(DayThreads.span("yesterday evening", now: next, calendar: calendar))
+            #expect(evening.to == calendar.startOfDay(for: next))
+        }
+    }
 }
