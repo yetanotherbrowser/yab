@@ -289,7 +289,7 @@ enum DayThreads {
                             label: label, rest: cut(phrase))
             }
         }
-        for phrase in ["earlier today", "today", "so far today"] where lower.contains(" " + phrase + " ") {
+        for phrase in ["earlier today", "so far today", "today"] where lower.contains(" " + phrase + " ") {
             return Span(from: today, to: day(1), label: "From today", rest: cut(phrase))
         }
         for phrase in ["yesterday"] where lower.contains(" " + phrase + " ") {

@@ -291,6 +291,12 @@ struct DayThreadsTests {
         #expect(!DayThreads.picksUp("what did Dia cost"))
     }
 
+    @Test func soFarTodayIsCutWhole() throws {
+        let span = try #require(DayThreads.span("what did I read so far today"))
+        #expect(span.label == "From today")
+        #expect(span.rest == "what did i read")
+    }
+
     @Test func aModelsLinesAreRead() {
         let said = DayThreads.naming("Topic: Arc and Dia pricing\nDoing: Comparing Arc and Dia pricing.\nDone: Compared Arc and Dia pricing\nLine: Dia Pro is $20 a month billed yearly, Arc Max $25")
         #expect(said == DayThreads.Naming(topic: "Arc and Dia pricing", doing: "Comparing Arc and Dia pricing",
