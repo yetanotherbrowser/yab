@@ -56,6 +56,26 @@ static void HealthPoll(Tab& t) {
   }
   if (t.healthSent && now >= t.healthDeadline) HealthSignal(&t, false);
 }
+static bool AdoptRendererPID(Tab* t, pid_t pid) {
+  if (!t || pid <= 0) return false;
+  struct proc_bsdinfo info = {};
+  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info) ||
+      info.pbi_ppid != getpid()) return false;
+  const uint64_t born = info.pbi_start_tvsec * 1000000ULL + info.pbi_start_tvusec;
+  // Repeated reports for the same renderer (isolated worlds, navigation probes)
+  // must not cancel an active input challenge for that renderer.
+  const bool swapped = t->rendererPID != pid || t->rendererBorn != born;
+  if (swapped) HealthReset(t, true);
+  t->rendererPID = pid;
+  t->rendererBorn = born;
+#if YABCORE_OWNCEF_SURFACES
+  // A new renderer behind the same compositor: say who owns the surface.
+  if (swapped) PublishOwnCEFSurface(*t);
+#endif
+  State(t, @{ @"rendererPID": @(pid), @"nativeDiscard": NativeHookCapabilities()[@"nativeDiscard"],
+    @"audible": @(t->audible), @"audibleSource": YABCORE_NATIVE_AUDIBLE ? @"native" : @"page" });
+  return true;
+}
 static bool HealthMessage(Tab* t, CefRefPtr<CefFrame> frame,
                           CefRefPtr<CefProcessMessage> message) {
   if (message->GetName() != "yab.health.pong") return false;
@@ -65,10 +85,16 @@ static bool HealthMessage(Tab* t, CefRefPtr<CefFrame> frame,
   auto args = message->GetArgumentList();
   if (args->GetSize() != 2 || args->GetType(0) != VTYPE_STRING || args->GetType(1) != VTYPE_INT ||
       t->healthToken.empty() || args->GetString(0).ToString() != t->healthToken ||
-      args->GetInt(1) != t->healthPID || t->rendererPID != t->healthPID ||
       frame->GetIdentifier().ToString() != t->healthFrame) return true;
+  const pid_t pid = args->GetInt(1);
+  const bool again = t->healthAgain;
+  // A BFCache restore or prerender activation skips OnContextCreated, so an
+  // immediate input probe can still hold the previous page's PID. This pong
+  // carries the matching token from the live main frame; verify and adopt it.
+  if (pid != t->healthPID || t->rendererPID != t->healthPID) {
+    if (!AdoptRendererPID(t, pid)) return true;
+  }
   ++t->healthPongs;
-  bool again = t->healthAgain;
   // This authenticated pong ran on the current renderer's main thread.
   // Newer input still needs its own challenge, but cannot keep an earlier
   // hang alive across successful replies. Its fresh deadline detects a

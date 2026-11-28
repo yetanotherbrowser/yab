@@ -170,6 +170,14 @@ class MediaRenderer : public CefApp, public CefRenderProcessHandler {
   }
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefProcessId source,
                                 CefRefPtr<CefProcessMessage> message) override {
+    if (source == PID_BROWSER && message->GetName() == "yab.media.who") {
+      if (frame->IsValid() && frame->IsMain()) {
+        auto reply = CefProcessMessage::Create("yab.media.renderer");
+        reply->GetArgumentList()->SetInt(0, getpid());
+        frame->SendProcessMessage(PID_BROWSER, reply);
+      }
+      return true;
+    }
     if (source == PID_BROWSER && message->GetName() == "yab.health.ping") {
       auto args = message->GetArgumentList();
       if (frame->IsValid() && frame->IsMain() && args->GetSize() == 1 && args->GetType(0) == VTYPE_STRING) {

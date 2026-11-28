@@ -582,6 +582,12 @@ static NSNumber* WindowOnScreen(NSWindow* window) {
   return @NO;
 }
 static void State(Tab* t, NSDictionary* fields) { if (t && !t->internal) Event(@"page.state", t, fields); }
+static void RequestRendererPID(Tab& t) {
+  if (t.closing || !t.browser) return;
+  auto frame = t.browser->GetMainFrame();
+  if (!frame || !frame->IsValid()) return;
+  frame->SendProcessMessage(PID_RENDERER, CefProcessMessage::Create("yab.media.who"));
+}
 
 // A muted tab stays muted. Chrome's SoundContentSettingObserver, on every new
 // main document (PrimaryPageChanged: a reload, a link, the first page of a tab
@@ -702,7 +708,12 @@ class Observer : public CefDevToolsMessageObserver {
       if (![S(p, @"type") isEqual:@"BackForwardCacheRestore"]) {
         t->worlds.clear(); t->contextNames.clear(); t->drmFrames.clear();
       }
-      if ([m isEqual:@"Page.frameNavigated"]) t->drmMainFrame = Key(S(p[@"frame"], @"id"));
+      if ([m isEqual:@"Page.frameNavigated"]) {
+        t->drmMainFrame = Key(S(p[@"frame"], @"id"));
+        // BFCache restores and prerender activations keep their V8 context, so
+        // OnContextCreated does not run again to report the live renderer PID.
+        RequestRendererPID(*t);
+      }
     } else if ([m isEqual:@"Runtime.executionContextCreated"]) {
       NSDictionary* c = p[@"context"]; NSString* name = S(c, @"name");
       if (name.length) t->contextNames[[c[@"id"] intValue]] = Key(name);
@@ -953,23 +964,11 @@ class Client : public CefClient, public CefLifeSpanHandler, public CefLoadHandle
     if (source == PID_RENDERER && MediaFrameMessage(Find(b), frame, message)) return true;
     if (source != PID_RENDERER || !frame || !frame->IsValid() || !frame->IsMain() || message->GetName() != "yab.media.renderer") return false;
     auto t = Find(b); if (!t) return true;
+    auto current = b->GetMainFrame();
+    if (!current || current->GetIdentifier() != frame->GetIdentifier()) return true;
     auto args = message->GetArgumentList();
     if (args->GetSize() != 1 || args->GetType(0) != VTYPE_INT) return true;
-    pid_t pid = args->GetInt(0);
-    struct proc_bsdinfo info = {};
-    if (pid <= 0 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info) || info.pbi_ppid != getpid()) return true;
-    // Isolated worlds create contexts too. Their repeated PID report must
-    // not cancel an input challenge for the very same renderer.
-    const bool swapped = t->rendererPID != pid;
-    if (swapped) HealthReset(t, true);
-    t->rendererPID = pid;
-    t->rendererBorn = info.pbi_start_tvsec * 1000000ULL + info.pbi_start_tvusec;
-#if YABCORE_OWNCEF_SURFACES
-    // A new renderer behind the same compositor: say who owns the surface.
-    if (swapped) PublishOwnCEFSurface(*t);
-#endif
-    State(t, @{ @"rendererPID": @(pid), @"nativeDiscard": NativeHookCapabilities()[@"nativeDiscard"],
-      @"audible": @(t->audible), @"audibleSource": YABCORE_NATIVE_AUDIBLE ? @"native" : @"page" });
+    AdoptRendererPID(t, args->GetInt(0));
     return true;
   }
   CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
@@ -1252,6 +1251,7 @@ class Client : public CefClient, public CefLifeSpanHandler, public CefLoadHandle
       }
       KeepMuted(t, b);
       Event(@"page.committed", t, @{@"url": Str(frame->GetURL())});
+      RequestRendererPID(*t);
       AccessibilityDocument(*t);
       MediaReset(t);
       t->themeReady = false; t->crashed = false;
