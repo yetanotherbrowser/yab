@@ -244,7 +244,7 @@ enum GeminiSupport {
 }
 
 /// Incremental NDJSON decoding. A result's counters cover the entire process,
-/// while tool failures remain failures even when the provider says SUCCESS.
+/// while permission denials remain failures even when the provider says SUCCESS.
 struct GeminiStream {
     struct Usage: Equatable {
         var input = 0, output = 0, thinking = 0, cached = 0, total = 0
@@ -481,11 +481,15 @@ struct GeminiStream {
                 let output = tool["output"] as? String ?? ""
                 let structured = tool["output"] as? [String: Any]
                     ?? (try? JSONSerialization.jsonObject(with: Data(output.utf8))) as? [String: Any]
-                if state == "ERROR" || error != nil || structured?["isError"] as? Bool == true || Self.denial(output) {
-                    failure = "Gemini could not complete a tool."
-                    item.state = .failed
-                }
-                if !output.isEmpty { item.text = String(output.suffix(ChatItem.outputKept)) }
+                let structuredText = (structured?["content"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["text"] as? String }.joined(separator: "\n")
+                let outputText = output.isEmpty ? structuredText : output
+                let stepFailed = state == "ERROR" || error != nil || structured?["isError"] as? Bool == true
+                let errorDetail = [error?["type"] as? String, error?["message"] as? String].compactMap { $0 }.joined(separator: " ")
+                let denied = Self.denial(errorDetail) || (stepFailed && Self.denial(outputText))
+                if stepFailed { item.state = .failed }
+                if denied { failure = "Gemini could not complete a tool." }
+                if !outputText.isEmpty { item.text = String(outputText.suffix(ChatItem.outputKept)) }
                 if let message = error?["message"] as? String { item.text = message }
             }
             if item.state != .failed { item.state = state == "DONE" ? .done : .running }
@@ -504,7 +508,7 @@ struct GeminiStream {
             let reportedUsage = baselineKnown ? delta : nil
             baselineKnown = true
             cumulative = used; active = false
-            // A denied native call may be retried through Yab. A failed
+            // A denied native call may be retried through Yab. A permission-denied
             // Yab tool or the CLI's own error remains a failed result.
             let recovered = failure == Self.permissionFailure && recoveredNativeDenial(diagnosticScan)
             let error = info["error"] as? String ?? (recovered ? nil : failure)

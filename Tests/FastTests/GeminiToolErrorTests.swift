@@ -46,24 +46,61 @@ struct GeminiToolErrorTests {
     }
 
     @Test(arguments: [true, false])
-    func aYabToolErrorIsTerminalFailureEvenWithoutAnErrorObject(hasError: Bool) throws {
+    func aRecoverableYabToolErrorMarksTheStepFailedWithoutFailingACompletedTurn(hasError: Bool) throws {
         var stream = GeminiStream(yabTools: true)
         _ = try stream.prompt("Read the page")
         _ = try GeminiRunnerTests.initialize(&stream)
         let events = try step(&stream, index: 1, state: "ERROR", name: GeminiRunnerTests.yabTool,
                               error: hasError ? ["type": "TOOL_ERROR", "message": "Could not open page"] : nil)
-        #expect(!stream.broken, "A valid ERROR tool event must remain a typed failure")
+        #expect(!stream.broken)
+        #expect(events.contains { if case .step(let item) = $0 { return item.state == .failed }; return false })
+        #expect(try GeminiRunnerTests.result(&stream)?.succeeded == true)
+        #expect(stream.end(code: 0).isEmpty)
+    }
+
+    @Test func denialWordsInSuccessfulToolOutputDoNotFailTheTurn() throws {
+        var stream = GeminiStream(yabTools: true)
+        _ = try stream.prompt("Read the page")
+        _ = try GeminiRunnerTests.initialize(&stream)
+        let events = stream.receive(try GeminiRunnerTests.line(["event": "step_update", "step_update": [
+            "conversation_id": "G1", "step_index": 1, "state": "DONE", "step_type": "tool",
+            "tool_name": GeminiRunnerTests.yabTool, "tool_info": ["output": "Colab says: permission denied for this account."]]]))
+        #expect(events.contains { if case .step(let item) = $0 { return item.state == .done }; return false })
+        #expect(try GeminiRunnerTests.result(&stream)?.succeeded == true)
+        #expect(stream.end(code: 0).isEmpty)
+    }
+
+    @Test func denialOutputOnAFailedYabToolStillFailsTheTurn() throws {
+        var stream = GeminiStream(yabTools: true)
+        _ = try stream.prompt("Read the page")
+        _ = try GeminiRunnerTests.initialize(&stream)
+        let events = stream.receive(try GeminiRunnerTests.line(["event": "step_update", "step_update": [
+            "conversation_id": "G1", "step_index": 1, "state": "ERROR", "step_type": "tool",
+            "tool_name": GeminiRunnerTests.yabTool, "tool_info": ["output": "headless mode cannot prompt for approval, auto-denied"]]]))
         #expect(events.contains { if case .step(let item) = $0 { return item.state == .failed }; return false })
         #expect(try GeminiRunnerTests.result(&stream)?.succeeded == false)
     }
 
-    @Test func aNativeRecoveryNeverErasesALaterYabToolFailure() throws {
+    @Test func structuredMCPErrorWithDenialContentStillFailsTheTurn() throws {
+        var stream = GeminiStream(yabTools: true)
+        _ = try stream.prompt("Read the page")
+        _ = try GeminiRunnerTests.initialize(&stream)
+        let events = stream.receive(try GeminiRunnerTests.line(["event": "step_update", "step_update": [
+            "conversation_id": "G1", "step_index": 1, "state": "DONE", "step_type": "tool",
+            "tool_name": GeminiRunnerTests.yabTool,
+            "tool_info": ["output": ["isError": true, "content": [["type": "text", "text": "permission denied"]]]]]]))
+        #expect(events.contains { if case .step(let item) = $0 { return item.state == .failed }; return false })
+        #expect(try GeminiRunnerTests.result(&stream)?.succeeded == false)
+    }
+
+    @Test func aNativeRecoveryNeverErasesALaterYabToolPermissionDenial() throws {
         var stream = GeminiStream(yabTools: true)
         _ = try stream.prompt("Read through Yab")
         _ = try GeminiRunnerTests.initialize(&stream)
         _ = try step(&stream, index: 1, state: "ERROR", name: "list_resources", error: [
             "type": "TOOL_ERROR", "message": "Yab gives Gemini only its own browser tools."])
-        _ = try step(&stream, index: 2, state: "ERROR", name: GeminiRunnerTests.yabTool)
+        _ = try step(&stream, index: 2, state: "ERROR", name: GeminiRunnerTests.yabTool, error: [
+            "type": "permission_denied", "message": "Denied"])
         stream.diagnostic("list_resources auto-denied by Yab's pre-tool hook.\n")
         #expect(try GeminiRunnerTests.result(&stream)?.succeeded == false)
     }

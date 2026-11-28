@@ -105,19 +105,20 @@ struct GeminiRunnerTests {
         #expect(try Self.result(&stream)?.succeeded == true)
     }
 
-    @Test func structuredMCPErrorAndSplitStderrDenialAreSticky() throws {
-        for stderr in [true, false] {
-            var stream = GeminiStream(yabTools: true)
-            _ = try stream.prompt("do the task"); _ = try Self.initialize(&stream, tools: [Self.yabTool])
-            if stderr {
-                stream.diagnostic("headless mode cannot ")
-                stream.diagnostic("prompt for approval, auto-denied")
-            } else {
-                _ = stream.receive(try Self.line(["event": "step_update", "step_update": ["conversation_id": "G1", "step_index": 1,
-                    "state": "DONE", "step_type": "tool", "tool_name": Self.yabTool, "tool_info": ["output": ["isError": true, "content": []]]]]))
-            }
-            #expect(try Self.result(&stream)?.succeeded == false)
-        }
+    @Test func splitStderrDenialIsStickyWhileStructuredMCPErrorIsRecoverable() throws {
+        var denied = GeminiStream(yabTools: true)
+        _ = try denied.prompt("do the task"); _ = try Self.initialize(&denied, tools: [Self.yabTool])
+        denied.diagnostic("headless mode cannot ")
+        denied.diagnostic("prompt for approval, auto-denied")
+        #expect(try Self.result(&denied)?.succeeded == false)
+
+        var recovered = GeminiStream(yabTools: true)
+        _ = try recovered.prompt("do the task"); _ = try Self.initialize(&recovered, tools: [Self.yabTool])
+        let events = recovered.receive(try Self.line(["event": "step_update", "step_update": ["conversation_id": "G1", "step_index": 1,
+            "state": "DONE", "step_type": "tool", "tool_name": Self.yabTool, "tool_info": ["output": ["isError": true, "content": []]]]]))
+        #expect(events.contains { if case .step(let item) = $0 { return item.state == .failed }; return false })
+        #expect(try Self.result(&recovered)?.succeeded == true)
+        #expect(recovered.end(code: 0).isEmpty)
     }
 
     @Test func interruptedStatusesNeverCountAsDone() throws {
