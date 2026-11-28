@@ -426,24 +426,27 @@ enum Memory {
                   let body = seen(path, read, mail: mail) else { continue }
             var start = 1
             var current: [String] = []
-            func flush(_ at: Int) {
+            func flush() {
                 let text = current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty {
                     let stems = words(text).map(stem)
                     chunks.append((path, start, text, Dictionary(stems.map { ($0, 1) }, uniquingKeysWith: +), stems.count))
                 }
                 current = []
-                start = at
             }
             for (n, line) in body.components(separatedBy: "\n").enumerated() {
                 // A heading or a blank line ends a paragraph; so does a list
                 // item, each of which is a note of its own.
                 if line.trimmingCharacters(in: .whitespaces).isEmpty || line.hasPrefix("#") || line.hasPrefix("- ") {
-                    flush(n + 1)
+                    flush()
                 }
-                if !line.trimmingCharacters(in: .whitespaces).isEmpty, !line.hasPrefix("<!--") { current.append(line) }
+                if !line.trimmingCharacters(in: .whitespaces).isEmpty, !line.hasPrefix("<!--") {
+                    // Where it starts is its first line, not the blank one before it.
+                    if current.isEmpty { start = n + 1 }
+                    current.append(line)
+                }
             }
-            flush(0)
+            flush()
         }
         guard !chunks.isEmpty else { return [] }
         let count = Double(chunks.count)
